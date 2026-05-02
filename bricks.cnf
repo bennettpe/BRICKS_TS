@@ -1,0 +1,32 @@
+dns_name=www.moshix.tech                                                                                                                                                             
+port=2300                                                                                                                                                                            
+tlsport=2023                                                                                                                                                                         
+tlscert=www.moshix.tech.crt                                                                                                                                                          
+tlskey=www.moshix.tech.key                                                                                                                                                           
+#start_TLS=yes         
+enforce_secure_login=no
+#secure_login_transacton=cssn
+start_web3270=yes
+web3270_port=9000
+
+max_conns_per_ip=8
+
+# ── Filesystem layout ────────────────────────────────────────────
+# Each path below is independently overridable. Defaults shown in
+# comments are what bricks uses when the line is missing.
+#
+# users_file:        runtime/users.conf      (CSSN authentication table)
+# transactions_file: runtime/transactions.conf
+# data_dir:          data                    (bbolt files + TS queues)
+#
+# Programs and maps live under runtime/ by default. Set runtime_dir
+# once to relocate the whole tree, and bricks derives map/, rexx/,
+# cobol/ from it; or override any of the three independently.
+#
+# runtime_dir=/srv/bricks/runtime
+# maps_dir=runtime/map
+# rexx_dir=runtime/rexx
+# cobol_dir=runtime/cobol
+# data_dir=data
+# users_file=runtime/users.conf
+# transactions_file=runtime/transactions.conf

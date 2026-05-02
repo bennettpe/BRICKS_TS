@@ -1,0 +1,17 @@
+/* HELP TRANSACTION FOR ALL USERS    */
+/*  copyright 2026 by moshix */
+ADDRESS CICS
+
+EXEC CICS ASSIGN TERMID(TRM) END-EXEC
+
+  SCR. = ''
+  SCR.TERMID   = TRM
+
+  EXEC CICS SEND MAP('HELP1') FROM(SCR.) ERASE END-EXEC
+
+  IF AID = 'F3' THEN DO
+    /* Rewind: chain back to ourselves so the dispatcher's task-end  */
+   EXEC CICS RETURN END-EXEC
+  END
+
+EXIT

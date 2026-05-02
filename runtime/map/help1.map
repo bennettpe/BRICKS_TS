@@ -1,0 +1,14 @@
+* HELP transactions -- producer demo (writes one item per ENTER to a TS queue).
+MAP HELP1 SIZE 24x80
+  FIELD AT 0,15 LEN 32 PROT BRIGHT COLOR=BLUE   "Welcome to BRICKS Transaction Server"
+  FIELD AT 0,60 LEN 5  PROT COLOR=TURQUOISE          "TERM="
+  INPUT TERMID  AT 0,65 LEN 8  PROT COLOR=TURQUOISE
+  FIELD AT 4,0  LEN 25  PROT COLOR=GREEN   "CSSN LOGON                 -  LOGON"      
+  FIELD AT 5,0  LEN 25  PROT COLOR=GREEN   "CSSN LOGOFF                -  LOGOFF"
+  FIELD AT 6,0  LEN 45  PROT COLOR=GREEN   "CSSN GOODNIGHT             -  DISCONNECT FROM BRICKS"
+  FIELD AT 7,0  LEN 45  PROT COLOR=GREEN   "CEMT INQUIRE               -  INQUIRE BRICKS RESOURCES"
+  FIELD AT 9,0  LEN 30  PROT COLOR=RED   "CEMT                       -  MASTER CONSOLE (ADMIN ONLY)"
+  FIELD AT 15,0 LEN 45  PROT COLOR=WHITE   "To logon with CSSN the operator must grant you an account"
+  FIELD AT 22,0 LEN 50 PROT COLOR=BLUE     "PF3=Exit"
+  CURSOR        AT 22,0
+ENDMAP

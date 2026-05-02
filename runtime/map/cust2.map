@@ -1,0 +1,23 @@
+* CUST -- customer detail form (used by Add / Query / Update)
+MAP CUST2 SIZE 24x80
+  FIELD INFOLINE AT 0,0   LEN 78 PROT BRIGHT COLOR=WHITE
+  FIELD AT 2,2  LEN 30 PROT BRIGHT COLOR=BLUE     "Customer Detail"
+  FIELD AT 4,2  LEN 12 PROT                        "Customer #:"
+  INPUT CUSTNO   AT 4,28  LEN 8  PROT BRIGHT COLOR=WHITE
+  FIELD AT 7,2  LEN 12 PROT                        "Name:"
+  INPUT NAME     AT 7,28  LEN 32 UNDERSCORE COLOR=GREEN
+  STOP           AT 7,61
+  FIELD AT 9,2  LEN 12 PROT                        "Address:"
+  INPUT ADDRESS  AT 9,28  LEN 32 UNDERSCORE COLOR=GREEN
+  STOP           AT 9,61
+  FIELD AT 11,2 LEN 12 PROT                        "City:"
+  INPUT CITY     AT 11,28 LEN 20 UNDERSCORE COLOR=GREEN
+  STOP           AT 11,49
+  FIELD AT 13,2 LEN 12 PROT                        "Phone:"
+  INPUT PHONE    AT 13,28 LEN 16 UNDERSCORE COLOR=GREEN
+  STOP           AT 13,45
+  FIELD MODE     AT 17,15 LEN 60 PROT DIM COLOR=BLUE
+  FIELD MSG      AT 19,15 LEN 60 PROT BRIGHT COLOR=RED
+  FIELD AT 22,1  LEN 60 PROT DIM COLOR=BLUE      "ENTER=Save   PF3=Cancel"
+  CURSOR         AT 7,29
+ENDMAP

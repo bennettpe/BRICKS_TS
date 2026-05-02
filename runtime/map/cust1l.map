@@ -1,0 +1,37 @@
+* CUST -- 43x80 menu / action selection (mod 4 / alt-screen).
+* Same named INPUT slots (ACTION, CUSTNO, SEARCH, MSG) and INFOLINE as
+* cust1.map; adds a "Recently touched" history pane on rows 16-32 that
+* the program can fill via R1..R12 stem tails (currently unused; the
+* mod-2 map ignores those tails).
+MAP CUST1L SIZE 43x80
+  FIELD INFOLINE AT 0,0   LEN 78 PROT BRIGHT COLOR=WHITE
+  FIELD AT 3,2  LEN 50 PROT BRIGHT COLOR=WHITE     "Customer Database          CUST Transaction"
+  FIELD AT 6,15  LEN 9  PROT                        "Action:"
+  INPUT ACTION   AT 6,2  LEN 1  UNDERSCORE COLOR=GREEN
+  STOP           AT 6,4
+  FIELD AT 6,7  LEN 50 PROT DIM                    "(A=Add Q=Query U=Update D=Delete L=List S=Search)"
+  FIELD AT 8,2  LEN 12 PROT                        "Customer #:"
+  INPUT CUSTNO   AT 8,15  LEN 8  UNDERSCORE COLOR=GREEN
+  STOP           AT 8,29
+  FIELD AT 10,2 LEN 12 PROT                        "Search:"
+  INPUT SEARCH   AT 10,15 LEN 30 UNDERSCORE COLOR=GREEN
+  STOP           AT 10,46
+  FIELD MSG      AT 14,15 LEN 60 PROT BRIGHT COLOR=RED
+
+  * --- mod-4 bonus pane: recent activity ---
+*  FIELD AT 16,2  LEN 25 PROT DIM    COLOR=TURQUOISE  "Recent activity:"
+  FIELD R1       AT 18,4  LEN 70 PROT COLOR=WHITE
+  FIELD R2       AT 19,4  LEN 70 PROT COLOR=WHITE
+  FIELD R3       AT 20,4  LEN 70 PROT COLOR=WHITE
+  FIELD R4       AT 21,4  LEN 70 PROT COLOR=WHITE
+  FIELD R5       AT 22,4  LEN 70 PROT COLOR=WHITE
+  FIELD R6       AT 23,4  LEN 70 PROT COLOR=WHITE
+  FIELD R7       AT 24,4  LEN 70 PROT COLOR=WHITE
+  FIELD R8       AT 25,4  LEN 70 PROT COLOR=WHITE
+
+*  FIELD AT 27,2  LEN 25 PROT DIM    COLOR=TURQUOISE  "Tip:"
+  FIELD TIP      AT 29,4  LEN 70 PROT COLOR=WHITE
+
+  FIELD AT 41,1  LEN 60 PROT DIM COLOR=BLUE       "ENTER=Continue   F12=Exit"
+  CURSOR         AT ACTION
+ENDMAP

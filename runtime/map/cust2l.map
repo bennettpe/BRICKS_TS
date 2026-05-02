@@ -1,0 +1,37 @@
+* CUST -- 43x80 customer detail form (mod 4 / alt-screen).
+* Same named slots as cust2.map; adds an "Audit log" pane on rows 24-39
+* that the program can fill via A1..A8 stem tails (currently unused).
+MAP CUST2L SIZE 43x80
+  FIELD INFOLINE AT 0,0   LEN 78 PROT BRIGHT COLOR=TURQUOISE
+  FIELD AT 2,15  LEN 30 PROT BRIGHT COLOR=GREEN     "Customer Detail"
+  FIELD AT 4,15  LEN 12 PROT                        "Customer #:"
+  INPUT CUSTNO   AT 4,28  LEN 8  PROT BRIGHT COLOR=WHITE
+  FIELD AT 7,15  LEN 12 PROT                        "Name:"
+  INPUT NAME     AT 7,28  LEN 32 UNDERSCORE COLOR=GREEN
+  STOP           AT 7,61
+  FIELD AT 9,15  LEN 12 PROT                        "Address:"
+  INPUT ADDRESS  AT 9,28  LEN 32 UNDERSCORE COLOR=GREEN
+  STOP           AT 9,61
+  FIELD AT 11,15 LEN 12 PROT                        "City:"
+  INPUT CITY     AT 11,28 LEN 20 UNDERSCORE COLOR=GREEN
+  STOP           AT 11,49
+  FIELD AT 13,15 LEN 12 PROT                        "Phone:"
+  INPUT PHONE    AT 13,28 LEN 16 UNDERSCORE COLOR=GREEN
+  STOP           AT 13,45
+  FIELD MODE     AT 17,15 LEN 60 PROT DIM COLOR=GREEN
+  FIELD MSG      AT 19,15 LEN 60 PROT BRIGHT COLOR=RED
+
+  * --- mod-4 bonus pane: audit log ---
+  FIELD AT 22,2  LEN 25 PROT DIM    COLOR=TURQUOISE  "Audit log:"
+  FIELD A1       AT 24,4  LEN 70 PROT COLOR=WHITE
+  FIELD A2       AT 25,4  LEN 70 PROT COLOR=WHITE
+  FIELD A3       AT 26,4  LEN 70 PROT COLOR=WHITE
+  FIELD A4       AT 27,4  LEN 70 PROT COLOR=WHITE
+  FIELD A5       AT 28,4  LEN 70 PROT COLOR=WHITE
+  FIELD A6       AT 29,4  LEN 70 PROT COLOR=WHITE
+  FIELD A7       AT 30,4  LEN 70 PROT COLOR=WHITE
+  FIELD A8       AT 31,4  LEN 70 PROT COLOR=WHITE
+
+  FIELD AT 41,2  LEN 60 PROT DIM COLOR=BLUE         "ENTER=Save   PF3=Cancel"
+  CURSOR         AT 7,29
+ENDMAP

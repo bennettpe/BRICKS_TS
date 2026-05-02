@@ -1,0 +1,20 @@
+* QAGE -- birthdate input. Pseudo-conversational; chains to QAGR
+* via EXEC CICS RETURN TRANSID('QAGR'). PF3 returns to bare prompt.
+MAP QAGE1 SIZE 24x80
+  FIELD AT 0,2  LEN 30 PROT BRIGHT COLOR=BLUE  "Query Your Age"
+  FIELD AT 0,60 LEN 5  PROT COLOR=BLUE         "TERM="
+  INPUT TERMID  AT 0,65 LEN 8  PROT COLOR=BLUE
+  FIELD AT 4,4  LEN 30 PROT COLOR=BLUE         "Enter your birth date below."
+  FIELD AT 6,4  LEN 6  PROT                    "Year:"
+  INPUT YEAR    AT 6,12 LEN 4  UNDERSCORE COLOR=GREEN NUMERIC
+  STOP          AT 6,17
+  FIELD AT 6,20 LEN 6  PROT                    "Month:"
+  INPUT MONTH   AT 6,28 LEN 2  UNDERSCORE COLOR=GREEN NUMERIC
+  STOP          AT 6,31
+  FIELD AT 6,34 LEN 4  PROT                    "Day:"
+  INPUT DAY     AT 6,40 LEN 2  UNDERSCORE COLOR=GREEN NUMERIC
+  STOP          AT 6,43
+  INPUT MSG     AT 18,4 LEN 70 PROT BRIGHT COLOR=RED
+  FIELD AT 22,2 LEN 50 PROT COLOR=BLUE         "ENTER=Submit  PF3=Cancel"
+  CURSOR        AT 6,13
+ENDMAP

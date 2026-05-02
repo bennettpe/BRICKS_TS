@@ -1,0 +1,7 @@
+* HELO transaction -- pure layout; the REXX program supplies every value
+* via SEND MAP FROM(stem.) — see runtime/rexx/hello.rexx.
+MAP HELO1 SIZE 24x80
+  FIELD INFOLINE AT 0,0   LEN 78 PROT BRIGHT COLOR=TURQUOISE
+  FIELD GREETING AT 5,5 LEN 20 PROT BRIGHT COLOR=WHITE
+  FIELD FOOTER   AT 23,2  LEN 60 PROT DIM    COLOR=BLUE
+ENDMAP
