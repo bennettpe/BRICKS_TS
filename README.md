@@ -1515,11 +1515,9 @@ amount of in-flight deletes can blow the goroutine stack.
 
 ## Out of scope for v1
 
-* COBOL programs — `runtime/cobol/` is reserved.
 * SQL — bricks does not embed a database; data records are simple files.
 * RACF / Top Secret / LDAP — `auth.Authenticator` is the seam to plug those
   in later.
 * Distributed CICS features (DPL, ISC/MRO, queued transactions across
   regions).
-* BMS macro syntax — programs use the bricks map DSL. A `bms2map` transpiler
   could be added if real BMS sources need to be imported.
