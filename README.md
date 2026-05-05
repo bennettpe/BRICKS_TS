@@ -1432,7 +1432,7 @@ amount of in-flight deletes can blow the goroutine stack.
 
 ---
 
-## Out of scope for v1
+## Roadmap
 
 * SQL — bricks does not embed a database; data records are simple files.
 * RACF / Top Secret / LDAP — `auth.Authenticator` is the seam to plug those
