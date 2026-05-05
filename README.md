@@ -1,42 +1,30 @@
-# bricks
+# Bricks Transaction Serer
 
 A Go implementation of an IBM CICS-compatible 3270 transaction server. Users
 dial in over telnet (plain or TLS) with a 3270 terminal emulator, sign on via
-a built-in CSSN screen, and run REXX programs whose `EXEC CICS` commands are
-interpreted by a built-in REXX VM with `EXEC CICS` handlers backed by an
+a built-in CSSN scrxeen, and run REXX or COBOL programs whose `EXEC CICS` commands are
+interpreted by a built-in REXX or COBOL VMs with `EXEC CICS` handlers backed by an
 on-disk record store.
 
-```
-+----------------------+     +---------------+     +-----------------+
-| 3270 emulator (user) | --> | bricks server | --> | REXX programs   |
-+----------------------+     +-------+-------+     +--------+--------+
-                                     |                      |
-                                     v                      v
-                            +-----------------+    +------------------+
-                            | maps (custom    |    | EXEC CICS verbs: |
-                            | DSL, blue logo, |    | SEND/RECEIVE MAP |
-                            | sign-on, app    |    | RETURN/ASSIGN    |
-                            | screens)        |    | LINK/XCTL/ABEND  |
-                            +-----------------+    | READ/WRITE FILE  |
-                                                   | STARTBR/READNEXT |
-                                                   | READQ/WRITEQ TS  |
-                                                   +------------------+
-```
+Both dialects and interpreter implementations of REXX and COBOL are mine, and not related
+to BREXX, or Regina. 
 
-The server runs interactively under a framed operator console (see
-[Operator console](#operator-console)); REXX programs are parsed once and
-cached by file mtime, so repeat dispatches and pseudo-conversational
-chains skip the lex+parse cost on every call.
+The EXEC CICS syntax is compatible with CICS, and there are enough calls to enable 
+pseudo-conversational and conversational programs to run as usual. 
+
+Bricks also features a built-in VSAM access method which is then stored inside a BoltDB 
+database for easy management, backup etc. 
+
+Cobol and REXX programs are parsed once and then cached so repeat dispathes skip
+the lex+parse cost. Since every istantiated program has its own heap and stack,there are
+no re-entrancy issues to deal with. Bricks expressely disallows the use of calculated GOTOs 
+in COBOL programs, also for the same reason. 
 
 ---
 
 ## Quick start
 
 ```sh
-# Build the server and the password helper.
-go build -o bricks .
-go build -o brickspw ./cmd/brickspw
-
 # Add a user (admin / admin already exists in runtime/users.conf).
 ./add_brick_user.bash alice "alice's-password" admin,users
 
@@ -53,47 +41,6 @@ the TRANSID prompt; type `CSSN` to sign on, then any defined TRANSID
 
 ---
 
-## File layout
-
-All paths are relative to the working directory unless absolute.
-
-```
-bricks.cnf                 # configuration (INI-style key=value)
-bricks.logo                # ASCII logo shown on connect
-add_brick_user.bash        # add / update / refuse-duplicate user accounts
-
-runtime/
-    users.conf             # username:bcrypt_hash:groups
-    transactions.conf      # transid:type:program[:groups]
-    map/*.map              # screen definitions in the bricks map DSL
-    rexx/*.rexx            # REXX programs invoked by transactions
-    cobol/*.cob            # COBOL programs (free-form subset — see "COBOL subset")
-
-data/
-    files.boltdb           # KSDS file store — bbolt B+tree, one bucket per CICS
-                           # FILE; TS queues live in the same DB under `_ts`,
-                           # one sub-bucket per queue (key = 8-byte BE item #)
-
-cmd/brickspw/              # CLI: emit a bcrypt hash for a password
-cmd/bricksload/            # CLI: TN3270 stress tester w/ live dashboard
-cmd/seed-customers/        # CLI: pre-load CUSTOMERS with 250 sample records
-
-config/                    # INI-style loader
-session/                   # TCB, UCB, Registry — control blocks
-auth/                      # users.conf reader, bcrypt verify, CSSN flow
-tn3270/                    # go3270 helpers: telnet nego, logo, render, msg
-mapdsl/                    # map DSL parser → AST
-rexx/                      # REXX lexer, parser, interpreter, built-ins
-cobol/                     # COBOL lexer, parser, interpreter, cics.Frame adapter
-cics/                      # EXEC CICS command parser and verb handlers
-                           # plus the on-disk file/TS-queue store
-txn/                       # transactions.conf loader + dispatcher loop
-cemt/                      # built-in master-operator transaction
-metrics/                   # JSON snapshot of runtime + counters (/metrics)
-web3270/                   # browser-based 3270 emulator (HTTP + WS)
-```
-
----
 
 ## Configuration — `bricks.cnf`
 
@@ -204,7 +151,7 @@ The script refuses to overwrite an existing user without `--update`.
 
 ## Per-transaction ACL
 
-`runtime/transactions.conf` accepts an **optional 4th field** —
+`runtime/transactions.conf` accepts an **optional last field** —
 comma-separated, case-insensitive group names — that gates dispatch
 per transaction. Format:
 
@@ -455,11 +402,6 @@ transaction's Control Blocks and Performance screens (see below).
 
 ## Operator console
 
-When `bricks` is started in an interactive terminal, it draws a bordered,
-framed log view on `/dev/tty`. All `log.Printf` output from the server lands
-inside the frame; ↑/↓/PgUp/PgDn scroll history; the footer shows the
-running version (from `MinorVersion`), uptime, message count, and a
-`Ctrl+C: Shut down` reminder.
 
 ```
 + bricks — Console View   v0.0.2.1 -----------------------------------+
@@ -478,12 +420,6 @@ running version (from `MinorVersion`), uptime, message count, and a
 Pass `--no-console` to disable the frame and emit raw log output
 (suitable for `nohup` / `systemd` / piping through `tee`).
 
-The console is implemented in `console.go`. It wraps `os.Stdout` and
-`os.Stderr` through pipes, drains them in a goroutine, and renders under
-a single mutex; the original stderr is kept open on `/dev/tty` for the
-frame itself so `bricks | tee bricks.log` still captures everything.
-`log.SetOutput(os.Stderr)` is called after the swap so the default
-logger lands inside the frame instead of on the cached pre-init stderr.
 
 ---
 
@@ -550,23 +486,6 @@ After choosing **P** the user lands on the Performance screen
 +----------------------------------------------------------------------+
 ```
 
-Process-level numbers come from `runtime.MemStats`, `runtime.NumGoroutine`,
-and `syscall.Getrusage(RUSAGE_SELF)` (CPU time portable across macOS,
-Linux, *BSD). Activity numbers come from `cics.ExecTotal` and
-`cics.ExecPerVerb`. The footer is colour-coded: heap/sys MB and verb
-counts in yellow, healthy markers (uptime, EXEC CICS total) in green,
-CPU% goes red intense at ≥ 80%. ENTER refreshes in place; PF3 returns to
-the main CEMT menu.
-
-Implementation notes:
-* `cemt.Run(tcb, registry, banner)` is dispatched specially by
-  `txn.Dispatcher` when the user types `CEMT`. It does not load a REXX
-  program.
-* All data comes from `session.Registry` — `Snapshot()`, `AllFCBs()`,
-  `AllTxns()` — and the package-level counters in `cics/metrics.go`.
-  There is no caching: each render reflects current state.
-* The transaction is read-only in v1; future submenus (Inquire/Set/Discard)
-  will reuse the same package.
 
 ---
 
@@ -847,7 +766,7 @@ date math without REXX-style built-ins:
 `runtime/cobol/qagc.cob` uses `TODAYYR/TODAYMO/TODAYDY` to compute age
 without reference modification.
 
-### Shipped programs
+### Pre-installed Transactions
 
 | Transid | File | Notes |
 |---|---|---|
