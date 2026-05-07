@@ -1,10 +1,9 @@
 # Bricks Transaction Serer
 
 A Go implementation of an IBM CICS-compatible 3270 transaction server. Users
-dial in over telnet (plain or TLS) with a 3270 terminal emulator, sign on via
-a built-in CSSN scrxeen, and run REXX or COBOL programs whose `EXEC CICS` commands are
-interpreted by a built-in REXX or COBOL VMs with `EXEC CICS` handlers backed by an
-on-disk record store.
+dial in with a 3270 terminal emulator, sign on via a built-in CSSN scrxeen, and
+run REXX or COBOL programs whose `EXEC CICS` commands are interpreted by a
+built-in REXX or COBOL VMs with `EXEC CICS` handlers backed by an on-disk record store.
 
 Both dialects and interpreter implementations of REXX and COBOL are mine, and not related
 to BREXX, or Regina. 
