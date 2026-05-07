@@ -401,21 +401,6 @@ transaction's Control Blocks and Performance screens (see below).
 
 ## Operator console
 
-
-```
-+ bricks — Console View   v0.0.2.1 -----------------------------------+
-|                                                                     |
-|  2026/04/30 13:52:20 bricks v0.0.2.1 starting                        |
-|  2026/04/30 13:52:20 loaded 1 users from runtime/users.conf          |
-|  2026/04/30 13:52:20 loaded 5 maps from map                          |
-|  2026/04/30 13:52:24 conn ::1 tls=false term=T0001 size=43x80        |
-|  2026/04/30 13:52:31 term=T0001 signed on as admin                   |
-|  …                                                                  |
-+----------------------------------------------------------------------+
-|  v0.0.2.1   Up: 12m   Msgs: 47   ↑↓/PgUp/PgDn: Scroll  Ctrl+C: …    |
-+----------------------------------------------------------------------+
-```
-
 Pass `--no-console` to disable the frame and emit raw log output
 (suitable for `nohup` / `systemd` / piping through `tee`).
 
@@ -537,7 +522,7 @@ be unique across the directory (case-insensitive).
 
 ---
 
-## REXX subset
+## REXX Syntax
 
 Hand-rolled lexer + parser + tree-walking interpreter (`rexx/`). Supported:
 
@@ -621,7 +606,7 @@ variable) silently writes the wrong tail. The convention used by
 
 ---
 
-## COBOL subset
+## COBOL Syntax
 
 A free-form COBOL interpreter (`cobol/`) sits beside REXX as a second
 front end on the same `EXEC CICS` surface. Same `cics.Handler`, same
