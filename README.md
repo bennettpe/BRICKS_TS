@@ -395,7 +395,8 @@ locking.
 | `cics.ExecPerVerb()`     | Snapshot of `(verb, count)` pairs sorted by count desc. Backed by a `sync.Map` of `*atomic.Int64` so the hot path is lock-free for any verb already seen. |
 
 Live counters can be inspected from a 3270 terminal via the CEMT
-transaction's Control Blocks and Performance screens (see below).
+transaction's INQUIRE CONTROLBLOCKS sub-tree and the MONITOR screen
+(see below).
 
 ---
 
@@ -410,39 +411,56 @@ Pass `--no-console` to disable the frame and emit raw log output
 ## CEMT — master-operator transaction
 
 `CEMT` is a built-in TRANSID (no entry needed in `transactions.conf`,
-implemented in package `cemt/`). It is gated on the `admin` group; non-admin
-users see "access denied" and are returned to the logon prompt.
+implemented in package `cemt/`). The MONITOR and PERFORM branches plus
+the CONTROLBLOCKS sub-tree under INQUIRE are gated on the `admin` group;
+non-admin operators only see the read-only INQUIRE views.
 
 ```
 +-----------------------------------------------------------+
 | BRICKS Transaction Server  •  CEMT — master terminal      |
 |                                                           |
-|   Select an option and press ENTER. PF3 to exit.          |
+|   Pick an option and press ENTER. PF3 to back out.        |
 |                                                           |
-|     C  Control Blocks                                     |
-|     P  Performance                                        |
-|     Q  Quit (or press PF3)                                |
+|     I  INQUIRE   resources, CICS-style                    |
+|     M  MONITOR   process metrics (admin)                  |
+|     P  PERFORM   scans + TS purge (admin)                 |
+|     Q  QUIT      (or press PF3)                           |
 |                                                           |
 |   Choice: _                                               |
 +-----------------------------------------------------------+
 ```
 
-After choosing **C** the user lands on the Control Blocks menu, which shows
-the current count of each control-block kind and lets them drill in:
+Every node accepts any unambiguous abbreviation of its name (so `MON`,
+`MONIT`, `MONITOR` all reach MONITOR; `INQ`, `PERF`, etc. follow the
+same rule), and tokens chain — `CEMT P T` jumps straight to PERFORM →
+TRANS without any intermediate menu.
+
+### CEMT INQUIRE
+
+The CICS-style read-only resource views, plus a CONTROLBLOCKS sub-tree
+that exposes the live runtime control blocks for admins:
 
 ```
-T  TCBs   (3 active terminals)
-U  UCBs   (1 signed-on users)
-X  TxCBs  (0 running transactions)
-F  FCBs   (2 known files)
+S  TS              TS queue stats
+F  FILE            file resources
+U  USER            signed-on users
+T  TERMINAL        connected terminals
+R  TRANSACTION     entries from transactions.conf
+C  CONTROLBLOCKS   TCBs / UCBs / TXCBs / FCBs (admin)
+   ├── T  TCBS    (3 active terminals)
+   ├── U  UCBS    (1 signed-on users)
+   ├── X  TXCBS   (0 running transactions)
+   └── F  FCBS    (2 known files)
 ```
 
-Each detail screen renders a fixed-width table. Columns are auto-sized to the
-widest value, with a fallback to ellipsis when the row would overflow. PF3
-exits CEMT, ENTER returns to the previous menu.
+Each detail screen renders a fixed-width table. Columns are auto-sized
+to the widest value, with a fallback to ellipsis when the row would
+overflow. PF3 exits the screen, ENTER refreshes counters in place.
 
-After choosing **P** the user lands on the Performance screen
-(`cemt/perf.go`):
+### CEMT MONITOR
+
+Process metrics (`cemt/perf.go`). Single screen — a renamed home for
+what used to be `CEMT P PERFORMANCE`:
 
 ```
 +----------------------------------------------------------------------+
@@ -469,6 +487,41 @@ After choosing **P** the user lands on the Performance screen
 |  ENTER=Refresh  PF3=Back                                             |
 +----------------------------------------------------------------------+
 ```
+
+### CEMT PERFORM
+
+The TS-queue purge screen (which used to live under the old `CEMT C S`)
+plus the diagnostic rescans grouped under their own sub-branch:
+
+```
+U  PURGE     (N queues -- type P to purge) -- TS queue purge selector
+R  RESCAN    trans / maps / programs       -- on-disk diagnostic scans
+   ├── T  TRANS     (N transactions, M missing)   -- rescan transactions.conf
+   ├── M  MAP       (N maps, M syntax errors)     -- parse every *.map in MapsDir
+   └── P  PROGRAMS  (N programs, M orphans)       -- walk rexx_dir + cobol_dir
+```
+
+* **PERFORM PURGE** (`CEMT P U`) is the TS-queue list with a per-row
+  P-selector and a confirmation overlay (was `CEMT C S`).
+* **RESCAN TRANS** (`CEMT P R T`) re-stats every program path declared
+  in `runtime/transactions.conf` and renders TRANSID / LANG / PROGRAM /
+  STATUS / PATH. STATUS is `OK` when the file is present, `MISSING` when
+  it is not, or `ERROR: <message>` for any other stat error (e.g. a
+  permission problem). ENTER re-runs the scan, so an operator can fix
+  the conf or drop a file in place and watch a row flip without leaving
+  the screen.
+* **RESCAN MAP** (`CEMT P R M`) walks `MapsDir`, parses every `*.map`
+  with `mapdsl.Parse`, and renders FILE / NAME / STATUS / SYNTAX.
+  STATUS is `OK` when the file is readable, `MISSING` (or the stat
+  error) otherwise. SYNTAX is `Pass` when the parser accepts the file,
+  the parser error verbatim when it doesn't, and `-` when the file
+  isn't readable. The catalog reload path silently keeps the prior
+  catalog when a parse fails — this screen is how an operator finds
+  out which file is broken.
+* **RESCAN PROGRAMS** (`CEMT P R P`) walks `rexx_dir` and `cobol_dir`,
+  lists every regular file, and shows the TRANSIDs in
+  `transactions.conf` that reference it. Files with no matching
+  TRANSID render with TRANSID=`-` so stale leftovers stand out.
 
 
 ---
@@ -1290,7 +1343,7 @@ iterations and the moment of the final snapshot).
 ### `/metrics` endpoint (`bricks/metrics`)
 
 Bricks exposes a JSON snapshot at `http://<host>:<metrics_port>/metrics`
-— the same numbers `CEMT → P` shows on the 3270, but
+— the same numbers `CEMT → M` (MONITOR) shows on the 3270, but
 machine-readable. Default port `9100`; gated on `start_metrics=yes`
 (which is the default). Independent of `start_web3270` — turning the
 browser frontend off does **not** turn metrics off. When both
@@ -1385,7 +1438,7 @@ dropped, freeing its `max_conns_per_ip` slot.
 
 `CSSF LOGOFF` calls `Registry.DetachUserFromTerminal(tcb)` which severs
 the UCB↔TCB link and drops the UCB if the terminal set is empty. The
-prior session no longer leaves an orphan UCB visible in `CEMT → C → U`,
+prior session no longer leaves an orphan UCB visible in `CEMT → I → C → U`,
 and a subsequent `CSSN` for a different userid does not create a
 duplicate UCB.
 
