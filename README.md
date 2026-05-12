@@ -1,23 +1,35 @@
-# Bricks Transaction Serer
+# Bricks Transaction Server
 
 A Go implementation of an IBM CICS-compatible 3270 transaction server. Users
-dial in with a 3270 terminal emulator, sign on via a built-in CSSN scrxeen, and
-run REXX or COBOL programs whose `EXEC CICS` commands are interpreted by a
-built-in REXX or COBOL VMs with `EXEC CICS` handlers backed by an on-disk record store.
+dial in with a 3270 terminal emulator, sign on via a built-in CSSN screen, and
+run REXX or COBOL programs whose `EXEC CICS` commands are interpreted by
+built-in REXX and COBOL VMs with `EXEC CICS` handlers backed by an on-disk
+record store.
 
-Both dialects and interpreter implementations of REXX and COBOL are mine, and not related
-to BREXX, or Regina. 
+Both REXX and COBOL dialects, and their interpreter implementations, are
+original — not related to BREXX or Regina. The `EXEC CICS` surface is
+compatible with CICS, and the supported verb set is enough to run
+pseudo-conversational and conversational programs as usual.
 
-The EXEC CICS syntax is compatible with CICS, and there are enough calls to enable 
-pseudo-conversational and conversational programs to run as usual. 
+Bricks also features a built-in VSAM-style KSDS access method whose records
+are stored inside a single bbolt database for easy management and backup.
 
-Bricks also features a built-in VSAM access method which is then stored inside a BoltDB 
-database for easy management, backup etc. 
+COBOL and REXX programs are parsed once and then cached, so repeat dispatches
+skip the lex+parse cost. Each instantiated program has its own heap and stack,
+so there are no re-entrancy issues. Bricks expressly disallows calculated
+GOTOs in COBOL programs for the same reason.
 
-Cobol and REXX programs are parsed once and then cached so repeat dispathes skip
-the lex+parse cost. Since every istantiated program has its own heap and stack,there are
-no re-entrancy issues to deal with. Bricks expressely disallows the use of calculated GOTOs 
-in COBOL programs, also for the same reason. 
+> **Application programmers:** see **[PROGRAMMING.md](PROGRAMMING.md)** —
+> the *Bricks Application Programming Reference*. It documents the
+> BMS-flavoured map DSL, every supported `EXEC CICS` command (format,
+> options, conditions, examples), the REXX dialect, the COBOL dialect, and
+> sample programs.
+>
+> This README covers **running and operating** bricks: configuration,
+> authentication, control blocks, on-disk file storage, the operator
+> console, CEMT, the `/metrics` endpoint, the embedder API, the CLI
+> utilities, the test suite, the `bricksload` stress tester, and
+> performance / security hardening.
 
 ---
 
@@ -40,7 +52,6 @@ the TRANSID prompt; type `CSSN` to sign on, then any defined TRANSID
 
 ---
 
-
 ## Configuration — `bricks.cnf`
 
 Key=value, one per line, `#` for comments. Keys are case-insensitive.
@@ -61,6 +72,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `data_dir`                   | `data`                        | Holds `files.boltdb` (FILE store + TS queues). |
 | `idle_timeout_secs`          | `900`                         | Read deadline applied to the CSSN sign-on flow and to every blank/logon prompt. A peer that holds the connection open without sending input is dropped at this many seconds. |
 | `max_conns_per_ip`           | `8`                           | Per-client cap. |
+| `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as a contiguous byte slab and reused for the life of the process — Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
 | `banner`                     | `BRICKS Transaction Server`   | Shown at top of system screens. |
 | `dns_name`                   | (none)                        | Informational; printed at startup. |
 | `start_web3270`              | `no`                          | `yes` enables the in-process browser-based 3270 emulator. |
@@ -197,20 +209,30 @@ A denied dispatch surfaces:
 * In the console log: `term=T0001 transid=QAGE access denied;
   user="ALICE" groups=[USERS] required=[ADMIN]`.
 
-`CEMT INQUIRE TRANSACTION` adds a `GROUPS` column showing each
-transaction's ACL (`-` for legacy 3-field entries):
+`CEMT INQUIRE TRANSACTION` shows each transaction's ACL in the
+`GROUPS` column (`-` for legacy 3-field entries) and a live `RES`
+column indicating whether the transaction's program is currently
+resident in the `program_cache` LRU pool. `RES` means a dispatch right
+now would skip the parse and decode the program from the cached
+buffer; `NOT` means the next dispatch will reread and reparse from
+disk (because the program has never been loaded, or has been evicted
+to make room for more-recently-used programs):
 
 ```
-TRANSID  LANG  PROGRAM      INVOKED  CACHED  CACHE%  GROUPS
-QAGE     REXX  qage.rexx    124      123     99%     PUBLIC,USERS,ADMIN
-HELP     REXX  help.rexx    8        7       88%     PUBLIC
-HELO     REXX  hello.rexx   3        2       67%     -
-ADMN     REXX  admn.rexx    0        0       -       ADMIN
+TRANSID  LANG  PROGRAM      INVOKED  CACHED  CACHE%  RES  GROUPS
+QAGE     REXX  qage.rexx    124      123     99%     RES  PUBLIC,USERS,ADMIN
+HELP     REXX  help.rexx    8        7       88%     RES  PUBLIC
+HELO     REXX  hello.rexx   3        2       67%     NOT  -
+ADMN     REXX  admn.rexx    0        0       -       NOT  ADMIN
 ```
 
-The table is hot-reloaded on `transactions.conf` mtime change, so
-adding or tightening an ACL takes effect on the next dispatch with no
-bricks restart.
+The `CACHE%` column is cumulative hit rate over the life of this
+bricks process; `RES`/`NOT` is the instantaneous answer right now.
+They can disagree (e.g. a transaction with a 99% hit rate showing
+`NOT` because its program was just evicted to make room for a hot
+newcomer). The table is hot-reloaded on `transactions.conf` mtime
+change, so adding or tightening an ACL takes effect on the next
+dispatch with no bricks restart.
 
 ---
 
@@ -341,6 +363,86 @@ lock-free. Lock-ordering rule when more than one is needed:
 
 ---
 
+## How file storage works
+
+CICS FILEs in bricks are **KSDS** (key-sequenced data sets), backed by a
+single embedded B+tree database (`go.etcd.io/bbolt`) at
+`data/files.boltdb`. Each CICS FILE is one bbolt **bucket** inside the
+shared database; user-supplied keys map directly to the raw record bytes.
+
+```
+data/
+    files.boltdb          ← single B+tree file
+        bucket "CUSTOMERS"
+            "00100" → "Alice Adams|123 Main St|Springfield, NY|212-555-0100"
+            "00101" → "Bob Brooks|45 Elm St|Riverton, CA|415-555-0101"
+            …
+        bucket "ACCOUNTS"
+            "A0001" → … (each app picks its own record format)
+        bucket "_catalog"
+            "CUSTOMERS" → JSON{records:250, key_max:6, rec_max:80, …}
+            "ACCOUNTS"  → JSON{…}
+```
+
+Properties of the KSDS:
+
+* **Record bodies are opaque.** Bricks does not impose any internal
+  structure on a record — applications choose their own layout (separator-
+  delimited, fixed-width, packed, JSON, raw EBCDIC). The example above
+  uses `name|addr|city|phone` because *that's the application's choice*;
+  bricks stores those bytes verbatim.
+* **B+tree index.** READ by exact key is O(log n). STARTBR positions on
+  any key in O(log n) and READNEXT walks in B+tree order in O(1) per step.
+* **MVCC snapshot reads.** STARTBR opens a bbolt read transaction; the
+  cursor walks a stable point-in-time view, so concurrent WRITE/REWRITE/
+  DELETE on the same FILE don't disturb an in-progress browse.
+* **Atomic writes.** WRITE/REWRITE/DELETE run inside a bbolt write
+  transaction with `fsync` on commit; partial updates are never visible
+  on disk after a crash.
+* **Implicit DEFINE.** First WRITE to a FILE creates its bucket. There
+  is no `EXEC CICS DEFINE FILE` step.
+* **Per-FILE metadata.** A `_catalog` bucket tracks record count,
+  last-modified, max key length, max record length, and creation time,
+  so `CEMT INQUIRE FILE` shows accurate numbers without scanning the
+  data bucket. The catalog is bricks-internal — REXX programs never see
+  it.
+* **Initial mmap.** bbolt is opened with a 4 MiB initial mmap so a
+  long-running browse cursor doesn't deadlock against a write that needs
+  to grow the file. Demo workloads (a few thousand records) never hit
+  the grow path.
+
+What this means for `EXEC CICS READ` / `WRITE` / `REWRITE` / `DELETE`:
+
+| Verb | What bricks does on disk |
+|------|-------------------------|
+| `READ FILE('CUSTOMERS') INTO(REC) RIDFLD(K)` | One bbolt `View` tx, one B+tree lookup. The record bytes (whatever the app stored) come back into REC unchanged. |
+| `WRITE FILE('CUSTOMERS') FROM(REC) RIDFLD(K)` | One bbolt `Update` tx: B+tree insert, `_catalog` bookkeeping, fsync. DUPREC if the key is already present. |
+| `REWRITE FILE('CUSTOMERS') FROM(REC)` | Update tx that overwrites the value at the key locked by the prior READ UPDATE. Releases the per-FCB update lock at end of tx. |
+| `DELETE FILE('CUSTOMERS') RIDFLD(K)` | Update tx that deletes the bucket entry; `_catalog` record count drops by one. |
+
+What this means for `STARTBR / READNEXT / READPREV / RESETBR / ENDBR`:
+
+* STARTBR opens a bbolt read tx + cursor; positions according to RIDFLD /
+  GTEQ / EQUAL / GENERIC + KEYLENGTH (see the verb reference in
+  [PROGRAMMING.md](PROGRAMMING.md)).
+* READNEXT advances the cursor; with GENERIC active, returns `ENDFILE`
+  the moment the prefix breaks (no full-file scan).
+* READPREV walks backward from current position with the same prefix
+  rule. Useful for paginating backwards through a key range.
+* RESETBR repositions the cursor without closing the tx — cheaper than
+  ENDBR + STARTBR when a program jumps inside the same browse session.
+* ENDBR commits-rollback the read tx and releases its MVCC snapshot.
+
+Pre-load 250 sample customers for the CUST transaction:
+
+```sh
+go run ./cmd/seed-customers
+```
+
+The seeder is idempotent; re-running adds only the missing rows.
+
+---
+
 ## Performance counters
 
 All counters are `atomic.Uint64` so they can be sampled at any time without
@@ -405,15 +507,15 @@ transaction's INQUIRE CONTROLBLOCKS sub-tree and the MONITOR screen
 Pass `--no-console` to disable the frame and emit raw log output
 (suitable for `nohup` / `systemd` / piping through `tee`).
 
-
 ---
 
 ## CEMT — master-operator transaction
 
 `CEMT` is a built-in TRANSID (no entry needed in `transactions.conf`,
-implemented in package `cemt/`). The MONITOR and PERFORM branches plus
-the CONTROLBLOCKS sub-tree under INQUIRE are gated on the `admin` group;
-non-admin operators only see the read-only INQUIRE views.
+implemented in package `cemt/`). INQUIRE (except its CONTROLBLOCKS
+sub-tree) and MONITOR are open to any signed-on user; CONTROLBLOCKS
+and PERFORM are gated on the `admin` group because they expose
+internal control-block details and run mutating actions (purge / rescan).
 
 ```
 +-----------------------------------------------------------+
@@ -422,7 +524,7 @@ non-admin operators only see the read-only INQUIRE views.
 |   Pick an option and press ENTER. PF3 to back out.        |
 |                                                           |
 |     I  INQUIRE   resources, CICS-style                    |
-|     M  MONITOR   process metrics (admin)                  |
+|     M  MONITOR   process metrics                          |
 |     P  PERFORM   scans + TS purge (admin)                 |
 |     Q  QUIT      (or press PF3)                           |
 |                                                           |
@@ -523,605 +625,19 @@ R  RESCAN    trans / maps / programs       -- on-disk diagnostic scans
   `transactions.conf` that reference it. Files with no matching
   TRANSID render with TRANSID=`-` so stale leftovers stand out.
 
-
 ---
 
-## The map DSL
-
-Custom, line-oriented, BMS-flavored. Comments start with `*`. Layout:
-
-```
-* CICS sign-on screen
-MAP CSSN SIZE 24x80
-  FIELD AT 1,28 LEN 24 PROT BRIGHT COLOR=TURQUOISE  "BRICKS SIGN-ON"
-  FIELD AT 6,15 LEN 9  PROT                         "Userid:"
-  INPUT USERID   AT 6,25 LEN 8 UNDERSCORE COLOR=GREEN
-  STOP           AT 6,34
-  FIELD AT 8,15 LEN 9  PROT                         "Password:"
-  INPUT PASSWORD AT 8,25 LEN 8 HIDDEN UNDERSCORE COLOR=RED
-  STOP           AT 8,34
-  CURSOR         AT USERID
-ENDMAP
-```
-
-Statements:
-* `MAP <NAME> SIZE rowsxcols` — the header.
-* `FIELD AT r,c LEN n <attrs> "literal"` — display-only field.
-* `INPUT NAME AT r,c LEN n <attrs> [DEFAULT "value"]` — input field. `PROT`
-  makes it write-protected but still named (useful for `SEND MAP FROM(STEM.)`
-  output).
-* `STOP AT r,c` — autoskip stop (ends an input field).
-* `CURSOR AT <field-name>` *or* `CURSOR AT r,c` — explicit cursor home. The
-  named form looks up any defined `FIELD` or `INPUT` in the map and resolves
-  to `(field.Row, field.Col + 1)` automatically — i.e. one byte to the
-  right of the field's leading 3270 attribute byte, which is the writable
-  cell. It works on display fields too, so maps without any `INPUT` (e.g.
-  splash screens) can still anchor the cursor on a named display `FIELD`.
-  The numeric form is kept for cases where the cursor target is not on
-  any defined field. Forward references work — `CURSOR AT BAR` may appear
-  before `INPUT BAR …` because the name is resolved after the whole map is
-  parsed. When `CURSOR` is omitted entirely, the renderer falls back to
-  `firstInput.Row, firstInput.Col + 1`.
-* `ENDMAP` — ends the map.
-
-Attributes: `PROT`, `UNPROT`, `BRIGHT`, `DIM`, `UNDERSCORE`, `HIDDEN`,
-`NUMERIC`, `MDT`, `BLINK`, `REVERSE`, `COLOR=BLUE|RED|PINK|GREEN|TURQUOISE|YELLOW|WHITE`.
-
-`mapdsl.NewCatalog(dir)` loads every `*.map` file at startup and self-refreshes
-on subsequent edits (each `Lookup` stats the directory + the source file
-backing the requested map name; on mtime change the directory is reparsed
-and swapped atomically; parse errors keep the prior catalog). Map names must
-be unique across the directory (case-insensitive).
-
----
-
-## REXX Syntax
-
-Hand-rolled lexer + parser + tree-walking interpreter (`rexx/`). Supported:
-
-* Variables (case-insensitive, NOVALUE returns the uppercased name).
-* Stems with default value: `STEM. = 'unset'; STEM.42 = 'forty-two'`.
-* **Compound-variable tail substitution**. Non-numeric tail symbols are
-  resolved at every reference: with `J = 3`, `A.J` reads/writes `A.3`. Pure
-  numeric tails (`A.0`, `A.42`) and unset tail symbols (REXX NOVALUE)
-  remain literal. Multi-segment tails work too: `A.I.J` with `I=1, J=2`
-  references `A.1.2`. Implemented in `rexx/parser.go` (`makeVarExpr`) and
-  `rexx/interp.go` (`resolveCompoundName`).
-* Procedures with their own scope: `NAME: PROCEDURE [EXPOSE list]` …
-  `RETURN`. EXPOSE re-routes named/stem variables to the caller's frame
-  recursively.
-* Control: `IF expr THEN [ELSE]`, `SELECT … WHEN … OTHERWISE … END`,
-  `DO`, `DO N`, `DO var=a TO b BY s`, `DO WHILE`, `DO UNTIL`, `DO FOREVER`,
-  `DO var OVER stem.` (iterate over each tail of a stem; numeric tails
-  sort first, then lexicographic).
-* Loop control: `LEAVE [ctrlvar]` exits the innermost (or named outer) DO;
-  `ITERATE [ctrlvar]` skips to the next iteration of the innermost (or
-  named outer) DO.
-* `DROP name [name…]` removes one or more variables. A trailing `.` drops
-  the entire stem (default + every tail) — common idiom: `DROP RECS.` to
-  reset an accumulator between paginated reads.
-* I/O: `SAY`, `PARSE [UPPER] {VAR var | VALUE … WITH | ARG | PULL} template`
-  with full template support — string anchors, absolute (`n`) and relative
-  (`+n`/`-n`) column markers, `.` placeholder, bare-variable runs.
-* `CALL`, `RETURN`, `EXIT`, `SIGNAL <label>`, `NOP` (a real no-op statement
-  so `OTHERWISE NOP` works inside `SELECT`).
-* `SIGNAL ON {ERROR | NOVALUE | SYNTAX | HALT} [NAME label]` — armed
-  conditions are honoured at runtime: ERROR fires when an `EXEC CICS`
-  command returns non-zero RC; NOVALUE fires on reference to an unset
-  simple or compound variable; SYNTAX catches any other interpreter error
-  (bad numeric, divide by zero, unknown function, etc.). Without an armed
-  trap, the legacy "test EIBRESP after every verb" pattern still works.
-  When a trap fires, `SIGL` is set to the source line of the failing
-  statement before jumping to the labelled handler. `SIGNAL OFF cond`
-  disarms.
-* `INTERPRET expr` — evaluate the string value of `expr` as REXX source
-  and execute it in the current frame.
-* `NUMERIC DIGITS n` / `NUMERIC FUZZ n` / `NUMERIC FORM SCIENTIFIC|ENGINEERING`
-  — the syntax and basic settings are honoured; arithmetic is float64
-  internally so DIGITS controls output rounding (via `FORMAT(x, before, after)`)
-  rather than driving a true decimal engine. `DIGITS()`, `FUZZ()`, `FORM()`
-  return the current settings.
-* `ADDRESS <env>` — switches the active `AddressHandler`. Bare strings inside
-  an `ADDRESS` scope are commands; bricks ships a `CICS` handler.
-* Built-in functions, organised by family:
-
-  | Family | Functions |
-  |---|---|
-  | Length / index | `LENGTH`, `POS`, `LASTPOS`, `WORDS`, `WORDPOS`, `WORDINDEX`, `WORDLENGTH`, `COUNTSTR` |
-  | Substring | `SUBSTR`, `LEFT`, `RIGHT`, `SUBWORD`, `WORD`, `DELSTR`, `DELWORD`, `INSERT`, `OVERLAY`, `CHANGESTR` |
-  | Whitespace / case | `STRIP`, `SPACE`, `CENTER` (alias `CENTRE`), `JUSTIFY`, `UPPER`, `LOWER`, `REVERSE`, `COPIES`, `ABBREV` |
-  | Translation | `TRANSLATE`, `VERIFY`, `COMPARE`, `XRANGE`, `BITAND`, `BITOR`, `BITXOR` |
-  | Conversion | `C2X`, `X2C`, `D2X`, `X2D`, `D2C`, `C2D`, `B2X`, `X2B` |
-  | Numeric | `ABS`, `MAX`, `MIN`, `INT`, `TRUNC`, `MOD` (= `//` operator), `SIGN`, `FORMAT(num, before, after)`, `DIGITS`, `FUZZ`, `FORM` |
-  | Type / data | `DATATYPE` (with `N`, `W`, `A` options), `LENGTH` |
-  | Date / time | `DATE` (`N`/`S`/`E`/`U`/`O`/`B`; `B` does basedate arithmetic), `TIME` |
-  | Variables / args | `VALUE`, `ARG`, `RANDOM`, `ERRORTEXT` |
-
-  `VALUE` accepts the canonical 1-arg read form (`VALUE('SCR.ROW' || J)`)
-  and the 2-arg assignment form (`CALL VALUE 'SCR.ROW' || J, LINE` — sets
-  the variable named at runtime and returns the prior value). `C2X` is the
-  standard way to compare `EIBAID` to a PF-key code:
-  `IF C2X(EIBAID) = 'F7' THEN …` for PF7. `DATE('B')` and
-  `DATE('B', 'YYYYMMDD', 'S')` give days since 0001-01-01 — subtract two
-  basedates for an exact day delta.
-* Operators: `+ - * / % // **`, comparisons (numeric when both sides parse
-  as numbers, trimmed-string otherwise), `||` and juxtaposition concat,
-  `& |`, unary `\`.
-
-### Compound-symbol pitfall
-
-`STEM.tail` with `tail` an *unset* symbol resolves to `STEM.<TAIL>` (a
-literal tail). With `tail` a *set* symbol it resolves to `STEM.<value-of-tail>`
-— so reusing a map field name (`OUT.BIRTH = …` when `BIRTH` is also a local
-variable) silently writes the wrong tail. The convention used by
-`runtime/rexx/cust.rexx` is to give locals distinct names from map fields
-(`AKT` vs `ACTION`, `CKEY` vs `CUSTNO`, `BSTR`/`NDAYS` vs `BIRTH`/`DAYS`).
-
----
-
-## COBOL Syntax
-
-A free-form COBOL interpreter (`cobol/`) sits beside REXX as a second
-front end on the same `EXEC CICS` surface. Same `cics.Handler`, same
-`cics.Frame` interface, same response-code semantics — the only
-language-specific layer is `cobol/frame.go`, which adapts COBOL's
-group-item world to the REXX-style `STEM.TAIL` lookup the CICS handlers
-use. A program is a COBOL transaction iff its `transactions.conf`
-entry's type column is `cobol`:
-
-```
-HELC:cobol:hello.cob:public
-GUST:cobol:gust.cob:public
-QAGC:cobol:qagc.cob:public,users,admin
-```
-
-`CEMT INQUIRE TRANSACTION` shows `COBOL` in the LANG column for these
-entries; `COBOL` and `REXX` programs can `EXEC CICS LINK` to each
-other through the same dispatcher with `DFHCOMMAREA` marshalled as
-opaque bytes.
-
-### Source shape
-
-Free-form: no column 1-72 ruling, no Area A / Area B, hyphens allowed
-in identifiers (`CUST-RECORD`). Comments use modern `*>` anywhere on a
-line, or legacy `*` in column 1. Strings use `'...'` or `"..."` with
-quote-doubling for embedded quotes. Hex literals like `X'F3'` and
-`X"7C"` decode to their byte value — used for `IF EIBAID = X'F3'` to
-check PF3 / PF12 / etc. without `C2X(EIBAID) = 'F3'` round-trips.
-
-The four divisions parse in their canonical order:
-
-```cobol
-       IDENTIFICATION DIVISION.
-       PROGRAM-ID. HELC.
-
-       ENVIRONMENT DIVISION.        *> optional, must be empty
-
-       DATA DIVISION.
-       WORKING-STORAGE SECTION.
-       01 SCR.
-          05 INFOLINE PIC X(78).
-          05 GREETING PIC X(20).
-
-       PROCEDURE DIVISION.
-       MAIN.
-           MOVE 'Hello' TO GREETING.
-           EXEC CICS SEND MAP('HELO1') FROM(SCR) ERASE END-EXEC.
-           EXEC CICS RETURN END-EXEC.
-           STOP RUN.
-```
-
-`LINKAGE SECTION` is not yet parsed; `DFHCOMMAREA` is auto-injected as
-`PIC X(2000)` if the program doesn't declare it (see
-`cobol.ensureSystemItems`), so a sub-program can `MOVE DFHCOMMAREA TO
-key` immediately. The dispatcher rstrip's trailing space when reading
-the COBOL frame's `DFHCOMMAREA` back out, so a fixed-width buffer
-round-trips cleanly across an inter-language `EXEC CICS LINK`.
-
-### DATA DIVISION
-
-* PIC clauses: `X(n)` alphanumeric, `9(n)` integer, `S9(n)` signed,
-  `9(n)V99` decimal (the `V` is positional, no real binary scaling
-  yet — arithmetic is float64 internally).
-* `VALUE 'literal'`, `VALUE 42`, `VALUE SPACES / ZEROS / HIGH-VALUES /
-  LOW-VALUES / QUOTES`.
-* Group items: `01 PARENT. 05 CHILD PIC X(8). 05 OTHER PIC X(4).`
-  Children are stored as offsets into a single parent buffer, so
-  `MOVE` to the parent fans out and `EXEC CICS SEND MAP FROM(PARENT)`
-  walks the children for field values.
-* **All data names are globally unique.** `DataByName` is one map per
-  program — you can't have `CUSTNO` as a child of both `SCR` and
-  `DET`. The convention used by `runtime/cobol/gust.cob` is to prefix
-  the second occurrence (`DCUSTNO`, `DNAME`, `DMSG`) since real COBOL
-  would normally use `MOVE x OF DET` qualification, which the bricks
-  parser doesn't support yet.
-
-### PROCEDURE DIVISION
-
-Statements supported: `MOVE`, `DISPLAY`, `STOP RUN`, `GOBACK`, `EXIT`,
-`EXIT PROGRAM`, `CONTINUE` (no-op), `IF ... [ELSE] ... END-IF`,
-`EVALUATE subject WHEN value [WHEN value] ... [WHEN OTHER] ...
-END-EVALUATE`, `PERFORM para`, `PERFORM para UNTIL cond`, `GO TO para`,
-`COMPUTE target = expr`, `ADD a TO b [GIVING c]`, `SUBTRACT a FROM b
-[GIVING c]`, `STRING ... DELIMITED BY (SIZE | 'lit') INTO target
-END-STRING`, `UNSTRING source DELIMITED BY 'lit' INTO t1 t2 ...
-END-UNSTRING`, `EXEC CICS ... END-EXEC`.
-
-Periods are scope-terminators, not per-statement: a statement inside
-an `IF ... END-IF` body has no period; only the unscoped statement at
-the paragraph level does. IBM-style postfix NOT (`X NOT = Y`,
-`X NOT > Y`) is supported in `IF` / `EVALUATE` / `PERFORM UNTIL`
-conditions.
-
-`FUNCTION UPPER-CASE(item)` and `FUNCTION LOWER-CASE(item)` are the
-two intrinsic functions shipped today — enough for the
-`MOVE FUNCTION UPPER-CASE(ACTION) TO ACTION` idiom that lets a menu
-tolerate lowercase typing without an `INSPECT REPLACING` rewrite.
-More IBM intrinsics (NUMVAL, LENGTH, etc.) land in Phase 7.
-
-`EVALUATE` only supports the simple value form. `EVALUATE TRUE` /
-`EVALUATE FALSE` is rejected at parse time with a hint to rewrite as
-`IF/ELSE` — those forms (and `WHEN ... THRU ...` ranges, multi-
-subject `ALSO` clauses, condition-name arms) are Phase 7.
-
-### EIB block
-
-`EIBRESP`, `EIBRESP2`, `EIBAID`, `EIBCPOSN`, `EIBCALEN`, `EIBTRMID`,
-`RC`, and `DFHCOMMAREA` are auto-injected if not declared, so most
-programs need no boilerplate. After every `EXEC CICS`, `EIBRESP` /
-`EIBRESP2` are populated by the handler the same way they are for
-REXX. The legacy "test EIBRESP after every verb" pattern is the
-recommended idiom (no `RAISING` / `SIGNAL ON ERROR` equivalent yet).
-
-### EXEC CICS
-
-The COBOL parser collects every token between `EXEC CICS` and
-`END-EXEC` and reconstructs the body verbatim for the same
-`cics.ParseCommand` REXX uses. Two consequences:
-
-* **Map-field names must match group-child names exactly.** When
-  `EXEC CICS SEND MAP('CUST1') FROM(SCR)` fires, the CICS handler
-  asks the frame for `SCR.INFOLINE`, `SCR.MSG`, etc. — so SCR must
-  have children spelled exactly as the map declares fields. Real
-  COBOL solves this with BMS-generated copybooks; bricks doesn't ship
-  those, so the operator declares fields by hand.
-* **`DFHCOMMAREA` is the COMMAREA marshalling slot.** Caller passes
-  bytes in via the frame; sub-program reads with `MOVE DFHCOMMAREA TO
-  ...`, mutates a working copy, and `MOVE ... TO DFHCOMMAREA`. Trailing
-  space is stripped by the dispatcher on the way back out.
-
-A few `ASSIGN` options are bricks-specific so the COBOL subset can do
-date math without REXX-style built-ins:
-
-| Option | Returns |
-|---|---|
-| `DATE(target)` | Today as YYYYMMDD |
-| `TIME(target)` | Now as HHMMSS |
-| `TODAYYR(target)` / `TODAYMO(target)` / `TODAYDY(target)` | Today's year / month / day individually |
-| `DAYCOUNT(target)` | Days since 1970-01-01 |
-
-`runtime/cobol/qagc.cob` uses `TODAYYR/TODAYMO/TODAYDY` to compute age
-without reference modification.
-
-### Pre-installed Transactions
-
-| Transid | File | Notes |
-|---|---|---|
-| `HELC` | `runtime/cobol/hello.cob` | Hello-world; SEND MAP('HELO1') FROM(SCR), RETURN. Smallest end-to-end demo. |
-| `QAGC` | `runtime/cobol/qagc.cob` | COBOL twin of `QAGR` (REXX). Validates the QAGE1 birthdate, computes age in years and approximate days, sends QAGR1. Pseudo-conversational redisplay of QAGE1 on validation errors. |
-| `GUST` | `runtime/cobol/gust.cob` | Cut-down COBOL `CUST`. A=Add, Q=Query, D=Delete; U/L/S print a "Phase 7" stub message because they need STRING/UNSTRING/INSPECT. |
-| `GUSV` | `runtime/cobol/gusv.cob` | COBOL twin of `CUSV`. Validates the customer-number COMMAREA (LINK target). |
-| `GUSL` | `runtime/cobol/gusl.cob` | COBOL twin of `CUSL`, page-1-only. Demonstrates STARTBR/READNEXT/ENDBR; paging + filtering need PERFORM VARYING + dynamic field assignment (Phase 7). |
-
-### What's deferred (Phase 7)
-
-* `LINKAGE SECTION` end-to-end (right now `DFHCOMMAREA` is auto-injected
-  in WORKING-STORAGE; a real LINKAGE SECTION would let an operator
-  declare per-program COMMAREA shapes).
-* `INSPECT TALLYING / REPLACING`, `POS` (substring search), and the
-  rest of the FUNCTION library (NUMVAL, LENGTH, TRIM, etc.) beyond
-  UPPER-CASE / LOWER-CASE. Substring search is what blocks GUSL's
-  filter-by-search-term path; today GUST's `S` action prints a
-  REXX-only message rather than degrading silently.
-* Reference modification (`DATE-FIELD(1:4)` for substring access).
-* `PERFORM N TIMES` / `PERFORM VARYING ... FROM ... BY ... UNTIL ...`
-  and `OCCURS` arrays — needed for clean paginated browses and
-  dynamic field assignment. GUSL's row 1..15 fan-out is unrolled
-  by hand today.
-* `MULTIPLY / DIVIDE`, `ROUNDED`, `ON SIZE ERROR` (the parser
-  accepts and ignores `ROUNDED` / `ON SIZE ERROR` today).
-* Group-item qualification (`MOVE x OF DET TO y OF SCR`) — until
-  this lands, group children must have unique names across the
-  program.
-* SCREENHT-based map family suffix (e.g. `CUST1L` on a mod-4 screen).
-  REXX programs do this with a runtime `IF SCRH >= 43 THEN ...`
-  fallback after a MAPFAIL; the COBOL twins always render the
-  unsuffixed mod-2 maps for now.
-
----
-
-## EXEC CICS commands
-
-Bricks accepts two equivalent surface forms inside an `ADDRESS CICS` scope:
-
-**1. IBM-canonical `EXEC CICS … END-EXEC`** (the form experienced CICS
-programmers expect, matching the COBOL/PL/I/REXX-on-CICS reference):
-
-```rexx
-ADDRESS CICS
-
-EXEC CICS ASSIGN USERID(USR) TERMID(TRM) CONNECTED(CT) END-EXEC
-
-EXEC CICS SEND MAP('HELO1')
-              FROM(SCR.)
-              ERASE
-END-EXEC
-
-EXEC CICS RETURN END-EXEC
-```
-
-A small preprocessor (`rexx/preprocess.go`, called from `rexx.Parse`) rewrites
-each `EXEC CICS … END-EXEC` block into the equivalent quoted-string command
-before lexing. Multi-line bodies are collapsed to a single command string;
-trailing newlines are inserted to keep error line numbers honest. Comments
-and string literals are left alone.
-
-**2. Bare-string-under-`ADDRESS CICS`** (terser, identical semantics):
-
-```rexx
-ADDRESS CICS
-"ASSIGN USERID(USR) TERMID(TRM)"
-"SEND MAP('HELO1') FROM(SCR.) ERASE"
-"RETURN"
-```
-
-Both forms dispatch through the same path: `cics.ParseCommand` parses the
-verb plus options/flags, the matching handler runs, and `EIBRESP` /
-`EIBRESP2` / `RC` are set after every call.
-
-The supported verbs and options are listed below — implemented in
-`cics/handler.go` (dispatch) and `cics/files.go` / `cics/ts.go`.
-
-| Verb                                     | Notes |
-|------------------------------------------|-------|
-| `SEND MAP(name) [FROM(stem.)] [ERASE] [CURSOR(pos)]` | Loads the named map, fills named fields from the REXX stem, paints the screen. Captures the response on the TCB for `RECEIVE MAP`. |
-| `RECEIVE MAP(name) [INTO(stem.)]`        | Pulls the response stored by `SEND MAP` into a stem (`MAP.<field>` by default). `MAPFAIL` if no prior matching SEND. |
-| `RETURN [TRANSID(id)] [COMMAREA(data)]`  | Sets `tcb.NextTransid` / `tcb.Commarea` and ends the task. |
-| `ASSIGN <FIELD>(var) …`                  | Reads EIB / session fields into REXX vars: `USERID`, `TERMID`, `EIBAID`, `EIBCPOSN`, `EIBCALEN`, `ALTSCRNHT`/`ALTSCRNWD`/`SCREENHT`/`SCREENWD`. |
-| `ABEND [ABCODE(code)] [NODUMP]`          | Ends the task with the supplied code. |
-| `XCTL PROGRAM(name) [COMMAREA(d)]`       | Transfer of control (no return). |
-| `LINK PROGRAM(name) [COMMAREA(var\|'lit')]` | Synchronous sub-program call. The target program (resolved through `transactions.conf`) runs in a fresh REXX frame with `DFHCOMMAREA` pre-loaded; on return, the sub-program's final `DFHCOMMAREA` is written back to the caller's `COMMAREA(var)`. Caller state (`NextTransid`, `Commarea`, `LastResponse`/`LastMapName`) is saved and restored so the LINK is transparent. |
-| `READ FILE(f) {INTO\|SET}(var) RIDFLD(k) [UPDATE] [LENGTH(var)]` | Reads a record from the KSDS by key (B+tree lookup, O(log n)). `UPDATE` records a per-session lock that gates a subsequent `REWRITE`. When `LENGTH(var)` is a bare REXX variable, the actual record length is written back. |
-| `WRITE FILE(f) FROM(var) RIDFLD(k)`      | Creates a record. `DUPREC` (RESP=14) if a record with the same key already exists. The bucket is created implicitly on first WRITE — no DEFINE FILE needed. |
-| `REWRITE FILE(f) FROM(var)`              | Replaces the record locked by the most recent `READ … UPDATE` on the same FILE. INVREQ if there's no prior READ UPDATE. Releases the per-FCB update lock. |
-| `DELETE FILE(f) [RIDFLD(k)]`             | Removes a record. Uses RIDFLD if supplied, otherwise the key from the most recent READ UPDATE. |
-| `STARTBR FILE(f) [RIDFLD(start)] [GTEQ\|EQUAL] [GENERIC] [KEYLENGTH(n)]` | Opens a B+tree browse cursor on the file (bbolt MVCC read tx — sees a stable snapshot). With no RIDFLD, positions on the first key. With RIDFLD + GTEQ (default) on the first key ≥ start. With EQUAL, requires an exact match (NOTFND if absent). With GENERIC + KEYLENGTH(n), positions on and walks only keys whose first n bytes match the first n bytes of RIDFLD. |
-| `READNEXT FILE(f) INTO(var) RIDFLD(var) [LENGTH(var)]` | Forward step on the open browse. Writes the record into INTO(var), the matching key back to RIDFLD(var), and the actual length to LENGTH(var) when each is a bare REXX variable. Returns `ENDFILE` (RESP=20) past the last key (or past the GENERIC prefix). |
-| `READPREV FILE(f) INTO(var) RIDFLD(var) [LENGTH(var)]` | Backward step on the open browse. Same writeback rules; ENDFILE before the first key. |
-| `RESETBR FILE(f) RIDFLD(start) [GTEQ\|EQUAL] [GENERIC] [KEYLENGTH(n)]` | Repositions an open cursor without closing the read tx. Cheaper than ENDBR + STARTBR when a program wants to jump within the same browse session. |
-| `ENDBR FILE(f)`                          | Releases the browse cursor and the underlying bbolt read transaction. The dispatcher also releases any cursor the program forgot to ENDBR via a `defer handler.CloseBrowses()`. |
-| `READQ TS QUEUE(q) INTO(var) [ITEM(n)] [NEXT] [NUMITEMS(var)] [LENGTH(var)]` | Reads a TS queue item. With no `ITEM` (or with `NEXT`), advances the **per-task implicit cursor**: the first cursor-less READQ on a queue returns item 1, the second returns item 2, etc. — IBM TRL semantics. The cursor is keyed on the running TxCB and released when the task ends, so a fresh `CONS` invocation starts at item 1 again. `QNAME` is accepted as a synonym for `QUEUE`. |
-| `WRITEQ TS QUEUE(q) FROM(var) [ITEM(n) REWRITE]` | Appends an item, or rewrites item `n`. Items are stored in a bbolt sub-bucket per queue (8-byte big-endian item number → payload), so a single queue scales to millions of items without filesystem-directory pressure and reads/writes are O(log N). Append uses an in-memory high-water-mark counter (no scan); writes commit in one bbolt transaction so a crash mid-write leaves either the prior state or the new one. When `ITEM(var)` is a bare variable on append, the assigned item number is stored back. `QNAME` is accepted as a synonym for `QUEUE`. |
-| `DELETEQ TS QUEUE(q)`                    | Drops the queue's sub-bucket and resets in-memory counters / cursors. |
-
-`READQ TD` / `WRITEQ TD` / `DELETEQ TD` are parsed (the verb has a `TD`
-sub-form) but explicitly rejected with an `INVREQ` and a clear error
-message — bricks only implements TS today, and silently routing TD to
-TS would mask a real semantic difference (transient data has one-shot
-read-and-destroy semantics that TS doesn't).
-
-**TS queue counters and CEMT visibility.** Every queue carries
-in-memory counters for reads, writes, rewrites, and a `LastAccess`
-timestamp; `CEMT INQUIRE TS` (or `CEMT I S`) renders all of them
-plus the live item count. The screen refreshes on every ENTER:
-
-```
-QUEUE   ITEMS  READS  WRITES  REWRT  LASTACC      STATUS
-BENCHQ  1234   980    1234    2      18:42:11.084 ENABLED
-```
-
-**Worked examples:** `runtime/rexx/prod.rexx` is a producer that does
-`WRITEQ TS QUEUE(QNAME) FROM(PAYLOAD)` from an interactive PROD1 map;
-`runtime/rexx/cons.rexx` is a consumer that loops over the cursor-
-advancing READQ, with PF4 to `DELETEQ` and PF5 to rewind by chaining
-back to itself (so the dispatcher's task-end hook clears the cursor).
-Both are conversational: the screen stays up across operator inputs.
-
-```rexx
-/* PROD: write one item per ENTER */
-ADDRESS CICS
-DO FOREVER
-  EXEC CICS SEND MAP('PROD1') FROM(SCR.) ERASE END-EXEC
-  EXEC CICS RECEIVE MAP('PROD1')           END-EXEC
-  IF C2X(EIBAID) = 'F3' THEN EXEC CICS RETURN END-EXEC
-  EXEC CICS WRITEQ TS QUEUE(MAP.QNAME) FROM(MAP.PAYLOAD) END-EXEC
-END
-```
-
-```rexx
-/* CONS: cursor-advancing read */
-ADDRESS CICS
-DO FOREVER
-  EXEC CICS SEND MAP('CONS1') FROM(SCR.) ERASE END-EXEC
-  EXEC CICS RECEIVE MAP('CONS1')           END-EXEC
-  IF C2X(EIBAID) = 'F3' THEN EXEC CICS RETURN END-EXEC
-  EXEC CICS READQ TS QUEUE(QNM) INTO(REC) ITEM(GOTI) END-EXEC
-  IF EIBRESP = 26 THEN /* ITEMERR — end of queue */ NOP
-END
-```
-
-`FILE(...)` and `QUEUE(...)` names are validated against
-`^[A-Za-z0-9_-]{1,64}$` before any bucket / path is composed; an invalid name
-yields `INVREQ` with a clean error message. See
-[Performance and security hardening](#performance-and-security-hardening).
-
-Response codes are the IBM-standard subset in `cics/resp.go`
-(`NORMAL=0`, `NOTFND=13`, `DUPREC=14`, `INVREQ=16`, `IOERR=17`, `ENDFILE=20`,
-`ITEMERR=26`, `PGMIDERR=27`, `MAPFAIL=36`, `QIDERR=44`, …).
-
----
-
-## How file storage works
-
-CICS FILEs in bricks are **KSDS** (key-sequenced data sets), backed by a
-single embedded B+tree database (`go.etcd.io/bbolt`) at
-`data/files.boltdb`. Each CICS FILE is one bbolt **bucket** inside the
-shared database; user-supplied keys map directly to the raw record bytes.
-
-```
-data/
-    files.boltdb          ← single B+tree file
-        bucket "CUSTOMERS"
-            "00100" → "Alice Adams|123 Main St|Springfield, NY|212-555-0100"
-            "00101" → "Bob Brooks|45 Elm St|Riverton, CA|415-555-0101"
-            …
-        bucket "ACCOUNTS"
-            "A0001" → … (each app picks its own record format)
-        bucket "_catalog"
-            "CUSTOMERS" → JSON{records:250, key_max:6, rec_max:80, …}
-            "ACCOUNTS"  → JSON{…}
-```
-
-Properties of the KSDS:
-
-* **Record bodies are opaque.** Bricks does not impose any internal
-  structure on a record — applications choose their own layout (separator-
-  delimited, fixed-width, packed, JSON, raw EBCDIC). The example above
-  uses `name|addr|city|phone` because *that's the application's choice*;
-  bricks stores those bytes verbatim.
-* **B+tree index.** READ by exact key is O(log n). STARTBR positions on
-  any key in O(log n) and READNEXT walks in B+tree order in O(1) per step.
-* **MVCC snapshot reads.** STARTBR opens a bbolt read transaction; the
-  cursor walks a stable point-in-time view, so concurrent WRITE/REWRITE/
-  DELETE on the same FILE don't disturb an in-progress browse.
-* **Atomic writes.** WRITE/REWRITE/DELETE run inside a bbolt write
-  transaction with `fsync` on commit; partial updates are never visible
-  on disk after a crash.
-* **Implicit DEFINE.** First WRITE to a FILE creates its bucket. There
-  is no `EXEC CICS DEFINE FILE` step.
-* **Per-FILE metadata.** A `_catalog` bucket tracks record count,
-  last-modified, max key length, max record length, and creation time,
-  so `CEMT INQUIRE FILE` shows accurate numbers without scanning the
-  data bucket. The catalog is bricks-internal — REXX programs never see
-  it.
-* **Initial mmap.** bbolt is opened with a 4 MiB initial mmap so a
-  long-running browse cursor doesn't deadlock against a write that needs
-  to grow the file. Demo workloads (a few thousand records) never hit
-  the grow path.
-
-What this means for `EXEC CICS READ` / `WRITE` / `REWRITE` / `DELETE`:
-
-| Verb | What bricks does on disk |
-|------|-------------------------|
-| `READ FILE('CUSTOMERS') INTO(REC) RIDFLD(K)` | One bbolt `View` tx, one B+tree lookup. The record bytes (whatever the app stored) come back into REC unchanged. |
-| `WRITE FILE('CUSTOMERS') FROM(REC) RIDFLD(K)` | One bbolt `Update` tx: B+tree insert, `_catalog` bookkeeping, fsync. DUPREC if the key is already present. |
-| `REWRITE FILE('CUSTOMERS') FROM(REC)` | Update tx that overwrites the value at the key locked by the prior READ UPDATE. Releases the per-FCB update lock at end of tx. |
-| `DELETE FILE('CUSTOMERS') RIDFLD(K)` | Update tx that deletes the bucket entry; `_catalog` record count drops by one. |
-
-What this means for `STARTBR / READNEXT / READPREV / RESETBR / ENDBR`:
-
-```
-EXEC CICS STARTBR FILE('CUSTOMERS') RIDFLD('NY-')
-                  GENERIC KEYLENGTH(3) END-EXEC
-DO FOREVER
-  EXEC CICS READNEXT FILE('CUSTOMERS') INTO(REC) RIDFLD(K) RESP(R) END-EXEC
-  IF R = DFHRESP(ENDFILE) THEN LEAVE
-  SAY K ':' REC
-END
-EXEC CICS ENDBR FILE('CUSTOMERS') END-EXEC
-```
-
-* STARTBR opens a bbolt read tx + cursor; positions on the first key
-  whose first 3 bytes are `NY-`.
-* READNEXT advances the cursor; with GENERIC active, returns `ENDFILE`
-  the moment the prefix breaks (no full-file scan).
-* READPREV walks backward from current position with the same prefix
-  rule. Useful for paginating backwards through a key range.
-* RESETBR repositions the cursor without closing the tx — cheaper than
-  ENDBR + STARTBR when a program jumps inside the same browse session.
-* ENDBR commits-rollback the read tx and releases its MVCC snapshot.
-
-Pre-load 250 sample customers for the CUST transaction:
-
-```sh
-go run ./cmd/seed-customers
-```
-
-The seeder is idempotent; re-running adds only the missing rows.
-
----
-
-## Adapting to terminal size (mod 2 vs mod 4)
-
-A 3270 connection negotiates one of several screen models — typically
-mod 2 (24 × 80) or mod 4 (43 × 80). Bricks captures the size from the
-telnet/3270 handshake into `session.TCB.Rows/Cols`, and exposes it to
-REXX programs via `EXEC CICS ASSIGN`:
-
-```rexx
-EXEC CICS ASSIGN SCREENHT(SCRH) SCREENWD(SCRW)
-                 ALTSCRNHT(AH)  ALTSCRNWD(AW)  END-EXEC
-```
-
-`SEND MAP` always passes the negotiated `DevInfo` through to
-`go3270.ScreenOpts.AltScreen`, so the underlying datastream uses
-Erase/Write Alternate (`0x7e`) and the terminal clears its full
-buffer — but a 24-row map painted on a 43-row screen leaves rows
-24-42 blank. To use the extra real estate the program has to dispatch
-to a sized map variant.
-
-**Convention.** Author one map per model. The mod-2 map keeps its bare
-name; bigger models add a single-letter suffix:
-
-| Model | Suffix | Example map names                |
-|-------|--------|----------------------------------|
-| mod 2 | (none) | `HELO1`, `CUST1`, `CUST2`, `CUSTL` |
-| mod 3 | `M`    | `HELO1M`, `CUST1M`, …            |
-| mod 4 | `L`    | `HELO1L`, `CUST1L`, `CUST2L`, `CUSTLL` |
-| mod 5 | `W`    | `HELO1W`, …                      |
-
-The REXX program builds the suffixed name once and dispatches:
-
-```rexx
-EXEC CICS ASSIGN SCREENHT(SCRH) END-EXEC
-SUFFIX = ''
-IF SCRH >= 43 THEN SUFFIX = 'L'
-ELSE IF SCRH >= 32 THEN SUFFIX = 'M'
-
-EXEC CICS SEND MAP('HELO1' || SUFFIX) FROM(SCR.) ERASE END-EXEC
-IF EIBRESP = 36 THEN DO            /* MAPFAIL — sized variant missing */
-  EXEC CICS SEND MAP('HELO1') FROM(SCR.) ERASE END-EXEC
-END
-```
-
-Three properties make this work without any DSL changes:
-
-1. **Same field names across the family.** `helo1.map` and `helo1l.map`
-   both declare `INFOLINE`, `GREETING`, `FOOTER`. The same `SCR.` stem
-   feeds either one. Bonus tails (e.g. `INFO1` / `INFO2` / `ACT1` …) are
-   silently ignored on the smaller map (the renderer only writes values
-   for fields that map declares).
-2. **MAPFAIL fallback.** If the suffixed map isn't on disk, the SEND
-   returns `EIBRESP = 36` and the program retries with the bare name —
-   so an operator who deletes `helo1l.map` doesn't break mod-4
-   connections; they just see the 24×80 layout.
-3. **Paging arithmetic adapts at runtime.** `cusl.rexx` reads `SCREENHT`
-   and uses `ROWS_PER_PAGE = 35` on mod 4 vs `15` on mod 2, then picks
-   `CUSTLL` vs `CUSTL` accordingly.
-
-Bricks ships sized variants for every map the demo transactions use:
-
-| Mod-2 map (24×80) | Mod-4 sibling (43×80) |
-|-------------------|------------------------|
-| `runtime/map/helo1.map` | `runtime/map/helo1l.map` — adds system-information + recent-activity panes |
-| `runtime/map/cust1.map` (menu) | `runtime/map/cust1l.map` — adds recent-activity history |
-| `runtime/map/cust2.map` (detail) | `runtime/map/cust2l.map` — adds an audit-log pane |
-| `runtime/map/custl.map` (15-row list) | `runtime/map/custll.map` (35-row list) |
-
-To see the difference: connect with `c3270 -model 2 localhost 2300`
-vs. `c3270 -model 4 localhost 2300`, sign on, and run `HELO` or
-`CUST`. The mod-4 view fills the bottom three-quarters of the screen
-with extra panels.
+## CLI utilities
+
+| Command                           | Purpose |
+|-----------------------------------|---------|
+| `./bricks --conf=bricks.cnf`      | Run the server. |
+| `./bricksload --help`             | Stress-test bricks; live dashboard + final report. See [Stress testing](#stress-testing--bricksload). |
+| `go run ./cmd/seed-customers`     | Idempotently load 250 sample customer records into the CUSTOMERS KSDS. |
+| `go run ./cmd/brickspw <pw>`      | Print a bcrypt hash for a password. |
+| `./add_brick_user.bash <u> <p> [groups]` | Add a user (refuses duplicates without `--update`). |
+| `./add_brick_user.bash --update <u> <p> [groups]` | Replace an existing user's hash/groups. |
+| `./build.bash`                    | Cross-compile `bricks`, `bricksload`, `brickspw` for linux/amd64, linux/386, linux/armv7, freebsd/amd64 into `bin/` (CGO_ENABLED=0). |
 
 ---
 
@@ -1134,7 +650,7 @@ cfg, _ := config.Load("bricks.cnf")
 // 2. Wire dependencies.
 users, _   := auth.LoadFile(cfg.UsersFile)
 maps, _    := mapdsl.ParseDir(cfg.MapsDir)
-table, _   := txn.LoadTable(cfg.TransactionsFile, cfg.RexxDir)
+table, _   := txn.LoadTable(cfg.TransactionsFile, cfg.RexxDir, cfg.CobolDir, cfg.ProgramCacheMB)
 registry   := session.NewRegistry()
 store, err := cics.NewStore(cfg.DataDir, registry)  // opens data/files.boltdb
 if err != nil { log.Fatal(err) }
@@ -1157,20 +673,6 @@ For an `EXEC CICS` handler that talks to your own backend rather than the
 disk-backed store, replace `cics.New(tcb, maps, store)` with an
 implementation of `rexx.AddressHandler` and pass it via
 `rexx.Options.Addresses`.
-
----
-
-## CLI utilities
-
-| Command                           | Purpose |
-|-----------------------------------|---------|
-| `./bricks --conf=bricks.cnf`      | Run the server. |
-| `./bricksload --help`             | Stress-test bricks; live dashboard + final report. See [Stress testing](#stress-testing--bricksload). |
-| `go run ./cmd/seed-customers`     | Idempotently load 250 sample customer records into the CUSTOMERS KSDS. |
-| `go run ./cmd/brickspw <pw>`      | Print a bcrypt hash for a password. |
-| `./add_brick_user.bash <u> <p> [groups]` | Add a user (refuses duplicates without `--update`). |
-| `./add_brick_user.bash --update <u> <p> [groups]` | Replace an existing user's hash/groups. |
-| `./build.bash`                    | Cross-compile `bricks`, `bricksload`, `brickspw` for linux/amd64, linux/386, linux/armv7, freebsd/amd64 into `bin/` (CGO_ENABLED=0). |
 
 ---
 
@@ -1412,10 +914,32 @@ object — see `cmd/bricksload/report.go::Report` for the schema.
 
 Every TRANSID dispatch and every `EXEC CICS LINK PROGRAM(...)` resolves
 through `Table.LoadProgram(tx)` (`txn/transactions.go`), which caches the
-parsed `*rexx.Program` keyed by file path and `mtime`. The first reference
-runs preprocess + lex + parse and stores the AST; subsequent references
-short-circuit with an `RWMutex` RLock + mtime equality check. Edits to a
-program file are picked up on the next dispatch automatically.
+parsed `*rexx.Program` keyed by file path and `mtime`. The cache is two
+tiers:
+
+- **L1** (`txn/l1cache.go`) — a 128-entry LRU of already-decoded AST
+  pointers. Hits are essentially free: a map lookup plus a list move,
+  no gob, no memcpy, no allocation. This is the hot path for the
+  working set of busy transactions and matches the speed of the
+  original pointer cache.
+- **L2** (`txn/programcache.go`) — the byte-budget tier, a fixed-size
+  contiguous byte slab sized by `program_cache` in `bricks.cnf`. AST
+  blobs are gob-encoded and LRU-evicted when the slab fills. Because
+  the slab is a single pointer-free `[]byte`, Go's garbage collector
+  scans it in O(1) regardless of how many programs it contains; the
+  AST bytes inside are never visited by the collector.
+
+On a miss, the dispatcher parses from disk, encodes into L2, and
+populates L1 with the freshly-parsed `*Program`. On an L1 miss but L2
+hit, the gob-decoded AST is promoted to L1 so subsequent dispatches
+skip the decode. Edits to a program file are picked up on the next
+dispatch automatically via `mtime` mismatch eviction.
+
+`CEMT MONITOR` (`CEMT M`) renders live cache counters: cumulative
+hits/misses per tier, the per-refresh-interval hit ratio, L1 entry
+occupancy (`used/max`), and L2 byte occupancy (`used/cap MB (pct%)`).
+Watching the L1 hit% climb toward 100% on a hot workload is the
+quickest sign the working set is fitting in the decoded tier.
 
 ### Resource-name validation
 
