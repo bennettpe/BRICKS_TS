@@ -995,9 +995,4 @@ amount of in-flight deletes can blow the goroutine stack.
 
 ## Roadmap
 
-* SQL — bricks does not embed a database; data records are simple files.
-* RACF / Top Secret / LDAP — `auth.Authenticator` is the seam to plug those
-  in later.
-* Distributed CICS features (DPL, ISC/MRO, queued transactions across
-  regions).
-  could be added if real BMS sources need to be imported.
+* SQL — bricks does not embed a database; only VSAM is supported at thi s time.
