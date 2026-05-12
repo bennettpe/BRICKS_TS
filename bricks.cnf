@@ -11,9 +11,14 @@ web3270_port=9000
 
 max_conns_per_ip=8
 
+#program cache is for transactions cache, outside the reach of GC
+#program cache is always in megabytyes, defaults to 4MB, max 16GB, min 1MB
+program_cache=16
+
+
 # ── Filesystem layout ────────────────────────────────────────────
-# Each path below is independently overridable. Defaults shown in
-# comments are what bricks uses when the line is missing.
+# Each path below is overridable. Defaults shown in
+# comments are what Bricks uses when the config line is mising.
 #
 # users_file:        runtime/users.conf      (CSSN authentication table)
 # transactions_file: runtime/transactions.conf
@@ -23,7 +28,7 @@ max_conns_per_ip=8
 # once to relocate the whole tree, and bricks derives map/, rexx/,
 # cobol/ from it; or override any of the three independently.
 #
-# runtime_dir=/srv/bricks/runtime
+# runtime_dir=/optbricks/runtime
 # maps_dir=runtime/map
 # rexx_dir=runtime/rexx
 # cobol_dir=runtime/cobol
