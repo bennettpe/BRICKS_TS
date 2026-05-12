@@ -945,6 +945,15 @@ occupancy (`used/max`), and L2 byte occupancy (`used/cap MB (pct%)`).
 Watching the L1 hit% climb toward 100% on a hot workload is the
 quickest sign the working set is fitting in the decoded tier.
 
+Both tiers can also be resized at runtime from `CEMT PERFORM
+PROGRAMCACHE` (`CEMT P C`). The screen shows L1/L2 hit and miss totals
+in two views — since process start (across every resize) and since the
+last resize — and offers two writable input fields: new L1 entry count
+(32..512) and new L2 size in MB (1..16384). Pressing PF5 swaps in
+freshly-sized caches; in-flight dispatches finish against the old
+instances. The change is runtime-only — `bricks.cnf` is not modified,
+so the value reverts on restart unless the operator edits the file.
+
 ### Resource-name validation
 
 FILE and QUEUE names that flow from a REXX program into the on-disk store
