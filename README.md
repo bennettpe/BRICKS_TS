@@ -913,9 +913,10 @@ object — see `cmd/bricksload/report.go::Report` for the schema.
 ### Parsed-program cache
 
 Every TRANSID dispatch and every `EXEC CICS LINK PROGRAM(...)` resolves
-through `Table.LoadProgram(tx)` (`txn/transactions.go`), which caches the
-parsed `*rexx.Program` keyed by file path and `mtime`. The cache is two
-tiers:
+through `Table.LoadProgram(tx)` for REXX or `Table.LoadCobolProgram(tx)`
+for COBOL (`txn/transactions.go`); both share a single cache that holds
+parsed `*rexx.Program` and `*cobol.Program` ASTs keyed by file path and
+`mtime`. The cache is two tiers:
 
 - **L1** (`txn/l1cache.go`) — a 128-entry LRU of already-decoded AST
   pointers. Hits are essentially free: a map lookup plus a list move,
@@ -930,9 +931,12 @@ tiers:
   AST bytes inside are never visited by the collector.
 
 On a miss, the dispatcher parses from disk, encodes into L2, and
-populates L1 with the freshly-parsed `*Program`. On an L1 miss but L2
-hit, the gob-decoded AST is promoted to L1 so subsequent dispatches
-skip the decode. Edits to a program file are picked up on the next
+populates L1 with the freshly-parsed AST. On an L1 miss but L2 hit, the
+gob-decoded AST is promoted to L1 so subsequent dispatches skip the
+decode. Both tiers store `interface{}` values and dispatch on the
+concrete type at read time, so REXX and COBOL programs share the same
+LRU budget — a busy COBOL workload can fill the cache just as a busy
+REXX workload can. Edits to a program file are picked up on the next
 dispatch automatically via `mtime` mismatch eviction.
 
 `CEMT MONITOR` (`CEMT M`) renders live cache counters: cumulative
