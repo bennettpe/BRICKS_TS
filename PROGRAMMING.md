@@ -70,47 +70,51 @@ is documented with the same five sections, in this order:
 **Part 2. EXEC CICS command reference**
 
 * [Chapter 4. Terminal I/O commands](#chapter-4-terminal-io-commands)
-  — [SEND MAP](#send-map) · [RECEIVE MAP](#receive-map) ·
-  [SEND TEXT](#send-text) · [RECEIVE](#receive)
+  — [SEND MAP](#send-map) - [RECEIVE MAP](#receive-map) -
+  [SEND TEXT](#send-text) - [RECEIVE](#receive)
 * [Chapter 5. Program control commands](#chapter-5-program-control-commands)
-  — [RETURN](#return) · [XCTL](#xctl) · [LINK](#link) · [ABEND](#abend)
+  — [RETURN](#return) - [XCTL](#xctl) - [LINK](#link) - [ABEND](#abend)
 * [Chapter 6. System services](#chapter-6-system-services)
-  — [ASSIGN](#assign)
+  — [ASSIGN](#assign) - [ASKTIME](#asktime) - [FORMATTIME](#formattime)
 * [Chapter 7. KSDS file commands](#chapter-7-ksds-file-commands)
-  — [READ](#read) · [WRITE](#write) · [REWRITE](#rewrite) ·
+  — [READ](#read) - [WRITE](#write) - [REWRITE](#rewrite) -
   [DELETE](#delete)
 * [Chapter 8. KSDS browse commands](#chapter-8-ksds-browse-commands)
-  — [STARTBR](#startbr) · [READNEXT](#readnext) ·
-  [READPREV](#readprev) · [RESETBR](#resetbr) · [ENDBR](#endbr)
+  — [STARTBR](#startbr) - [READNEXT](#readnext) -
+  [READPREV](#readprev) - [RESETBR](#resetbr) - [ENDBR](#endbr)
 * [Chapter 9. Temporary storage commands](#chapter-9-temporary-storage-commands)
-  — [READQ TS](#readq-ts) · [WRITEQ TS](#writeq-ts) ·
+  — [READQ TS](#readq-ts) - [WRITEQ TS](#writeq-ts) -
   [DELETEQ TS](#deleteq-ts)
-* [Chapter 10. The Execute Interface Block (EIB)](#chapter-10-the-execute-interface-block-eib)
-* [Chapter 11. Response codes](#chapter-11-response-codes)
-* [Chapter 12. Commands not implemented](#chapter-12-commands-not-implemented)
+* [Chapter 10. Recovery and condition handling](#chapter-10-recovery-and-condition-handling)
+  — [SYNCPOINT](#syncpoint) - [SYNCPOINT ROLLBACK](#syncpoint-rollback) -
+  [HANDLE CONDITION](#handle-condition) - [IGNORE CONDITION](#ignore-condition) -
+  [HANDLE AID](#handle-aid) - [HANDLE ABEND](#handle-abend)
+* [Chapter 11. The Execute Interface Block (EIB)](#chapter-11-the-execute-interface-block-eib)
+* [Chapter 12. Response codes](#chapter-12-response-codes)
+* [Chapter 13. Commands not implemented](#chapter-13-commands-not-implemented)
 
 **Part 3. The REXX language**
 
-* [Chapter 13. REXX program structure](#chapter-13-rexx-program-structure)
-* [Chapter 14. Variables and stems](#chapter-14-variables-and-stems)
-* [Chapter 15. Control flow](#chapter-15-control-flow)
-* [Chapter 16. PARSE templates](#chapter-16-parse-templates)
-* [Chapter 17. Conditions and SIGNAL ON](#chapter-17-conditions-and-signal-on)
-* [Chapter 18. Built-in functions](#chapter-18-built-in-functions)
+* [Chapter 14. REXX program structure](#chapter-14-rexx-program-structure)
+* [Chapter 15. Variables and stems](#chapter-15-variables-and-stems)
+* [Chapter 16. Control flow](#chapter-16-control-flow)
+* [Chapter 17. PARSE templates](#chapter-17-parse-templates)
+* [Chapter 18. Conditions and SIGNAL ON](#chapter-18-conditions-and-signal-on)
+* [Chapter 19. Built-in functions](#chapter-19-built-in-functions)
 
 **Part 4. The COBOL language**
 
-* [Chapter 19. COBOL source format](#chapter-19-cobol-source-format)
-* [Chapter 20. DATA DIVISION](#chapter-20-data-division)
-* [Chapter 21. PROCEDURE DIVISION](#chapter-21-procedure-division)
-* [Chapter 22. The EIB block in COBOL](#chapter-22-the-eib-block-in-cobol)
-* [Chapter 23. EXEC CICS in COBOL](#chapter-23-exec-cics-in-cobol)
-* [Chapter 24. Restrictions and deferred features](#chapter-24-restrictions-and-deferred-features)
+* [Chapter 20. COBOL source format](#chapter-20-cobol-source-format)
+* [Chapter 21. DATA DIVISION](#chapter-21-data-division)
+* [Chapter 22. PROCEDURE DIVISION](#chapter-22-procedure-division)
+* [Chapter 23. The EIB block in COBOL](#chapter-23-the-eib-block-in-cobol)
+* [Chapter 24. EXEC CICS in COBOL](#chapter-24-exec-cics-in-cobol)
+* [Chapter 25. Restrictions and deferred features](#chapter-25-restrictions-and-deferred-features)
 
 **Part 5. Sample programs**
 
-* [Chapter 25. Pre-installed sample transactions](#chapter-25-pre-installed-sample-transactions)
-* [Chapter 26. Worked examples](#chapter-26-worked-examples)
+* [Chapter 26. Pre-installed sample transactions](#chapter-26-pre-installed-sample-transactions)
+* [Chapter 27. Worked examples](#chapter-27-worked-examples)
 
 **Appendixes**
 
@@ -155,7 +159,7 @@ Programs interact with three layers:
 3. **Other programs**, through `LINK` (synchronous, with COMMAREA),
    `XCTL` (transfer of control, no return), and `RETURN TRANSID`
    (pseudo-conversational chaining). The Execute Interface Block (EIB)
-   exposes session and request state ([Chapter 10](#chapter-10-the-execute-interface-block-eib)).
+   exposes session and request state ([Chapter 11](#chapter-11-the-execute-interface-block-eib)).
 
 REXX and COBOL share **the same `EXEC CICS` dispatcher**
 (`cics/handler.go`). Every command documented in
@@ -353,9 +357,10 @@ Commands are grouped by function:
 
 Cross-cutting reference:
 
-* [Chapter 10. The EIB](#chapter-10-the-execute-interface-block-eib)
-* [Chapter 11. Response codes](#chapter-11-response-codes)
-* [Chapter 12. Commands not implemented](#chapter-12-commands-not-implemented)
+* [Chapter 10. Recovery and condition handling](#chapter-10-recovery-and-condition-handling)
+* [Chapter 11. The EIB](#chapter-11-the-execute-interface-block-eib)
+* [Chapter 12. Response codes](#chapter-12-response-codes)
+* [Chapter 13. Commands not implemented](#chapter-13-commands-not-implemented)
 
 ---
 
@@ -522,7 +527,7 @@ Works identically from REXX and COBOL.
 
 #### Example
 
-See [Chapter 26. Worked examples](#chapter-26-worked-examples), the
+See [Chapter 27. Worked examples](#chapter-27-worked-examples), the
 `GETC` program, for the canonical multi-row `SEND TEXT` pattern.
 
 ---
@@ -829,6 +834,138 @@ EXEC CICS ASSIGN USERID(USR)
                  SCREENHT(SCRH)
                  SCREENWD(SCRW)
 END-EXEC
+```
+
+---
+
+### ASKTIME
+
+Refresh the EIB date/time fields and, optionally, return the current
+time as a 15-digit absolute timestamp (`ABSTIME`).
+
+#### Format
+
+```
+EXEC CICS ASKTIME [ABSTIME(target)]
+END-EXEC
+```
+
+#### Description
+
+`ASKTIME` re-reads the system clock and writes the current date and
+time into `EIBDATE` and `EIBTIME`. Both fields follow the IBM CICS
+formats:
+
+* `EIBDATE` — packed-style decimal `0CYYDDD`, where `C` is `(century - 19)`
+  and `YYDDD` is the two-digit year and Julian day-of-year. For
+  2026-05-12 (Julian day 132), `EIBDATE = 1026132`.
+* `EIBTIME` — six-digit `HHMMSS`.
+
+If `ABSTIME(target)` is given, `target` receives a 15-digit decimal
+string representing milliseconds since `1900-01-01 00:00:00.000`.
+Pass that value to `FORMATTIME` to break it back into formatted
+date / time components.
+
+`ASKTIME` is the only way to get a fresh `ABSTIME`; the bricks-specific
+`ASSIGN DATE` / `TIME` shortcuts return formatted strings only.
+
+#### Options
+
+**ABSTIME(target)**
+   Variable that receives the 15-character absolute time. Optional;
+   when omitted, only `EIBDATE` and `EIBTIME` are refreshed.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Always (clock reads cannot fail). |
+
+#### Example
+
+```rexx
+EXEC CICS ASKTIME ABSTIME(NOW) END-EXEC
+EXEC CICS FORMATTIME ABSTIME(NOW)
+                     YYYYMMDD(TODAY)
+                     TIME(CLOCK) TIMESEP(':')
+END-EXEC
+SAY 'Stamped at' TODAY CLOCK
+```
+
+---
+
+### FORMATTIME
+
+Decode an `ABSTIME` value into formatted date and time fields.
+
+#### Format
+
+```
+EXEC CICS FORMATTIME ABSTIME(source)
+                     [DATE(t)] [DATEFORM(fmt)] [DATESEP(c)]
+                     [YYYYMMDD(t)] [MMDDYYYY(t)] [DDMMYYYY(t)]
+                     [MMDDYY(t)]   [DDMMYY(t)]
+                     [YYYYDDD(t)]  [YYDDD(t)]
+                     [TIME(t)] [TIMESEP(c)]
+                     [YEAR(t)] [MONTHOFYEAR(t)] [DAYOFMONTH(t)]
+                     [DAYOFWEEK(t)] [DAYCOUNT(t)]
+END-EXEC
+```
+
+#### Description
+
+`FORMATTIME` is the IBM-standard companion to `ASKTIME`. Given a
+15-digit `ABSTIME` value (typically returned by `ASKTIME ABSTIME(...)`,
+but any 15-digit decimal millisecond stamp is accepted), it writes
+the requested representations into the named target variables.
+
+Any combination of output options may be requested in a single call;
+options that are omitted cost nothing.
+
+#### Options
+
+**ABSTIME(source)** *(required)*
+   The 15-digit decimal absolute time to decode.
+
+**DATE(t)** with optional **DATEFORM(fmt)** and **DATESEP(c)**
+   Generic date target. `DATEFORM` is one of `YYYYMMDD` (default),
+   `MMDDYYYY`, `DDMMYYYY`, `MMDDYY`, `DDMMYY`. `DATESEP(c)` inserts
+   a one-character separator between components (e.g. `'-'` →
+   `2026-05-12`); omit `DATESEP` for a packed string with no
+   separators.
+
+**YYYYMMDD / MMDDYYYY / DDMMYYYY / MMDDYY / DDMMYY**
+   Direct date format targets; each respects `DATESEP(c)` if given.
+
+**YYYYDDD(t) / YYDDD(t)**
+   Julian-style date with three-digit day-of-year. Honour `DATESEP`.
+
+**TIME(t)** with optional **TIMESEP(c)**
+   Six-digit `HHMMSS`, or with `TIMESEP(':')` formatted as `HH:MM:SS`.
+
+**YEAR(t)** — four-digit year (`2026`).
+**MONTHOFYEAR(t)** — `1`..`12`.
+**DAYOFMONTH(t)** — `1`..`31`.
+**DAYOFWEEK(t)** — `0` (Sunday) .. `6` (Saturday), per IBM CICS.
+**DAYCOUNT(t)** — days since `1900-01-01` (signed, integer).
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | All requested fields written. |
+| INVREQ | 16 | `ABSTIME` is missing, not 15 decimal digits, or out of range. |
+
+#### Example
+
+```cobol
+EXEC CICS ASKTIME ABSTIME(WS-NOW) END-EXEC
+EXEC CICS FORMATTIME ABSTIME(WS-NOW)
+                     DATE(WS-DATE)  DATEFORM('DDMMYYYY')  DATESEP('/')
+                     TIME(WS-TIME)  TIMESEP(':')
+                     DAYOFWEEK(WS-DOW)
+END-EXEC.
+*  WS-DATE → "12/05/2026"     WS-TIME → "10:30:45"     WS-DOW → "2"
 ```
 
 ---
@@ -1300,7 +1437,7 @@ filesystem-directory pressure; reads and writes are O(log N).
 
 Bricks implements only the **TS** form. The **TD** (transient data)
 sub-form is parsed but explicitly rejected with `INVREQ` — see
-[Chapter 12. Commands not implemented](#chapter-12-commands-not-implemented).
+[Chapter 13. Commands not implemented](#chapter-13-commands-not-implemented).
 
 ### READQ TS
 
@@ -1451,7 +1588,434 @@ EXEC CICS DELETEQ TS QUEUE('AUDIT') END-EXEC
 
 ---
 
-## Chapter 10. The Execute Interface Block (EIB)
+## Chapter 10. Recovery and condition handling
+
+This chapter covers two related families:
+
+* **Unit-of-work commands** — `SYNCPOINT` and `SYNCPOINT ROLLBACK`
+  group multiple file / TS mutations into one atomic step that can
+  be committed or undone.
+* **Non-local control commands** — `HANDLE CONDITION`,
+  `IGNORE CONDITION`, `HANDLE AID`, and `HANDLE ABEND` arm program
+  labels that the dispatcher branches to on a non-`NORMAL` response,
+  on a particular AID key, or when the task abends. Together with
+  the per-call `EIBRESP` test ([Chapter 12](#chapter-12-response-codes))
+  and REXX `SIGNAL ON ERROR` ([Chapter 18](#chapter-18-conditions-and-signal-on))
+  they cover the full range of CICS error-handling idioms.
+
+### How the unit of work works
+
+Each task owns a **journal** of pending undo entries that lives on
+its `TxCB`. Every successful `WRITE` / `REWRITE` / `DELETE` and every
+`WRITEQ TS` / `DELETEQ TS` appends an inverse operation to the
+journal *immediately after* the underlying bbolt write commits.
+
+* `SYNCPOINT` clears the journal — the work becomes irrevocably
+  committed, and a new unit of work begins.
+* `SYNCPOINT ROLLBACK` walks the journal in reverse and applies each
+  inverse op (re-writing pre-images, re-creating deleted records,
+  restoring queue contents, etc.), then clears the journal.
+* `RETURN` performs an **implicit `SYNCPOINT`** before the task ends.
+* `ABEND` performs an **implicit `SYNCPOINT ROLLBACK`** *unless* a
+  `HANDLE ABEND` exit catches it; the exit may then choose whether
+  to commit or roll back explicitly.
+
+In-flight uncommitted writes are visible to concurrent tasks (this
+matches IBM CICS under `READ NO UPDATE`); the rollback model exists
+to recover *the current task* from its own partially-applied work,
+not to provide multi-task isolation.
+
+### How the condition / AID / abend traps work
+
+After every `EXEC CICS` command, the dispatcher writes `EIBRESP` and
+then consults three optional per-task tables:
+
+| Table | Populated by | Consulted | Branches when |
+|---|---|---|---|
+| Condition map | `HANDLE CONDITION` / `IGNORE CONDITION` | After every command | `EIBRESP ≠ NORMAL` and a label is armed for that condition (or for `ERROR`). |
+| AID map | `HANDLE AID` | After every command that updates `EIBAID` (`SEND MAP`, `RECEIVE MAP`, `RECEIVE`) | The new `EIBAID` matches an armed key (`PF1`–`PF24`, `PA1`–`PA3`, `ENTER`, `CLEAR`, or the catch-all `ANYKEY`). |
+| Abend exit | `HANDLE ABEND` | When the task abends | An exit is armed and not cancelled. |
+
+When a trap fires, control transfers to the named label as if the
+program had `GO TO`'d (COBOL) or `SIGNAL`'d (REXX) it directly. The
+trap *stays armed* across the branch — re-arming after each fire is
+not required (and the `IGNORE` / bare-name disarm forms exist for
+when the program wants the trap to stop firing).
+
+---
+
+### SYNCPOINT
+
+Commit the current unit of work and begin a new one.
+
+#### Format
+
+```
+EXEC CICS SYNCPOINT END-EXEC
+```
+
+#### Description
+
+Clears the task's undo journal. All file / TS writes performed since
+the last `SYNCPOINT` (or since the task began) are made permanent;
+they can no longer be rolled back. A fresh, empty journal is started
+and subsequent mutations accumulate against it.
+
+`SYNCPOINT` is implicit on `EXEC CICS RETURN` — programs that run
+to completion never need to call it explicitly. The explicit form is
+useful in long-running tasks that want to checkpoint partial
+progress, or in programs that mix recoverable phases with phases
+where rollback is no longer meaningful.
+
+#### Options
+
+None.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Journal cleared. |
+
+`SYNCPOINT` cannot fail in bricks because the underlying bbolt
+writes have already committed by the time the journal entry was
+appended.
+
+#### Example
+
+```cobol
+*  Phase 1: build the audit row, commit immediately so a later
+*  validation failure does not undo the audit trail.
+EXEC CICS WRITEQ TS QUEUE('AUDIT') FROM(WS-LOG) END-EXEC.
+EXEC CICS SYNCPOINT END-EXEC.
+
+*  Phase 2: real business work; rolled back if validation fails.
+EXEC CICS REWRITE FILE('CUSTOMERS') FROM(WS-CUST) END-EXEC.
+IF WS-INVALID
+   EXEC CICS SYNCPOINT ROLLBACK END-EXEC
+   EXEC CICS ABEND ABCODE('VAL1') END-EXEC
+END-IF.
+```
+
+---
+
+### SYNCPOINT ROLLBACK
+
+Discard the current unit of work and begin a new one.
+
+#### Format
+
+```
+EXEC CICS SYNCPOINT ROLLBACK END-EXEC
+```
+
+#### Description
+
+Walks the task's undo journal in reverse and applies each inverse
+operation:
+
+* `WRITE` is undone by deleting the new key.
+* `REWRITE` is undone by re-writing the captured pre-image.
+* `DELETE` is undone by re-writing the deleted record.
+* `WRITEQ TS` (append) is undone by deleting the appended item.
+* `WRITEQ TS ... REWRITE` is undone by re-writing the pre-image.
+* `DELETEQ TS` is undone by restoring every prior item from a
+  snapshot taken before the delete.
+
+After the walk the journal is cleared and a new unit of work begins.
+
+`ROLLBACK` is implicit when `EXEC CICS ABEND` runs **without** a
+`HANDLE ABEND` exit. When an exit *does* intercept the abend, the
+exit code decides whether to call `SYNCPOINT ROLLBACK` (typical) or
+`SYNCPOINT` (commit partial work and continue).
+
+#### Options
+
+`ROLLBACK` is the only option — it is what distinguishes this form
+from plain `SYNCPOINT`.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | All journal entries successfully reverted. |
+| ROLLEDBACK | 82 | One or more inverse ops failed (the underlying bbolt error is logged). The journal is still cleared; some writes may remain partially undone. |
+
+#### Example
+
+```rexx
+ADDRESS CICS
+
+EXEC CICS WRITE FILE('ACCT') RIDFLD(DEBIT_ID)  FROM(DEBIT_REC)  END-EXEC
+EXEC CICS WRITE FILE('ACCT') RIDFLD(CREDIT_ID) FROM(CREDIT_REC) END-EXEC
+
+IF DEBIT_TOTAL <> CREDIT_TOTAL THEN DO
+   EXEC CICS SYNCPOINT ROLLBACK END-EXEC      /* both writes undone */
+   EXEC CICS ABEND ABCODE('IMBL') END-EXEC
+END
+
+EXEC CICS SYNCPOINT END-EXEC                  /* commit both writes */
+```
+
+---
+
+### HANDLE CONDITION
+
+Arm program labels to receive control on named EXEC CICS conditions.
+
+#### Format
+
+```
+EXEC CICS HANDLE CONDITION cond1[(label)] cond2[(label)] ...
+END-EXEC
+```
+
+#### Description
+
+Builds a per-task map from condition name to label. After every
+EXEC CICS command, when `EIBRESP ≠ NORMAL`, the dispatcher consults
+the map:
+
+1. If the *exact* condition name is armed, control branches to the
+   named label.
+2. Otherwise, if the catch-all `ERROR` is armed, control branches
+   to that label.
+3. Otherwise, the response code is left in `EIBRESP` for the
+   program to test, exactly as if `HANDLE CONDITION` had never been
+   issued.
+
+The `(label)` form arms the trap; the bare condition name (no
+parens) **disarms** it. Arming a previously-armed condition replaces
+the old label.
+
+`HANDLE CONDITION` is the legacy CICS error-handling style.
+Modern programs that use `RESP(rc)` style (or REXX `SIGNAL ON ERROR`)
+do not need it; the two styles can coexist within the same program
+because both ultimately read `EIBRESP`.
+
+#### Options
+
+**condN(label)**
+   Arm `condN` (one of the names in [Chapter 12. Response codes](#chapter-12-response-codes),
+   e.g. `NOTFND`, `DUPREC`, `MAPFAIL`, `INVREQ`, `IOERR`, `LENGERR`,
+   `QIDERR`, `ITEMERR`, `ENDFILE`, `PGMIDERR`, `EOC`) so it
+   branches to `label`.
+
+**condN** *(no parens)*
+   Disarm `condN`.
+
+**ERROR(label)**
+   Arm a catch-all that fires for any non-`NORMAL` response not
+   matched by a more specific arm.
+
+A single `HANDLE CONDITION` may combine any number of arm and
+disarm options.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Map updated. |
+| INVREQ | 16 | Unknown condition name. |
+
+#### Example
+
+```rexx
+ADDRESS CICS
+
+EXEC CICS HANDLE CONDITION NOTFND(NOREC)
+                           DUPREC(DUP)
+                           ERROR(OOPS)
+END-EXEC
+
+EXEC CICS READ FILE('CUSTOMERS') INTO(REC) RIDFLD(CKEY) END-EXEC
+SAY 'Found:' REC
+EXIT
+
+NOREC: SAY 'No customer with key' CKEY; EXIT 4
+DUP:   SAY 'Duplicate key on insert';  EXIT 8
+OOPS:  SAY 'Other CICS error, RC=' EIBRESP; EXIT 12
+```
+
+---
+
+### IGNORE CONDITION
+
+Suppress the `HANDLE CONDITION` trap for one or more conditions.
+
+#### Format
+
+```
+EXEC CICS IGNORE CONDITION cond1 cond2 ...
+END-EXEC
+```
+
+#### Description
+
+Marks each named condition as *ignored*: even if `HANDLE CONDITION`
+previously armed it, the trap will no longer fire and the program
+must test `EIBRESP` itself. `IGNORE CONDITION` stays in effect until
+a later `HANDLE CONDITION cond(label)` re-arms the same condition.
+
+The distinction between *unarmed* (never armed, or disarmed by the
+bare-name form) and *ignored* matters only when `ERROR(label)` is
+armed: an unarmed condition still falls through to `ERROR`, but an
+ignored one does not.
+
+#### Options
+
+Each operand is a bare condition name — no parentheses, no label.
+Multiple conditions may be combined in a single call.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Map updated. |
+| INVREQ | 16 | Unknown condition name. |
+
+#### Example
+
+```cobol
+EXEC CICS HANDLE CONDITION ERROR(BADIO) END-EXEC.
+
+*  We *expect* NOTFND on this READ — don't trip the ERROR trap.
+EXEC CICS IGNORE CONDITION NOTFND END-EXEC.
+
+EXEC CICS READ FILE('CUSTOMERS') INTO(WS-REC) RIDFLD(WS-KEY) END-EXEC.
+IF EIBRESP = 13
+   PERFORM CREATE-NEW-CUSTOMER
+END-IF.
+```
+
+---
+
+### HANDLE AID
+
+Arm program labels to receive control on a particular attention key.
+
+#### Format
+
+```
+EXEC CICS HANDLE AID key1[(label)] key2[(label)] ...
+END-EXEC
+```
+
+#### Description
+
+Builds a per-task map from AID byte to label. After any command
+that updates `EIBAID` (`SEND MAP`, `RECEIVE MAP`, `RECEIVE`),
+the dispatcher consults the map and branches if the new `EIBAID`
+matches an armed key.
+
+The bare key name (no parens) disarms a previously-armed key.
+`ANYKEY` is a catch-all matched by any AID for which no specific
+arm exists.
+
+#### Options
+
+**keyN(label)** / **keyN**
+   `keyN` is one of `ENTER`, `CLEAR`, `PA1`–`PA3`, `PF1`–`PF24`, or
+   `ANYKEY`. Parenthesised arms the trap; bare disarms it.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Map updated. |
+| INVREQ | 16 | Unknown AID name. |
+
+#### Example
+
+```rexx
+ADDRESS CICS
+
+EXEC CICS HANDLE AID PF3(QUIT) PF12(QUIT) CLEAR(QUIT) END-EXEC
+
+DO FOREVER
+   EXEC CICS RECEIVE MAP('CUST1') INTO(SCR.) END-EXEC
+   ... process ...
+   EXEC CICS SEND MAP('CUST1') FROM(SCR.) ERASE END-EXEC
+END
+
+QUIT:
+   EXEC CICS RETURN END-EXEC
+```
+
+---
+
+### HANDLE ABEND
+
+Arm a program-level abend exit.
+
+#### Format
+
+```
+EXEC CICS HANDLE ABEND { LABEL(label) | PROGRAM(name) | CANCEL | RESET }
+END-EXEC
+```
+
+#### Description
+
+Registers an exit that runs when the task abends (either via
+`EXEC CICS ABEND` or via an unhandled runtime error). The exit
+*replaces* the implicit `SYNCPOINT ROLLBACK` that an uncaught
+abend would perform — it is now the exit's responsibility to call
+`SYNCPOINT` or `SYNCPOINT ROLLBACK` explicitly.
+
+`EIBABCODE` is set to the abend code (default `AAAA`) before the
+exit receives control.
+
+#### Options
+
+**LABEL(label)**
+   Branch to `label` within the current program when the task abends.
+   This is the form REXX programs almost always use.
+
+**PROGRAM(name)**
+   `XCTL` to the named program when the task abends. Currently
+   accepted by the parser; the runtime treats `PROGRAM(name)` as
+   equivalent to `LABEL(name)` (i.e. it branches inside the current
+   program rather than transferring control).
+
+**CANCEL**
+   Disarm the current exit and restore the previous one (one level
+   of nesting is preserved).
+
+**RESET**
+   Re-enable an exit previously suspended by `CANCEL`.
+
+Exactly one of `LABEL`, `PROGRAM`, `CANCEL`, `RESET` must be given.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Exit registered or restored. |
+| INVREQ | 16 | Conflicting / missing options, or `RESET` with no prior exit. |
+
+#### Example
+
+```rexx
+ADDRESS CICS
+
+EXEC CICS HANDLE ABEND LABEL(CLEANUP) END-EXEC
+
+EXEC CICS WRITE FILE('LEDGER') RIDFLD(K) FROM(REC) END-EXEC
+EXEC CICS WRITE FILE('AUDIT')  RIDFLD(K) FROM(REC) END-EXEC
+
+/* something later may ABEND */
+EXIT
+
+CLEANUP:
+   SAY 'Caught abend' EIBABCODE
+   EXEC CICS SYNCPOINT ROLLBACK END-EXEC      /* undo both writes */
+   EXEC CICS RETURN END-EXEC
+```
+
+---
+
+## Chapter 11. The Execute Interface Block (EIB)
 
 The EIB is a per-task scratch area populated by the dispatcher
 before the program runs and by each `EXEC CICS` command on return.
@@ -1465,7 +2029,7 @@ that aren't already declared.
 | `EIBCPOSN` | `SEND MAP` / `RECEIVE MAP` | 1-based cursor position of the most recent map response. |
 | `EIBCALEN` | dispatcher (per-task entry) | Length of `DFHCOMMAREA` flowed in from the prior task or `LINK` caller. Zero when no COMMAREA was passed. |
 | `EIBTRMID` | dispatcher | This terminal's id. Same as `ASSIGN TERMID(...)`. |
-| `EIBRESP` | every `EXEC CICS` | The response code of the most recent command (see [Chapter 11](#chapter-11-response-codes)). |
+| `EIBRESP` | every `EXEC CICS` | The response code of the most recent command (see [Chapter 12](#chapter-12-response-codes)). |
 | `EIBRESP2` | every `EXEC CICS` | The secondary response code of the most recent command (currently always 0). |
 | `RC` | every `EXEC CICS` | Mirror of `EIBRESP`, for REXX `IF RC <> 0` style. |
 | `DFHCOMMAREA` | dispatcher / `LINK` / `RETURN` | The COMMAREA bytes; in COBOL, auto-injected as `PIC X(2000)` if not declared. |
@@ -1481,7 +2045,7 @@ IF EIBRESP <> 0 THEN SAY 'Command failed, RC=' EIBRESP
 IF C2X(EIBAID) = 'F3' THEN EXEC CICS RETURN END-EXEC
 ```
 
-`SIGNAL ON ERROR` ([Chapter 17](#chapter-17-conditions-and-signal-on))
+`SIGNAL ON ERROR` ([Chapter 18](#chapter-18-conditions-and-signal-on))
 is the alternative to per-call `IF EIBRESP <>`.
 
 ### COBOL
@@ -1504,7 +2068,7 @@ There is no COBOL equivalent of `SIGNAL ON ERROR` yet.
 
 ---
 
-## Chapter 11. Response codes
+## Chapter 12. Response codes
 
 After every `EXEC CICS` command the handler writes `EIBRESP`,
 `EIBRESP2`, and `RC` into the program's frame. The full set of
@@ -1569,7 +2133,7 @@ END-EVALUATE.
 
 ---
 
-## Chapter 12. Commands not implemented
+## Chapter 13. Commands not implemented
 
 The following CICS commands are recognized by the parser but
 explicitly rejected; programs that use them will receive `INVREQ`
@@ -1584,9 +2148,6 @@ recognize them at all:
 
 | Command | Use |
 |---|---|
-| `ASKTIME`, `FORMATTIME` | Time/date formatting. Bricks-specific `ASSIGN DATE`/`TIME`/`TODAYYR`/`TODAYMO`/`TODAYDY`/`DAYCOUNT` ([Chapter 6](#chapter-6-system-services)) covers the most common cases for now. |
-| `SYNCPOINT`, `SYNCPOINT ROLLBACK` | Atomic multi-step commit / rollback. Each `WRITE` / `REWRITE` / `DELETE` / `WRITEQ` commits independently today. |
-| `HANDLE CONDITION`, `HANDLE AID`, `HANDLE ABEND`, `IGNORE CONDITION` | Legacy condition / AID branching. Use the response-code idioms in [Chapter 11](#chapter-11-response-codes), or `SIGNAL ON ERROR` in REXX. |
 | `START`, `RETRIEVE` | Asynchronous transaction starting. |
 | `GETMAIN`, `FREEMAIN` | Dynamic storage. REXX has dynamic variables; COBOL has `WORKING-STORAGE`. |
 | `ENQ`, `DEQ` | User-level resource locking. File-level locking already exists via `READ … UPDATE`. |
@@ -1595,7 +2156,7 @@ recognize them at all:
 
 # Part 3. The REXX language
 
-## Chapter 13. REXX program structure
+## Chapter 14. REXX program structure
 
 A bricks REXX program is a flat sequence of statements with optional
 labels and procedures. Execution begins at the first statement; the
@@ -1638,7 +2199,7 @@ ADDRESS CICS
 
 ---
 
-## Chapter 14. Variables and stems
+## Chapter 15. Variables and stems
 
 * **Simple variables** are case-insensitive. An unset variable
   resolves to its uppercased name (REXX NOVALUE convention).
@@ -1667,7 +2228,7 @@ compound-symbol pitfall.
 
 ---
 
-## Chapter 15. Control flow
+## Chapter 16. Control flow
 
 | Construct | Forms |
 |---|---|
@@ -1685,7 +2246,7 @@ compound-symbol pitfall.
 
 ---
 
-## Chapter 16. PARSE templates
+## Chapter 17. PARSE templates
 
 `PARSE [UPPER] {VAR var | VALUE … WITH | ARG | PULL} template`
 
@@ -1705,7 +2266,7 @@ PARSE VAR ROW   1 NAME 21 ADDR 51 PHONE     /* fixed columns     */
 
 ---
 
-## Chapter 17. Conditions and SIGNAL ON
+## Chapter 18. Conditions and SIGNAL ON
 
 `SIGNAL ON {ERROR | NOVALUE | SYNTAX | HALT} [NAME label]` arms a
 condition. When it fires:
@@ -1742,11 +2303,14 @@ OOPS:
 ```
 
 Without an armed trap, the legacy "test EIBRESP after every verb"
-pattern still works.
+pattern still works. For per-condition (rather than blanket) traps,
+use `EXEC CICS HANDLE CONDITION`
+([Chapter 10](#chapter-10-recovery-and-condition-handling)); the
+two styles can coexist.
 
 ---
 
-## Chapter 18. Built-in functions
+## Chapter 19. Built-in functions
 
 | Family | Functions |
 |---|---|
@@ -1781,7 +2345,7 @@ numbers, trimmed-string otherwise), `||` and juxtaposition concat,
 
 # Part 4. The COBOL language
 
-## Chapter 19. COBOL source format
+## Chapter 20. COBOL source format
 
 Bricks ships a free-form COBOL interpreter (`cobol/`) that sits beside
 REXX as a second front end on the same `EXEC CICS` surface. The
@@ -1834,7 +2398,7 @@ buffer round-trips cleanly across an inter-language `EXEC CICS LINK`.
 
 ---
 
-## Chapter 20. DATA DIVISION
+## Chapter 21. DATA DIVISION
 
 * **PIC clauses:** `X(n)` alphanumeric, `9(n)` integer, `S9(n)`
   signed, `9(n)V99` decimal (the `V` is positional, no real binary
@@ -1863,7 +2427,7 @@ buffer round-trips cleanly across an inter-language `EXEC CICS LINK`.
 
 ---
 
-## Chapter 21. PROCEDURE DIVISION
+## Chapter 22. PROCEDURE DIVISION
 
 ### Statements supported
 
@@ -1903,21 +2467,23 @@ multi-subject `ALSO` clauses, condition-name arms) are deferred.
 
 ---
 
-## Chapter 22. The EIB block in COBOL
+## Chapter 23. The EIB block in COBOL
 
 `EIBRESP`, `EIBRESP2`, `EIBAID`, `EIBCPOSN`, `EIBCALEN`, `EIBTRMID`,
 `RC`, and `DFHCOMMAREA` are auto-injected if not declared, so most
 programs need no boilerplate. After every `EXEC CICS`, `EIBRESP`
 and `EIBRESP2` are populated by the handler the same way they are
-for REXX. The legacy "test EIBRESP after every verb" pattern is the
-recommended idiom (no `RAISING` / `SIGNAL ON ERROR` equivalent yet).
+for REXX. The legacy "test `EIBRESP` after every verb" pattern is
+the most common idiom; for non-local error handling without a REXX-style
+`SIGNAL ON ERROR`, use `EXEC CICS HANDLE CONDITION` /
+`EXEC CICS HANDLE ABEND` ([Chapter 10](#chapter-10-recovery-and-condition-handling)).
 
-See [Chapter 10](#chapter-10-the-execute-interface-block-eib) for
+See [Chapter 11](#chapter-11-the-execute-interface-block-eib) for
 the field meanings.
 
 ---
 
-## Chapter 23. EXEC CICS in COBOL
+## Chapter 24. EXEC CICS in COBOL
 
 The COBOL parser collects every token between `EXEC CICS` and
 `END-EXEC` and reconstructs the body verbatim for the same
@@ -1959,7 +2525,7 @@ between REXX and COBOL.
 
 ---
 
-## Chapter 24. Restrictions and deferred features
+## Chapter 25. Restrictions and deferred features
 
 ### Disallowed
 
@@ -1998,7 +2564,7 @@ between REXX and COBOL.
 
 # Part 5. Sample programs
 
-## Chapter 25. Pre-installed sample transactions
+## Chapter 26. Pre-installed sample transactions
 
 ### COBOL
 
@@ -2029,7 +2595,7 @@ configuration.
 
 ---
 
-## Chapter 26. Worked examples
+## Chapter 27. Worked examples
 
 ### A. Producer / consumer over a TS queue
 
@@ -2133,7 +2699,7 @@ final value back to the caller's `SAV`.
 # Appendix A. Adapting to terminal size (mod 2 vs mod 4)
 
 A 3270 connection negotiates one of several screen models —
-typically mod 2 (24 × 80) or mod 4 (43 × 80). Bricks captures the
+typically mod 2 (24 - 80) or mod 4 (43 - 80). Bricks captures the
 size from the telnet/3270 handshake into `session.TCB.Rows/Cols`,
 and exposes it to programs via `EXEC CICS ASSIGN`:
 
@@ -2186,7 +2752,7 @@ Three properties make this work without any DSL changes:
 2. **MAPFAIL fallback.** If the suffixed map isn't on disk, the
    `SEND` returns `EIBRESP = 36` and the program retries with the
    bare name — so an operator who deletes `helo1l.map` doesn't
-   break mod-4 connections; they just see the 24×80 layout.
+   break mod-4 connections; they just see the 24-80 layout.
 3. **Paging arithmetic adapts at runtime.** `cusl.rexx` reads
    `SCREENHT` and uses `ROWS_PER_PAGE = 35` on mod 4 vs `15` on
    mod 2, then picks `CUSTLL` vs `CUSTL` accordingly.
@@ -2194,7 +2760,7 @@ Three properties make this work without any DSL changes:
 Bricks ships sized variants for every map the demo transactions
 use:
 
-| Mod-2 map (24×80) | Mod-4 sibling (43×80) |
+| Mod-2 map (24-80) | Mod-4 sibling (43-80) |
 |-------------------|------------------------|
 | `runtime/map/helo1.map` | `runtime/map/helo1l.map` — adds system-information + recent-activity panes |
 | `runtime/map/cust1.map` (menu) | `runtime/map/cust1l.map` — adds recent-activity history |
