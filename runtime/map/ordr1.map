@@ -1,0 +1,14 @@
+* ORDR1 -- confirmation screen for the ORDR import transaction.
+* Shown once on entry; operator presses ENTER to start the import or
+* PF3 to cancel.
+MAP ORDR1 SIZE 24x80
+  FIELD INFOLINE AT 0,0  LEN 78 PROT BRIGHT COLOR=WHITE
+  FIELD AT 3,2  LEN 50 PROT BRIGHT COLOR=WHITE     "ORDR -- Import orders into VSAM"
+  FIELD AT 6,2  LEN 76 PROT COLOR=BLUE             "This transaction reads runtime/tmp/orders.sample.txt and writes each"
+  FIELD AT 7,2  LEN 76 PROT COLOR=BLUE             "line as a record into the ORDERS file (KSDS, keyed on customer #)."
+  FIELD AT 9,2  LEN 50 PROT                        "Press ENTER to start the import."
+  FIELD AT 10,2 LEN 50 PROT                        "Press F3 to cancel."
+  FIELD MSG     AT 14,2  LEN 76 PROT BRIGHT COLOR=RED
+  FIELD AT 22,1 LEN 40 PROT DIM COLOR=BLUE         "ENTER=Run   F3=Cancel"
+  CURSOR        AT 9,2
+ENDMAP

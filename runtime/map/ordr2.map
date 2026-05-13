@@ -1,0 +1,16 @@
+* ORDR2 -- summary screen after the ORDR import has run.
+* Shows three counters (records read, written, duplicates) and the
+* most recent status message.
+MAP ORDR2 SIZE 24x80
+  FIELD INFOLINE AT 0,0  LEN 78 PROT BRIGHT COLOR=WHITE
+  FIELD AT 3,2  LEN 50 PROT BRIGHT COLOR=WHITE     "ORDR -- Import complete"
+  FIELD AT 6,2  LEN 20 PROT                        "Records read:"
+  INPUT RDCNT    AT 6,24  LEN 6  PROT BRIGHT COLOR=GREEN
+  FIELD AT 8,2  LEN 20 PROT                        "Records written:"
+  INPUT WRCNT    AT 8,24  LEN 6  PROT BRIGHT COLOR=GREEN
+  FIELD AT 10,2 LEN 20 PROT                        "Duplicates skipped:"
+  INPUT DUPCNT   AT 10,24 LEN 6  PROT BRIGHT COLOR=YELLOW
+  FIELD MSG     AT 14,2  LEN 76 PROT BRIGHT COLOR=RED
+  FIELD AT 22,1 LEN 40 PROT DIM COLOR=BLUE         "ENTER=Exit"
+  CURSOR        AT 22,1
+ENDMAP

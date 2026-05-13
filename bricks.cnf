@@ -15,6 +15,8 @@ max_conns_per_ip=8
 #program cache is always in megabytyes, defaults to 4MB, max 16GB, min 1MB
 program_cache=16
 
+# where temporary files, for example for import/export will be stored
+tmp_dir=runtime/tmp
 
 # ── Filesystem layout ────────────────────────────────────────────
 # Each path below is overridable. Defaults shown in

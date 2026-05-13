@@ -82,9 +82,11 @@ is documented with the same five sections, in this order:
 * [Chapter 8. KSDS browse commands](#chapter-8-ksds-browse-commands)
   — [STARTBR](#startbr) - [READNEXT](#readnext) -
   [READPREV](#readprev) - [RESETBR](#resetbr) - [ENDBR](#endbr)
-* [Chapter 9. Temporary storage commands](#chapter-9-temporary-storage-commands)
+* [Chapter 9. Temporary storage and transient data commands](#chapter-9-temporary-storage-and-transient-data-commands)
   — [READQ TS](#readq-ts) - [WRITEQ TS](#writeq-ts) -
-  [DELETEQ TS](#deleteq-ts)
+  [DELETEQ TS](#deleteq-ts) -
+  [READQ TD](#readq-td) - [WRITEQ TD](#writeq-td) -
+  [DELETEQ TD](#deleteq-td) - [The `tmp_dir` sandbox](#the-tmp_dir-sandbox)
 * [Chapter 10. Recovery and condition handling](#chapter-10-recovery-and-condition-handling)
   — [SYNCPOINT](#syncpoint) - [SYNCPOINT ROLLBACK](#syncpoint-rollback) -
   [HANDLE CONDITION](#handle-condition) - [IGNORE CONDITION](#ignore-condition) -
@@ -1427,17 +1429,32 @@ EXEC CICS ENDBR FILE('CUSTOMERS') END-EXEC
 
 ---
 
-## Chapter 9. Temporary storage commands
+## Chapter 9. Temporary storage and transient data commands
 
-Temporary Storage (TS) queues are ordered, persistent sequences of
-opaque byte items. Each queue is a bbolt sub-bucket whose keys are
-8-byte big-endian item numbers (1, 2, 3 …) and whose values are the
-item payloads. A single queue scales to millions of items without
-filesystem-directory pressure; reads and writes are O(log N).
+Bricks supports two related queue families:
 
-Bricks implements only the **TS** form. The **TD** (transient data)
-sub-form is parsed but explicitly rejected with `INVREQ` — see
-[Chapter 13. Commands not implemented](#chapter-13-commands-not-implemented).
+* **Temporary Storage (TS)** — ordered, persistent sequences of
+  opaque byte items inside the bbolt database. Each queue is a
+  sub-bucket whose keys are 8-byte big-endian item numbers (1, 2, 3
+  …) and whose values are the item payloads. Item-addressed; reads
+  and writes are O(log N). Use for ephemeral state, scratch
+  storage, producer/consumer chaining inside the database.
+
+* **Transient Data extra-partition (TD)** — sequential text files
+  in a sandboxed on-disk directory (`tmp_dir`). Line-oriented;
+  read-once-and-advance / append-only semantics. Use for staging
+  imports from text files into VSAM and exports out of it. The
+  REXX `LINEIN` / `LINEOUT` / `STREAM` family hits the same
+  backend, so a file written by COBOL is readable by REXX and
+  vice-versa.
+
+The encoding contract for TD files is strict: ASCII bytes only
+(`0x09` TAB, `0x20`–`0x7E` printable), no EBCDIC, no UTF; lines are
+terminated by a single LF (`0x0A`); CR (`0x0D`) is rejected on write
+with `INVREQ`. The sandbox enforces a flat namespace under
+`tmp_dir` — no sub-directories, no leading dot, no `..`, no slashes
+in the queue name. See [The `tmp_dir` sandbox](#the-tmp_dir-sandbox)
+below for the full rules.
 
 ### READQ TS
 
@@ -1585,6 +1602,199 @@ cursors. Subsequent `WRITEQ` will recreate it starting at item 1.
 ```rexx
 EXEC CICS DELETEQ TS QUEUE('AUDIT') END-EXEC
 ```
+
+---
+
+### READQ TD
+
+Read the next line from a sequential text file in `tmp_dir`.
+
+#### Format
+
+```
+EXEC CICS READQ TD QUEUE(name)
+                  INTO(target)
+                  [LENGTH(len)]
+END-EXEC
+```
+
+`QNAME` is accepted as a synonym for `QUEUE`. `name` is a flat
+filename under `tmp_dir`; sub-directories and traversal are rejected
+with `INVREQ`.
+
+#### Description
+
+Reads the next LF-terminated line from `tmp_dir/name`, strips the
+terminating LF, and copies the payload into `target`. The file is
+auto-opened in read mode on the first call per task and the read
+cursor advances item-by-item across subsequent calls. A program that
+WRITEs then READs the same queue causes the handler to close the
+write handle and reopen for read; the read cursor restarts at line
+1. The handle is closed automatically at task end.
+
+#### Options
+
+**QUEUE(name)** / **QNAME(name)** *— required*
+
+**INTO(target)** *— required*
+
+**LENGTH(len)**
+   Receives the line's byte count (after the LF strip).
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Line returned. |
+| QZERO | 12 | End-of-file. `target` is untouched; bricks closes the handle so a later READQ on the same queue rewinds to line 1. |
+| QIDERR | 44 | File does not exist in `tmp_dir`. |
+| INVREQ | 16 | Missing `INTO` / invalid name / sandbox rejection. |
+| IOERR | 17 | Underlying file-system error. |
+
+#### Example
+
+```cobol
+PERFORM IMPORT-ONE UNTIL DONE-FLAG = 'Y'.
+...
+IMPORT-ONE.
+    MOVE SPACES TO REC.
+    EXEC CICS READQ TD QUEUE('orders.sample.txt') INTO(REC) END-EXEC.
+    IF EIBRESP = 12 THEN
+        MOVE 'Y' TO DONE-FLAG
+    END-IF.
+    IF EIBRESP = 0 THEN
+        PERFORM HANDLE-RECORD
+    END-IF.
+```
+
+---
+
+### WRITEQ TD
+
+Append a line to a sequential text file in `tmp_dir`.
+
+#### Format
+
+```
+EXEC CICS WRITEQ TD QUEUE(name)
+                   FROM(data)
+                   [LENGTH(len)]
+END-EXEC
+```
+
+`QNAME` is accepted as a synonym for `QUEUE`.
+
+#### Description
+
+Appends `data` plus a single LF to `tmp_dir/name`. The file is
+auto-opened in append mode (creating it if absent) on the first
+call per task. Trailing ASCII spaces on `data` are right-stripped
+before write — COBOL `PIC X(n)` values arrive padded to the right
+and the canonical text-file convention is to strip them. The
+payload is validated byte-by-byte: anything outside `0x09` (TAB),
+`0x0A` (LF), or `0x20`–`0x7E` (printable ASCII) causes the write
+to fail with `INVREQ` and a byte-offset diagnostic. CR (`0x0D`) is
+explicitly rejected — bricks emits Unix-style LF-only files.
+
+#### Options
+
+**QUEUE(name)** / **QNAME(name)** *— required*
+
+**FROM(data)** *— required*
+
+**LENGTH(len)**
+   Accepted for syntactic compatibility; the actual byte count is
+   `LENGTH(data)` after rstrip.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Line appended. |
+| INVREQ | 16 | Missing `FROM` / invalid name / sandbox rejection / non-ASCII byte / CR in payload. |
+| IOERR | 17 | Underlying file-system error. |
+
+#### Example
+
+```rexx
+DO I = 1 TO REC.0
+   EXEC CICS WRITEQ TD QUEUE('export.txt') FROM(REC.I) END-EXEC
+END
+```
+
+---
+
+### DELETEQ TD
+
+Delete a sequential text file in `tmp_dir`.
+
+#### Format
+
+```
+EXEC CICS DELETEQ TD QUEUE(name) END-EXEC
+```
+
+#### Description
+
+Closes any handle the task has open on `name`, then unlinks the
+file. Already-gone is treated as success (matches the `DELETE FILE`
+forgiving semantics in bricks). Use to reset an export staging file
+before a fresh batch.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | File deleted (or already absent). |
+| INVREQ | 16 | Invalid name / sandbox rejection. |
+| IOERR | 17 | Underlying file-system error. |
+
+#### Example
+
+```cobol
+EXEC CICS DELETEQ TD QUEUE('export.txt') END-EXEC.
+```
+
+---
+
+### The `tmp_dir` sandbox
+
+`tmp_dir` is configured in `bricks.cnf`:
+
+```
+tmp_dir = runtime/tmp
+```
+
+Defaults to `runtime/tmp` (under `runtime_dir`) when the line is
+omitted. The directory is created at startup if missing.
+
+**Name rules.** A queue name must match `[A-Za-z0-9._-]{1,255}` —
+no leading dot, no `..`, no slash, no backslash, no NUL. Bricks
+also runs `filepath.Rel` against every resolved path as
+defense-in-depth, so symlink shenanigans bounce too.
+
+**Encoding rules.** ASCII only — no EBCDIC, no UTF-8, no UTF-16.
+The write path validates every byte and rejects with `INVREQ` on
+the first violation, naming the offending offset and hex value.
+Lines terminate with LF only; CR is rejected on write. The read
+path splits on LF and preserves any CR bytes it finds verbatim —
+bricks does **not** silently strip them. If you need to import a
+file authored on Windows, pre-strip the CRs:
+
+```
+tr -d '\r' < windows.csv > runtime/tmp/clean.csv
+```
+
+**Cross-language interop.** Both COBOL (`READQ TD` / `WRITEQ TD`)
+and REXX (`LINEIN` / `LINEOUT` / `STREAM`) hit the same
+`*cics.TmpStore` backend. A file produced by one language is
+readable by the other; the only constraint is that both sides
+agree on the column format inside each line (canonical bricks
+convention: pipe-delimited).
+
+**Task-end cleanup.** Every handle the program opens is closed
+automatically when the task ends. A program that forgets to call
+`STREAM CLOSE` or `DELETEQ TD` does not leak descriptors.
 
 ---
 
@@ -2135,14 +2345,6 @@ END-EVALUATE.
 
 ## Chapter 13. Commands not implemented
 
-The following CICS commands are recognized by the parser but
-explicitly rejected; programs that use them will receive `INVREQ`
-with a clear error message rather than silent misbehaviour.
-
-| Command | Why |
-|---|---|
-| `READQ TD`, `WRITEQ TD`, `DELETEQ TD` | Transient data has one-shot read-and-destroy semantics that TS doesn't; silently routing TD to TS would mask a real difference. |
-
 The following commands are not implemented and the parser does not
 recognize them at all:
 
@@ -2322,6 +2524,7 @@ two styles can coexist.
 | Numeric | `ABS`, `MAX`, `MIN`, `INT`, `TRUNC`, `MOD` (= `//` operator), `SIGN`, `FORMAT(num, before, after)`, `DIGITS`, `FUZZ`, `FORM` |
 | Type / data | `DATATYPE` (with `N`, `W`, `A` options), `LENGTH` |
 | Date / time | `DATE` (`N`/`S`/`E`/`U`/`O`/`B`; `B` does basedate arithmetic), `TIME` |
+| Stream I/O | `LINEIN`, `LINEOUT`, `LINES`, `CHARIN`, `CHAROUT`, `CHARS`, `STREAM` |
 | Variables / args | `VALUE`, `ARG`, `RANDOM`, `ERRORTEXT` |
 
 `VALUE` accepts the canonical 1-arg read form
@@ -2334,6 +2537,44 @@ runtime and returns the prior value).
 
 `DATE('B')` and `DATE('B', 'YYYYMMDD', 'S')` give days since
 0001-01-01 — subtract two basedates for an exact day delta.
+
+### Stream I/O
+
+The stream functions read and write text files in the `tmp_dir`
+sandbox — the same backend that powers COBOL's `EXEC CICS READQ TD`
+/ `WRITEQ TD` / `DELETEQ TD` (see
+[Chapter 9](#chapter-9-temporary-storage-and-transient-data-commands)).
+The sandbox is strict: ASCII only, LF-terminated, no traversal.
+
+| Function | Form | Behaviour |
+|---|---|---|
+| `LINEIN(name)` | next line | Auto-opens `name` for read on first call; returns the next line (LF stripped). Empty string at EOF. |
+| `LINEIN(name, 1)` | rewind | Closes and reopens `name`, then returns line 1. Only `1` is honoured; any other line number is treated as the "next line" form. |
+| `LINEOUT(name)` | close | Closes the named stream. Returns `0`. |
+| `LINEOUT(name, line)` | append | Auto-opens `name` for append on first call; appends `line || '\n'`. Returns `0` on success, `1` on error. |
+| `LINES(name)` | EOF probe | Returns `1` while more data is available, `0` at EOF. |
+| `CHARIN(name, start, n)` | byte read | Reads `n` bytes (default `1`). `start = 1` rewinds first; other `start` values are ignored. |
+| `CHAROUT(name, s)` | byte write | Appends raw bytes. Same ASCII/LF validation as `LINEOUT`. |
+| `CHARS(name)` | bytes remaining | Returns the file size minus the current read position. |
+| `STREAM(name, 'S')` | state | Returns `'READY'`, `'NOTREADY'`, or `'ERROR'`. |
+| `STREAM(name, 'D')` | description | Returns a short status string (`'OK'` / parse-time reason). |
+| `STREAM(name, 'C', cmd)` | command | `OPEN READ` / `OPEN WRITE` / `OPEN APPEND` / `CLOSE` / `QUERY EXISTS` / `QUERY SIZE` / `DELETE`. |
+
+```rexx
+/* Append a row, then read every row back. */
+CALL LINEOUT 'export.txt', 'C0000099|WIDGET-Z|7|9.95'
+CALL LINEOUT 'export.txt'                   /* close the writer    */
+DO WHILE LINES('export.txt') > 0
+   SAY LINEIN('export.txt')
+END
+CALL STREAM 'export.txt', 'C', 'CLOSE'
+```
+
+Every handle a program opens is closed automatically at task end;
+an interpreter that forgets to call `CLOSE` does not leak
+descriptors. A sandbox violation (`'../etc/passwd'`, `'sub/x'`,
+leading-dot) causes the next `LINEIN` / `LINEOUT` to raise an
+error and `STREAM('S')` to report `'ERROR'`.
 
 ### Operators
 
@@ -2457,19 +2698,78 @@ buffer round-trips cleanly across an inter-language `EXEC CICS LINK`.
 `MOVE`, `DISPLAY`, `STOP RUN`, `GOBACK`, `EXIT`, `EXIT PROGRAM`,
 `CONTINUE` (no-op), `IF ... [ELSE] ... END-IF`, `EVALUATE subject
 WHEN value [WHEN value] ... [WHEN OTHER] ... END-EVALUATE`, `PERFORM
-para`, `PERFORM para UNTIL cond`, `GO TO para`, `COMPUTE target =
-expr`, `ADD a TO b [GIVING c]`, `SUBTRACT a FROM b [GIVING c]`,
+para`, `PERFORM para UNTIL cond`, `PERFORM para N TIMES`,
+`PERFORM para VARYING idx FROM x BY y UNTIL cond`, `GO TO para`,
+`COMPUTE target [ROUNDED] = expr [ON SIZE ERROR ... END-COMPUTE]`,
+`ADD a TO b [GIVING c] [ROUNDED] [ON SIZE ERROR ... END-ADD]`,
+`SUBTRACT a FROM b [GIVING c] [ROUNDED] [ON SIZE ERROR ... END-SUBTRACT]`,
+`MULTIPLY a BY b [GIVING c] [ROUNDED] [ON SIZE ERROR ... END-MULTIPLY]`,
+`DIVIDE a INTO b [GIVING c] [ROUNDED] [ON SIZE ERROR ... END-DIVIDE]`,
+`DIVIDE a BY b GIVING c [ROUNDED] [ON SIZE ERROR ... END-DIVIDE]`,
 `STRING ... DELIMITED BY (SIZE | 'lit') INTO target END-STRING`,
 `UNSTRING source DELIMITED BY 'lit' INTO t1 t2 ... END-UNSTRING`,
-`INSPECT subject TALLYING counter FOR ALL needle`,
-`INSPECT subject REPLACING ALL needle BY replacement`,
+`INSPECT subject TALLYING counter FOR (ALL | LEADING | CHARACTERS) [needle] [BEFORE/AFTER INITIAL delim]`,
+`INSPECT subject REPLACING (ALL | LEADING | FIRST | CHARACTERS) [needle] BY replacement [BEFORE/AFTER INITIAL delim]`,
 `EXEC CICS ... END-EXEC`.
 
 Every target name above (the second operand of MOVE, the target of
-COMPUTE / ADD / SUBTRACT / GIVING / STRING INTO / UNSTRING INTO /
-INSPECT, and the subject of EVALUATE / IF) accepts qualification via
-`OF` / `IN` (see the [Data Division](#chapter-21-data-division)
-section on globally non-unique names).
+COMPUTE / ADD / SUBTRACT / MULTIPLY / DIVIDE / GIVING / STRING INTO /
+UNSTRING INTO / INSPECT, and the subject of EVALUATE / IF) accepts
+qualification via `OF` / `IN` (see the
+[Data Division](#chapter-21-data-division) section on globally
+non-unique names) and subscripts via `(idx)` for OCCURS-resident
+items.
+
+### ROUNDED and ON SIZE ERROR
+
+`ROUNDED` applied to `COMPUTE` and the four arithmetic verbs rounds
+the final value half-away-from-zero to the destination's PIC scale
+instead of truncating toward zero (the unROUNDED default).
+
+`ON SIZE ERROR` runs its statement list when the calculation
+overflows the int64 fixed-point engine, the result's integer-part
+digits don't fit in the target PIC, or a `DIVIDE` divisor is zero;
+when present, the destination is left untouched on a size-error
+firing. Without an `ON SIZE ERROR` branch the value is silently
+truncated/wrapped as before so existing programs aren't disrupted.
+
+### PERFORM N TIMES and PERFORM VARYING
+
+```cobol
+PERFORM FILL-ROW 15 TIMES.
+
+PERFORM FILL-ROW
+    VARYING I FROM 1 BY 1 UNTIL I > 15.
+```
+
+`PERFORM ... N TIMES` runs the named paragraph exactly N times; N
+can be a numeric literal or a numeric data item. `PERFORM ...
+VARYING idx FROM x BY y UNTIL cond` initialises `idx` to `x`,
+runs the body while `cond` is false, then increments `idx` by `y`
+between iterations.
+
+### OCCURS arrays
+
+```cobol
+01 TABLE-AREA.
+   05 ROW OCCURS 15 TIMES.
+      10 K  PIC X(8).
+      10 N  PIC X(28).
+01 I  PIC 9(4).
+...
+MOVE 'KEY-A' TO K(1).
+MOVE 'KEY-B' TO K(I).
+PERFORM SHOW-ROW VARYING I FROM 1 BY 1 UNTIL I > 15.
+```
+
+`OCCURS n TIMES` declares `n` copies of an item; references add a
+parenthesised 1-based subscript expression that picks one. The
+subscript can be any numeric expression — a literal, a data item, or
+arithmetic — and is bounds-checked at runtime. Subscripts work on
+group items (`ROW(5)`) and on elementaries inside the OCCURS group
+(`K(5)`) alike. The cap is 4096 occurrences per item; nested
+OCCURS (an OCCURS group inside another OCCURS group) is rejected at
+parse time.
 
 ### Periods
 
@@ -2508,31 +2808,58 @@ operator types a search term at GUST's `S` action.
 
 ### INSPECT
 
-Two simple forms are supported:
-
 ```cobol
-INSPECT subject TALLYING counter FOR ALL needle
-INSPECT subject REPLACING ALL needle BY replacement
+INSPECT subject TALLYING counter FOR (ALL | LEADING | CHARACTERS)
+                                     [needle] [BEFORE/AFTER INITIAL delim]
+                                     [, ...]
+INSPECT subject REPLACING (ALL | LEADING | FIRST | CHARACTERS)
+                          [needle] BY replacement
+                          [BEFORE/AFTER INITIAL delim]
+                          [, ...]
 ```
 
-* **TALLYING** adds the number of `needle` occurrences in `subject`
-  to `counter` (it does not reset — successive `INSPECT TALLYING`
-  statements accumulate, matching IBM semantics).
-* **REPLACING ALL** rewrites every occurrence of `needle` in
-  `subject` with `replacement`. IBM requires `needle` and
-  `replacement` to be the same length; bricks is lenient and pads or
-  truncates `replacement` to match the needle's length so figurative
-  forms like `REPLACING ALL '*' BY SPACES` produce a deterministic
-  result.
+Quantifiers:
 
-Both forms accept qualified data-names (`INSPECT REC OF DET ...`).
-Trailing PIC X padding is rstripped from both the subject and the
-needle before matching, so a 30-byte filter containing `FOO` plus
-trailing spaces matches against the meaningful content of the
-subject rather than against the padding.
+* **ALL** — every occurrence of `needle` (TALLYING) or every
+  occurrence rewritten (REPLACING).
+* **LEADING** — only successive occurrences at the start of the
+  in-scope region.
+* **FIRST** — only the first occurrence (REPLACING only).
+* **CHARACTERS** — every character in the in-scope region; for
+  TALLYING this just counts characters, for REPLACING it overwrites
+  each one with the first byte of `replacement`.
 
-LEADING / CHARACTERS / BEFORE INITIAL / AFTER INITIAL qualifiers and
-multiple comma-separated phrases per `INSPECT` are not yet supported.
+Limiters:
+
+* **BEFORE INITIAL delim** narrows the in-scope region to everything
+  before the first occurrence of `delim`.
+* **AFTER INITIAL delim** narrows to everything after the first
+  occurrence of `delim`.
+
+Both can be set on the same phrase; AFTER picks the start, BEFORE
+picks the end.
+
+Multiple phrases can be combined per statement, optionally separated
+by commas:
+
+```cobol
+INSPECT REC REPLACING ALL ',' BY '|' ALL ';' BY '/'.
+INSPECT REC TALLYING C FOR LEADING '0', ALL 'X' AFTER INITIAL ' '.
+```
+
+Counter behaviour: TALLYING **accumulates** — successive `INSPECT
+TALLYING` statements add to the existing counter value rather than
+resetting, matching IBM semantics. REPLACING phrases run left-to-
+right in declared order, so later phrases see the output of earlier
+ones.
+
+Subject, counter, and operands all accept qualified data-names
+(`INSPECT REC OF DET ...`). Trailing PIC X padding is rstripped from
+both the subject and the needle before matching, so a 30-byte filter
+containing `FOO` plus trailing spaces matches against the meaningful
+content of the subject rather than against the padding.
+
+IBM's CONVERTING form is not parsed yet.
 
 ### EVALUATE limitations
 
@@ -2611,24 +2938,13 @@ between REXX and COBOL.
   require a per-program label-table the parser deliberately doesn't
   build.
 
-### Deferred (Phase 7)
+### Deferred Syntax Covrage 
 
-* `LINKAGE SECTION` end-to-end (right now `DFHCOMMAREA` is
-  auto-injected in WORKING-STORAGE; a real LINKAGE SECTION would
-  let an operator declare per-program COMMAREA shapes).
 * Reference modification (`DATE-FIELD(1:4)` for substring access).
-* `PERFORM N TIMES` / `PERFORM VARYING ... FROM ... BY ... UNTIL ...`
-  and `OCCURS` arrays — needed for clean paginated browses and
-  dynamic field assignment. GUSL's row 1..15 fan-out is unrolled
-  by hand today.
-* `MULTIPLY / DIVIDE`, `ROUNDED`, `ON SIZE ERROR` (the parser
-  accepts and ignores `ROUNDED` / `ON SIZE ERROR` today).
-* `INSPECT` variants beyond `TALLYING FOR ALL` and `REPLACING ALL`
-  — `LEADING`, `CHARACTERS`, `BEFORE INITIAL`, `AFTER INITIAL`, and
-  multiple comma-separated phrases per statement aren't parsed yet.
-  The two ALL forms are enough for substring counting and bulk
-  character replacement (the GUSL filter and figurative-driven
-  scrubs); anything more nuanced needs to wait.
+* Multi-dimensional `OCCURS`. One-level OCCURS is supported (see
+  [Chapter 22](#chapter-22-procedure-division)); the parser rejects
+  an OCCURS item whose chain already contains another OCCURS
+  ancestor.
 * `SCREENHT`-based map family suffix (e.g. `CUST1L` on a mod-4
   screen). REXX programs do this with a runtime
   `IF SCRH >= 43 THEN ...` fallback after a `MAPFAIL`; the COBOL
@@ -2650,6 +2966,7 @@ between REXX and COBOL.
 | `GUSV` | `runtime/cobol/gusv.cob` | COBOL twin of `CUSV`. Validates the customer-number COMMAREA (LINK target). |
 | `GUSL` | `runtime/cobol/gusl.cob` | COBOL twin of `CUSL`. Renders the customers file via STARTBR / READNEXT / ENDBR. Blank inbound COMMAREA = paginated all-records list (PF7/PF8). Non-blank inbound COMMAREA = filtered single-page browse: every record is `FUNCTION POS`-tested against the upper-cased filter, the first 15 matches populate ROW1..ROW15, and the total match count flows back through DFHCOMMAREA so the caller (GUST) can render a summary. |
 | `EXAM` | `runtime/cobol/exam.cob` | Worked example of reading the operator's command-line arguments. Type `EXAM 1 2 3` at the blank prompt. |
+| `ORDR` | `runtime/cobol/ordr.cob` | Conversational import: reads `runtime/tmp/orders.sample.txt` via `READQ TD`, parses pipe-delimited rows, and `WRITE FILE('ORDERS')` keyed on customer-id. Tolerates duplicates (`EIBRESP = 14`). Summary screen shows counts. See [worked example E](#e-sequential-import-via-readq-td--write-file). |
 
 ### REXX (selected)
 
@@ -2767,6 +3084,68 @@ IF STATUS <> 'OK' THEN ...
 `CUSV` reads `DFHCOMMAREA`, runs its check, and writes the result
 back into `DFHCOMMAREA` before `RETURN`. The dispatcher hands the
 final value back to the caller's `SAV`.
+
+### E. Sequential import via READQ TD + WRITE FILE
+
+The `ORDR` transaction (`runtime/cobol/ordr.cob`) demonstrates the
+"text file → VSAM" pattern that the `tmp_dir` sandbox is built for.
+The sample data ships in `runtime/tmp/orders.sample.txt`:
+
+```
+C0000001|WIDGET-A|10|19.95
+C0000002|WIDGET-B|2|249.00
+...
+```
+
+The loop body is just two EXEC CICS calls and an `UNSTRING`:
+
+```cobol
+IMPORT-ONE.
+    MOVE SPACES TO REC.
+    EXEC CICS READQ TD QUEUE('orders.sample.txt') INTO(REC) END-EXEC.
+    IF EIBRESP = 12 THEN
+        MOVE 'Y' TO DONE-FLAG       *> QZERO -- end of file
+    END-IF.
+    IF EIBRESP = 0 THEN
+        COMPUTE N-READ = N-READ + 1
+        MOVE SPACES TO CUST-ID PRODUCT QTY PRICE
+        UNSTRING REC DELIMITED BY '|'
+            INTO CUST-ID PRODUCT QTY PRICE
+        END-UNSTRING
+        PERFORM WRITE-ORDER
+    END-IF.
+
+WRITE-ORDER.
+    MOVE SPACES TO OREC.
+    STRING PRODUCT DELIMITED BY SIZE
+           '|' DELIMITED BY SIZE
+           QTY DELIMITED BY SIZE
+           '|' DELIMITED BY SIZE
+           PRICE DELIMITED BY SIZE
+        INTO OREC
+    END-STRING.
+    EXEC CICS WRITE FILE('ORDERS') FROM(OREC) RIDFLD(CUST-ID) END-EXEC.
+    IF EIBRESP = 0  THEN COMPUTE N-WRITE = N-WRITE + 1 END-IF.
+    IF EIBRESP = 14 THEN COMPUTE N-DUP   = N-DUP   + 1 END-IF.
+```
+
+Notes:
+
+* The READQ loop tracks EOF with `EIBRESP = 12` (`QZERO`) — the
+  CICS-canonical "queue empty / no more records" signal. The
+  handle is closed automatically at task end.
+* `EIBRESP = 14` (`DUPREC`) is treated as a counted no-op, not an
+  error: `WRITE FILE` against an existing key fails atomically
+  without overwriting, so a re-run of `ORDR` on the same file is
+  idempotent on the customer-id set.
+* `ORDR` ships `public` in `runtime/transactions.conf` so the
+  sample runs out of the box. In a production deployment that
+  imports real data, restrict it to a privileged group
+  (`ORDR:cobol:ordr.cob:admin`) so a casual operator can't replay
+  the import.
+* A REXX equivalent reads the same file via `LINEIN` and writes via
+  `EXEC CICS WRITE`. Because both languages share the `tmp_dir`
+  backend, the sample file works untouched from either side.
 
 ---
 

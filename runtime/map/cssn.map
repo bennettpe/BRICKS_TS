@@ -1,15 +1,19 @@
-* CICS sign-on screen (default logon transaction)
+* CICS sign-on screen (default logon transaction).
+*
+* The static layout pins the title to row 0 and the form to rows 2/4/6;
+* the MSG and "Sign on with ENTER. PF3=Disconnect." legend are not in
+* this map — auth.RunCSSN renders them dynamically so they land on the
+* actual last row of whatever terminal size (mod 2 = 23, mod 3 = 31,
+* mod 4 = 43) the operator is using.
 MAP CSSN SIZE 24x80
-  FIELD AT 1,28 LEN 24 PROT BRIGHT COLOR=BLUE      "CSSN SIGN-ON"
-  FIELD AT 4,0  LEN 8  PROT COLOR=BLUE             "TERMID:"
-  INPUT TERMID   AT 4,11 LEN 8  PROT BRIGHT COLOR=WHITE
-  FIELD AT 6,0  LEN 9  PROT                        "Userid:"
-  INPUT USERID   AT 6,11 LEN 8  UNDERSCORE COLOR=GREEN
+  FIELD AT 0,28 LEN 12 PROT BRIGHT COLOR=BLUE      "CSSN SIGN-ON"
+  FIELD AT 2,0  LEN 8  PROT COLOR=BLUE             "TERMID:"
+  INPUT TERMID   AT 2,11 LEN 8  PROT BRIGHT COLOR=WHITE
+  FIELD AT 4,0  LEN 9  PROT                        "Userid:"
+  INPUT USERID   AT 4,11 LEN 8  UNDERSCORE COLOR=GREEN
+  STOP           AT 4,20
+  FIELD AT 6,0  LEN 9  PROT                        "Password:"
+  INPUT PASSWORD AT 6,11 LEN 8  HIDDEN UNDERSCORE COLOR=RED
   STOP           AT 6,20
-  FIELD AT 8,0  LEN 9  PROT                        "Password:"
-  INPUT PASSWORD AT 8,11 LEN 8  HIDDEN UNDERSCORE COLOR=RED
-  STOP           AT 8,20
-  FIELD AT 12,0 LEN 50 PROT                        "Sign on with ENTER. PF3=Disconnect."
-  INPUT MSG      AT 18,0 LEN 60 PROT BRIGHT COLOR=RED
-  CURSOR         AT 6,12
+  CURSOR         AT 4,12
 ENDMAP
