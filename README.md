@@ -72,7 +72,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `data_dir`                   | `data`                        | Holds `files.boltdb` (FILE store + TS queues). |
 | `idle_timeout_secs`          | `900`                         | Read deadline applied to the CSSN sign-on flow and to every blank/logon prompt. A peer that holds the connection open without sending input is dropped at this many seconds. |
 | `max_conns_per_ip`           | `8`                           | Per-client cap. |
-| `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as a contiguous byte slab and reused for the life of the process — Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
+| `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as eight contiguous byte slabs — one per shard — and reused for the life of the process; Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
 | `banner`                     | `BRICKS Transaction Server`   | Shown at top of system screens. |
 | `dns_name`                   | (none)                        | Informational; printed at startup. |
 | `start_web3270`              | `no`                          | `yes` enables the in-process browser-based 3270 emulator. |
@@ -923,12 +923,23 @@ parsed `*rexx.Program` and `*cobol.Program` ASTs keyed by file path and
   no gob, no memcpy, no allocation. This is the hot path for the
   working set of busy transactions and matches the speed of the
   original pointer cache.
-- **L2** (`txn/programcache.go`) — the byte-budget tier, a fixed-size
-  contiguous byte slab sized by `program_cache` in `bricks.cnf`. AST
-  blobs are gob-encoded and LRU-evicted when the slab fills. Because
-  the slab is a single pointer-free `[]byte`, Go's garbage collector
-  scans it in O(1) regardless of how many programs it contains; the
-  AST bytes inside are never visited by the collector.
+- **L2** (`txn/programcache.go`) — the byte-budget tier, sized by
+  `program_cache` in `bricks.cnf`. AST blobs are gob-encoded and
+  LRU-evicted when the slab fills. The slab itself is a pointer-free
+  `[]byte`, so Go's garbage collector scans it in O(1) regardless of
+  how many programs it contains; the AST bytes inside are never
+  visited by the collector.
+
+Both tiers are 8-way sharded internally — keyed by FNV-1a hash of the
+program's file path, each shard owns its own mutex, map, LRU list, and
+(for L2) byte slab. Dispatches contend only when they happen to hash to
+the same stripe, which under a normal mix of TRANSIDs spreads the
+contention across shards rather than serializing every cache touch
+through one lock. The capacities quoted above are totals: the default
+128-entry L1 is eight 16-entry LRUs, and a default 4 MB L2 is eight
+512 KB slabs, each with its own bump pointer and compaction. Hit and
+miss counters on each shard are `atomic.Uint64`, so `CEMT MONITOR`
+aggregates the totals without taking any shard lock.
 
 On a miss, the dispatcher parses from disk, encodes into L2, and
 populates L1 with the freshly-parsed AST. On an L1 miss but L2 hit, the
