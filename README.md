@@ -74,6 +74,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `tmp_dir`                    | `runtime/tmp`                 | Sandbox directory for sequential text I/O (REXX `LINEIN`/`LINEOUT`, COBOL `READQ TD`/`WRITEQ TD`). Strict: ASCII only, LF-terminated, flat namespace, no traversal. See [Sequential file I/O — `tmp_dir`](#sequential-file-io--tmp_dir). |
 | `ntp_server`                 | `time.google.com`             | NTP server polled every 5 minutes to correct bricks's in-memory wall clock. EIBTIME / EIBDATE / FORMATTIME consult this corrected clock. Set to `off` to disable. Failures are non-fatal — bricks logs and continues with the previous offset (or the raw host clock if no sync has ever succeeded). See [Time synchronisation](#time-synchronisation). |
 | `time_zone`                  | `Z` (UTC)                     | Military zone letter (`Z`=UTC, `A`–`M`=UTC+1..+12, `N`–`Y`=UTC-1..-12). Applies to operator-visible time fields; ABSTIME stays UTC milliseconds. See [Time synchronisation](#time-synchronisation). |
+| `log_location`               | `log`                         | Directory where bricks writes per-run log files. On startup a new file `YYYY-MM-DD_HH-MM-SS.log` is created; every console line is appended (with ANSI color stripped) and prefixed with a 4-character subsystem tag. Set to `off` to disable file logging. See [Logging](#logging). |
 | `idle_timeout_secs`          | `900`                         | Read deadline applied to the CSSN sign-on flow and to every blank/logon prompt. A peer that holds the connection open without sending input is dropped at this many seconds. |
 | `max_conns_per_ip`           | `8`                           | Per-client cap. |
 | `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as eight contiguous byte slabs — one per shard — and reused for the life of the process; Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
@@ -576,6 +577,75 @@ precision matters.
 both the startup sync and the 5-minute goroutine. Bricks then uses
 the raw host clock unchanged. Useful for air-gapped deployments
 where outbound UDP/123 is blocked.
+
+---
+
+## Logging
+
+Every line emitted to the framed console is **also appended to a
+per-run log file** under `log_location` (default `log` under the
+directory bricks was started in). On startup bricks creates a fresh
+file named `YYYY-MM-DD_HH-MM-SS.log`, prints its path on the
+console, and routes every subsequent `log.Printf` through a dual
+writer (`bricks/brickslog`).
+
+The console copy keeps any ANSI color codes (so red eviction
+warnings, etc. render on the framed renderer). The **file copy
+strips all ANSI escapes** so the log opens cleanly in editors and
+log-aggregator tools.
+
+### Subsystem tags
+
+Every line carries a 4-character subsystem tag right after the
+timestamp, padded so the message text always starts at column 6 of
+the bracketed area:
+
+```
+2026/05/13 14:35:12 LOAD loaded 250 customers from data/files.boltdb
+2026/05/13 14:35:12 NET  listener on :2300
+2026/05/13 14:35:12 SYS  ntp: initial sync ok skew=12.3ms server=time.google.com
+2026/05/13 14:35:17 AUTH term=T0001 signed on as admin
+2026/05/13 14:35:18 EXEC term=T0001 transid=CUST: complete
+2026/05/13 14:35:19 CICS term=T0001 READ FILE('CUSTOMERS') RID=00100 OK
+```
+
+Six tags cover the codebase — kept deliberately few; more tags
+fragment grep patterns without adding signal:
+
+| Tag    | Subsystem |
+|--------|-----------|
+| `LOAD` | program loader / lexer / parser / cache (REXX, COBOL, MAP) |
+| `EXEC` | transaction dispatch + REXX/COBOL runtime |
+| `CICS` | EXEC CICS verb handlers (FILE, TS/TD queues, MAP, etc.) |
+| `AUTH` | sign-on / sign-off / per-transaction ACL gates |
+| `NET`  | 3270 / TLS / WebSocket / TCP listeners |
+| `SYS`  | catch-all: config, startup, NTP, signals, console |
+
+Untouched legacy `log.Printf` call sites get the `SYS` tag by
+default (the dual writer is wired in as the standard `log` writer
+during `brickslog.Init`). The per-subsystem helpers
+(`brickslog.Load`, `brickslog.Exec`, `brickslog.CICS`, etc.) are
+the way to opt into a more specific tag from new code.
+
+### Configuration
+
+```
+# Default: log_location=log
+log_location=/var/log/bricks
+log_location=off
+```
+
+Setting `log_location=off` skips the file sink entirely; console
+logging is unaffected. The default `log` directory is created on
+startup if missing.
+
+### File rotation
+
+Bricks creates one file per startup — there's no built-in size or
+time-based rotation. Long-running deployments should rely on
+external tools (`logrotate`, `cronolog`, etc.) pointed at
+`log_location`. A bricks restart always opens a new file, so
+rotating by restarting cuts a clean boundary.
 
 ---
 

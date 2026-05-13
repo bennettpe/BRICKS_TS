@@ -20,7 +20,7 @@
       *>   paginated all-records list. When it contains a search
       *>   filter, GUSL walks every record once via STARTBR/READNEXT,
       *>   uppercases KEY || ' ' || REC, and uses FUNCTION POS to test
-      *>   substring containment — matching cusl.rexx's behaviour. The
+      *>   substring containment  matching cusl.rexx's behaviour. The
       *>   first 15 matches are written into the 15 ROW slots for a
       *>   single CUSTL SEND; the total match count flows back through
       *>   the outbound DFHCOMMAREA so GUST can render a summary line.
@@ -30,6 +30,8 @@
 
        DATA DIVISION.
        WORKING-STORAGE SECTION.
+       COPY DFHAID.
+       COPY DFHRESP.
        01 SCR.
           05 INFOLINE PIC X(78).
           05 ROW1.
@@ -242,10 +244,10 @@
            MOVE SPACES TO KEY-IN.
            EXEC CICS READNEXT FILE('customers') INTO(REC)
                               RIDFLD(KEY-IN) END-EXEC.
-           IF EIBRESP NOT = 0 THEN
+           IF EIBRESP NOT = RESP-NORMAL THEN
                MOVE 'Y' TO SCAN-DONE
            END-IF.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
       *> Build the haystack KEY || ' ' || REC and upper-case it.
       *> STRING with DELIMITED BY SIZE rstrips each segment per the
       *> bricks pragmatic concat rule, which is what we want here.
@@ -270,7 +272,7 @@
 
        PLACE-ROW.
       *> Fan out the current match into the ROW<SLOT> slot. Without
-      *> OCCURS the dispatch is unrolled with EVALUATE — same shape as
+      *> OCCURS the dispatch is unrolled with EVALUATE  same shape as
       *> the unfiltered fan-out above.
            EVALUATE SLOT
                WHEN 1
@@ -341,63 +343,63 @@
            PERFORM SKIP-ONE UNTIL SKIPCNT >= SKIPGOAL.
 
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K1 MOVE SNAME TO N1
               MOVE SCITY TO C1 MOVE SPHONE TO P1 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K2 MOVE SNAME TO N2
               MOVE SCITY TO C2 MOVE SPHONE TO P2 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K3 MOVE SNAME TO N3
               MOVE SCITY TO C3 MOVE SPHONE TO P3 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K4 MOVE SNAME TO N4
               MOVE SCITY TO C4 MOVE SPHONE TO P4 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K5 MOVE SNAME TO N5
               MOVE SCITY TO C5 MOVE SPHONE TO P5 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K6 MOVE SNAME TO N6
               MOVE SCITY TO C6 MOVE SPHONE TO P6 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K7 MOVE SNAME TO N7
               MOVE SCITY TO C7 MOVE SPHONE TO P7 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K8 MOVE SNAME TO N8
               MOVE SCITY TO C8 MOVE SPHONE TO P8 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K9 MOVE SNAME TO N9
               MOVE SCITY TO C9 MOVE SPHONE TO P9 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K10 MOVE SNAME TO N10
               MOVE SCITY TO C10 MOVE SPHONE TO P10 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K11 MOVE SNAME TO N11
               MOVE SCITY TO C11 MOVE SPHONE TO P11 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K12 MOVE SNAME TO N12
               MOVE SCITY TO C12 MOVE SPHONE TO P12 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K13 MOVE SNAME TO N13
               MOVE SCITY TO C13 MOVE SPHONE TO P13 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K14 MOVE SNAME TO N14
               MOVE SCITY TO C14 MOVE SPHONE TO P14 END-IF.
            PERFORM ONE-ROW.
-           IF EIBRESP = 0 THEN PERFORM SPLIT
+           IF EIBRESP = RESP-NORMAL THEN PERFORM SPLIT
               MOVE KEY-IN TO K15 MOVE SNAME TO N15
               MOVE SCITY TO C15 MOVE SPHONE TO P15 END-IF.
 
@@ -406,23 +408,22 @@
            EXEC CICS SEND MAP('CUSTL') FROM(SCR) ERASE END-EXEC.
            EXEC CICS RECEIVE MAP('CUSTL') END-EXEC.
 
-      *> AID dispatch. PF3 / PF12 / unmapped keys exit; PF7 pages back
-      *> (clamping at page 1); PF8 advances. The hex literals match the
-      *> 3270 AID byte values (PF3=0xF3, PF7=0xF7, PF8=0xF8, PF12=0x7C).
       *> AID dispatch matches cusl.rexx: PF3 / PF12 exit; PF7/PF8 page;
       *> any other key (including ENTER) is a no-op so the operator
       *> stays in the list view. PF8 always advances even on an empty
       *> next page -- PF7 takes the operator back if they overshoot.
+      *> AID names come from COPY DFHAID; the DFHPF3 / DFHPF12 IBM-
+      *> traditional aliases work identically if you prefer them.
            EVALUATE EIBAID
-               WHEN X'F3'
+               WHEN PF03
                    MOVE 'Y' TO EXIT-FLAG
-               WHEN X'7C'
+               WHEN PF12
                    MOVE 'Y' TO EXIT-FLAG
-               WHEN X'F7'
+               WHEN PF07
                    IF PAGE-NO > 1 THEN
                        COMPUTE PAGE-NO = PAGE-NO - 1
                    END-IF
-               WHEN X'F8'
+               WHEN PF08
                    COMPUTE PAGE-NO = PAGE-NO + 1
                WHEN OTHER
                    CONTINUE
@@ -433,10 +434,10 @@
            MOVE SPACES TO KEY-IN.
            EXEC CICS READNEXT FILE('customers') INTO(REC)
                               RIDFLD(KEY-IN) END-EXEC.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
                COMPUTE SKIPCNT = SKIPCNT + 1
            END-IF.
-           IF EIBRESP NOT = 0 THEN
+           IF EIBRESP NOT = RESP-NORMAL THEN
                MOVE SKIPGOAL TO SKIPCNT
            END-IF.
 
@@ -445,7 +446,7 @@
            MOVE SPACES TO KEY-IN.
            EXEC CICS READNEXT FILE('customers') INTO(REC)
                               RIDFLD(KEY-IN) END-EXEC.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
                COMPUTE NCOUNT = NCOUNT + 1
            END-IF.
 

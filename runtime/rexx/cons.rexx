@@ -4,13 +4,13 @@
 /* and the operator can either DELETE the queue (PF4), restart from  */
 /* item 1 (PF5), or PF3 to leave.                                    */
 /*                                                                   */
-/* The cursor lives on the running task — closing the transaction    */
+/* The cursor lives on the running task  closing the transaction*/
 /* (PF3 / RETURN) releases it via Store.ClearTaskState in the        */
 /* dispatcher, so the next CONS invocation starts fresh at item 1.   */
 /*                                                                   */
 /* Variable naming: REXX compound-symbol tail substitution turns     */
 /* SCR.LASTITEM into SCR.<value-of-LASTITEM> if a local variable     */
-/* named LASTITEM exists — silently writing to the wrong tail and    */
+/* named LASTITEM exists  silently writing to the wrong tail and*/
 /* leaving the map field empty. Same trap cust.rexx and qagr.rexx    */
 /* warn about. So local names are deliberately distinct from the     */
 /* CONS1 map fields (LASTITEM/LASTPAY/NREAD/QNAME/MSG):              */

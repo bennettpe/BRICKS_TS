@@ -11,7 +11,9 @@
       *> a prior SEND from a sibling transaction.
       *>
       *> bricks COBOL conveniences used here:
-      *>   - X'F3' hex literal compares EIBAID against the PF3 byte.
+      *>   - COPY DFHAID delivers PF03 (and the DFHPF3 alias) so the
+      *>     PF3-cancel branch reads `IF EIBAID = PF03` instead of a
+      *>     raw hex literal.
       *>   - EXEC CICS ASSIGN TODAYYR / TODAYMO / TODAYDY return today's
       *>     year / month / day separately so this program needs no
       *>     reference modification or STRING verb.
@@ -23,6 +25,7 @@
 
        DATA DIVISION.
        WORKING-STORAGE SECTION.
+       COPY DFHAID.
        01 TRM      PIC X(8).
 
       *> SCR is the shared map IO group. QAGE1 has TERMID/YEAR/MONTH/DAY/MSG;
@@ -102,7 +105,7 @@
            EXEC CICS SEND MAP('QAGE1') FROM(SCR) ERASE END-EXEC.
            EXEC CICS RECEIVE MAP('QAGE1') INTO(SCR) END-EXEC.
 
-           IF EIBAID = X'F3' THEN
+           IF EIBAID = PF03 THEN
                MOVE 'Y' TO EXIT-FLAG
            END-IF.
            IF EXIT-FLAG = 'Y' THEN

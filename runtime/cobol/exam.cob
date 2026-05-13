@@ -11,12 +11,15 @@
       *> This is the IBM-canonical surface: real CICS programs read the
       *> first-dispatch terminal input the same way. A second RECEIVE
       *> in this same task, or any RECEIVE in a chained RETURN TRANSID
-      *> task, returns EOC (RESP=6).
+      *> task, returns RESP-EOC -- see the named-constant branch below
+      *> in MAIN. The RESP-EOC name (and its DFHRESP-EOC alias) come
+      *> from COPY DFHRESP.
        IDENTIFICATION DIVISION.
        PROGRAM-ID. EXAM.
 
        DATA DIVISION.
        WORKING-STORAGE SECTION.
+       COPY DFHRESP.
        01 WS-INPUT  PIC X(60).
        01 WS-LEN    PIC 9(4).
 
@@ -43,10 +46,15 @@
            MOVE SPACES TO C.
 
       *> RECEIVE the unedited buffer the operator typed at the blank
-      *> prompt. EIBRESP=6 (EOC) means there's nothing to read --
+      *> prompt. EIBRESP = RESP-EOC means there's nothing to read --
       *> happens when EXAM is invoked through a chained RETURN TRANSID
-      *> rather than typed fresh.
+      *> rather than typed fresh. Mark the screen so the operator
+      *> sees why the args are empty.
            EXEC CICS RECEIVE INTO(WS-INPUT) LENGTH(WS-LEN) END-EXEC.
+
+           IF EIBRESP = RESP-EOC THEN
+               MOVE '(no input -- chained dispatch)' TO WS-INPUT
+           END-IF.
 
            MOVE WS-INPUT TO RAW.
            MOVE WS-LEN   TO BUFLEN.

@@ -10,6 +10,8 @@
 
        DATA DIVISION.
        WORKING-STORAGE SECTION.
+       COPY DFHAID.
+       COPY DFHRESP.
        01 USR PIC X(8).
        01 TRM PIC X(4).
 
@@ -77,7 +79,7 @@
 
       *> PF12 from the menu screen exits the transaction immediately --
       *> matching cust.rexx's `IF C2X(EIBAID) = '7C'`.
-           IF EIBAID = X'7C' THEN
+           IF EIBAID = PF12 THEN
                MOVE 'Y' TO EXIT-FLAG
            END-IF.
 
@@ -171,21 +173,22 @@
 
            EXEC CICS WRITE FILE('customers') FROM(REC) RIDFLD(KEY-IN) END-EXEC.
 
-           IF EIBRESP = 14 THEN
+           IF EIBRESP = RESP-DUPREC THEN
                STRING 'Customer ' DELIMITED BY SIZE
                       KEY-IN DELIMITED BY SIZE
                       ' already exists.' DELIMITED BY SIZE
                    INTO MSG
                END-STRING
            END-IF.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
                STRING 'Customer ' DELIMITED BY SIZE
                       KEY-IN DELIMITED BY SIZE
                       ' added.' DELIMITED BY SIZE
                    INTO MSG
                END-STRING
            END-IF.
-           IF EIBRESP NOT = 0 AND EIBRESP NOT = 14 THEN
+           IF EIBRESP NOT = RESP-NORMAL
+              AND EIBRESP NOT = RESP-DUPREC THEN
                MOVE EIBRESP TO RESP-STR
                STRING 'WRITE failed RESP=' DELIMITED BY SIZE
                       RESP-STR DELIMITED BY SIZE
@@ -195,21 +198,22 @@
 
        ACT-QUERY.
            EXEC CICS READ FILE('customers') INTO(REC) RIDFLD(KEY-IN) END-EXEC.
-           IF EIBRESP = 13 THEN
+           IF EIBRESP = RESP-NOTFND THEN
                STRING 'Customer ' DELIMITED BY SIZE
                       KEY-IN DELIMITED BY SIZE
                       ' not found.' DELIMITED BY SIZE
                    INTO MSG
                END-STRING
            END-IF.
-           IF EIBRESP NOT = 0 AND EIBRESP NOT = 13 THEN
+           IF EIBRESP NOT = RESP-NORMAL
+              AND EIBRESP NOT = RESP-NOTFND THEN
                MOVE EIBRESP TO RESP-STR
                STRING 'READ failed RESP=' DELIMITED BY SIZE
                       RESP-STR DELIMITED BY SIZE
                    INTO MSG
                END-STRING
            END-IF.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
                PERFORM SHOW-DETAIL-FROM-REC
                MOVE 'Mode: QUERY -- press ENTER to return to the menu.' TO DMODE
                EXEC CICS SEND MAP('CUST2') FROM(DET) ERASE END-EXEC
@@ -224,21 +228,22 @@
        ACT-UPDATE.
            EXEC CICS READ FILE('customers') INTO(REC) RIDFLD(KEY-IN)
                          UPDATE END-EXEC.
-           IF EIBRESP = 13 THEN
+           IF EIBRESP = RESP-NOTFND THEN
                STRING 'Customer ' DELIMITED BY SIZE
                       KEY-IN DELIMITED BY SIZE
                       ' not found.' DELIMITED BY SIZE
                    INTO MSG
                END-STRING
            END-IF.
-           IF EIBRESP NOT = 0 AND EIBRESP NOT = 13 THEN
+           IF EIBRESP NOT = RESP-NORMAL
+              AND EIBRESP NOT = RESP-NOTFND THEN
                MOVE EIBRESP TO RESP-STR
                STRING 'READ UPDATE failed RESP=' DELIMITED BY SIZE
                       RESP-STR DELIMITED BY SIZE
                    INTO MSG
                END-STRING
            END-IF.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
                PERFORM SHOW-DETAIL-FROM-REC
                MOVE 'Mode: UPDATE -- modify and press ENTER.' TO DMODE
                EXEC CICS SEND MAP('CUST2') FROM(DET) ERASE END-EXEC
@@ -255,14 +260,14 @@
                END-STRING
 
                EXEC CICS REWRITE FILE('customers') FROM(REC) END-EXEC
-               IF EIBRESP NOT = 0 THEN
+               IF EIBRESP NOT = RESP-NORMAL THEN
                    MOVE EIBRESP TO RESP-STR
                    STRING 'REWRITE failed RESP=' DELIMITED BY SIZE
                           RESP-STR DELIMITED BY SIZE
                        INTO MSG
                    END-STRING
                END-IF
-               IF EIBRESP = 0 THEN
+               IF EIBRESP = RESP-NORMAL THEN
                    STRING 'Customer ' DELIMITED BY SIZE
                           KEY-IN DELIMITED BY SIZE
                           ' updated.' DELIMITED BY SIZE
@@ -273,21 +278,22 @@
 
        ACT-DELETE.
            EXEC CICS DELETE FILE('customers') RIDFLD(KEY-IN) END-EXEC.
-           IF EIBRESP = 13 THEN
+           IF EIBRESP = RESP-NOTFND THEN
                STRING 'Customer ' DELIMITED BY SIZE
                       KEY-IN DELIMITED BY SIZE
                       ' not found.' DELIMITED BY SIZE
                    INTO MSG
                END-STRING
            END-IF.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
                STRING 'Customer ' DELIMITED BY SIZE
                       KEY-IN DELIMITED BY SIZE
                       ' deleted.' DELIMITED BY SIZE
                    INTO MSG
                END-STRING
            END-IF.
-           IF EIBRESP NOT = 0 AND EIBRESP NOT = 13 THEN
+           IF EIBRESP NOT = RESP-NORMAL
+              AND EIBRESP NOT = RESP-NOTFND THEN
                MOVE EIBRESP TO RESP-STR
                STRING 'DELETE failed RESP=' DELIMITED BY SIZE
                       RESP-STR DELIMITED BY SIZE

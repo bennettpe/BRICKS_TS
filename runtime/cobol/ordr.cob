@@ -5,11 +5,12 @@
       *>   Screen 1 (ORDR1) -- confirmation prompt. Operator presses
       *>                       ENTER to run, PF3 to cancel.
       *>   On ENTER         -- loop READQ TD QUEUE('orders.sample.txt')
-      *>                       until EIBRESP = QZERO (12); for each line
-      *>                       UNSTRING on '|' into customer / product /
-      *>                       qty / price, then WRITE FILE('ORDERS')
-      *>                       RIDFLD(CUST-ID). DUPREC (EIBRESP = 14)
-      *>                       increments DUPCNT and continues.
+      *>                       until EIBRESP = RESP-QZERO; for each
+      *>                       line UNSTRING on '|' into customer /
+      *>                       product / qty / price, then WRITE
+      *>                       FILE('ORDERS') RIDFLD(CUST-ID).
+      *>                       RESP-DUPREC increments DUPCNT and
+      *>                       continues.
       *>   Screen 2 (ORDR2) -- summary: records read / records written /
       *>                       duplicates skipped. ENTER ends the task.
       *>
@@ -22,6 +23,8 @@
 
        DATA DIVISION.
        WORKING-STORAGE SECTION.
+       COPY DFHAID.
+       COPY DFHRESP.
        01 USR PIC X(8).
        01 TRM PIC X(4).
 
@@ -67,7 +70,7 @@
            EXEC CICS RECEIVE MAP('ORDR1') INTO(SCR) END-EXEC.
 
       *> PF3 cancels the import without touching the file.
-           IF EIBAID = X'F3' THEN
+           IF EIBAID = PF03 THEN
                EXEC CICS RETURN END-EXEC
                STOP RUN
            END-IF.
@@ -105,10 +108,10 @@
       *> the UNSTRING below.
            MOVE SPACES TO REC.
            EXEC CICS READQ TD QUEUE('orders.sample.txt') INTO(REC) END-EXEC.
-           IF EIBRESP = 12 THEN
+           IF EIBRESP = RESP-QZERO THEN
                MOVE 'Y' TO DONE-FLAG
            END-IF.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
                COMPUTE N-READ = N-READ + 1
                MOVE SPACES TO CUST-ID
                MOVE SPACES TO PRODUCT
@@ -119,7 +122,8 @@
                END-UNSTRING
                PERFORM WRITE-ORDER
            END-IF.
-           IF EIBRESP NOT = 0 AND EIBRESP NOT = 12 THEN
+           IF EIBRESP NOT = RESP-NORMAL
+              AND EIBRESP NOT = RESP-QZERO THEN
       *> IOERR or similar surfaces here. Stop the loop rather than spin.
                MOVE 'Y' TO DONE-FLAG
            END-IF.
@@ -137,9 +141,9 @@
                INTO OREC
            END-STRING.
            EXEC CICS WRITE FILE('ORDERS') FROM(OREC) RIDFLD(CUST-ID) END-EXEC.
-           IF EIBRESP = 0 THEN
+           IF EIBRESP = RESP-NORMAL THEN
                COMPUTE N-WRITE = N-WRITE + 1
            END-IF.
-           IF EIBRESP = 14 THEN
+           IF EIBRESP = RESP-DUPREC THEN
                COMPUTE N-DUP = N-DUP + 1
            END-IF.

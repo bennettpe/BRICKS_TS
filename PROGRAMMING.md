@@ -111,12 +111,13 @@ is documented with the same five sections, in this order:
 * [Chapter 22. PROCEDURE DIVISION](#chapter-22-procedure-division)
 * [Chapter 23. The EIB block in COBOL](#chapter-23-the-eib-block-in-cobol)
 * [Chapter 24. EXEC CICS in COBOL](#chapter-24-exec-cics-in-cobol)
-* [Chapter 25. Restrictions and deferred features](#chapter-25-restrictions-and-deferred-features)
+* [Chapter 25. Copybooks](#chapter-25-copybooks)
+* [Chapter 26. Restrictions and deferred features](#chapter-26-restrictions-and-deferred-features)
 
 **Part 5. Sample programs**
 
-* [Chapter 26. Pre-installed sample transactions](#chapter-26-pre-installed-sample-transactions)
-* [Chapter 27. Worked examples](#chapter-27-worked-examples)
+* [Chapter 27. Pre-installed sample transactions](#chapter-27-pre-installed-sample-transactions)
+* [Chapter 28. Worked examples](#chapter-28-worked-examples)
 
 **Appendixes**
 
@@ -529,7 +530,7 @@ Works identically from REXX and COBOL.
 
 #### Example
 
-See [Chapter 27. Worked examples](#chapter-27-worked-examples), the
+See [Chapter 28. Worked examples](#chapter-28-worked-examples), the
 `GETC` program, for the canonical multi-row `SEND TEXT` pattern.
 
 ---
@@ -2928,7 +2929,211 @@ between REXX and COBOL.
 
 ---
 
-## Chapter 25. Restrictions and deferred features
+## Chapter 25. Copybooks
+
+A copybook is a fragment of COBOL source — typically declarations
+for constants and groups — kept in a separate file and pulled into
+a program at parse time with a single line:
+
+```cobol
+       WORKING-STORAGE SECTION.
+       COPY DFHAID.
+       COPY DFHRESP.
+       01 OWN-COUNTER PIC 9(4).
+```
+
+bricks expands every `COPY name.` directive at the source-text
+level before the lexer runs, so the rest of the parser sees one
+unbroken stream of COBOL.
+
+### The COPY directive
+
+Syntax:
+
+```cobol
+       COPY <name>.
+```
+
+* The directive must be on its own line. Anything before or after
+  the `COPY` keyword on the same line is a parse error.
+* `<name>` is the basename of a copybook file; leave the
+  extension off. The lookup tries `<name>.cpy`, then
+  `<name>.cbl`, then the exact `<name>`, all case-insensitive.
+* The trailing period is required.
+* Leading whitespace is tolerated, and an `*>` inline comment on
+  the same line is fine: `COPY DFHAID. *> 3270 AID bytes`.
+* The directive is case-insensitive (`COPY`, `Copy`, `copy` all
+  work), and so is the name (`COPY DFHAID.` and `copy dfhaid.`
+  resolve to the same file).
+
+### Where bricks searches
+
+The search directory is configured by `copybook_dir=` in
+`bricks.cnf`. The default is `runtime/cobolcopy/` (auto-derived
+from `runtime_dir` when that line is set). The standard CICS
+copybooks ship under this directory, so a fresh install already
+has `DFHAID.cpy` and `DFHRESP.cpy` available.
+
+Copybook names are restricted to a flat alphanumeric namespace:
+`A-Z`, `a-z`, `0-9`, `-`, `_`, and `.`. Names containing a path
+separator, a `..` sequence, or a leading dot are rejected before
+any filesystem access. A copybook itself may contain `COPY`
+directives; nesting is capped at depth 5 and cycles are detected
+explicitly.
+
+### Delivered copybook: DFHAID
+
+`COPY DFHAID.` brings in the standard 3270 attention-identifier
+(AID) byte constants. Every AID is declared **twice**, once under
+the friendly bricks mnemonic and once under the IBM-traditional
+`DFH` alias — both names resolve to the same byte, and a program
+may use either style or mix them.
+
+| bricks mnemonic | IBM alias | AID byte | Key |
+|---|---|---|---|
+| `ENTER` | `DFHENTER` | `X'7D'` | Enter |
+| `CLEAR` | `DFHCLEAR` | `X'6D'` | Clear |
+| `PA1`   | `DFHPA1`   | `X'6C'` | PA1 |
+| `PA2`   | `DFHPA2`   | `X'6E'` | PA2 |
+| `PA3`   | `DFHPA3`   | `X'6B'` | PA3 |
+| `PF01`  | `DFHPF1`   | `X'F1'` | PF1 |
+| `PF02`  | `DFHPF2`   | `X'F2'` | PF2 |
+| `PF03`  | `DFHPF3`   | `X'F3'` | PF3 |
+| `PF04`  | `DFHPF4`   | `X'F4'` | PF4 |
+| `PF05`  | `DFHPF5`   | `X'F5'` | PF5 |
+| `PF06`  | `DFHPF6`   | `X'F6'` | PF6 |
+| `PF07`  | `DFHPF7`   | `X'F7'` | PF7 |
+| `PF08`  | `DFHPF8`   | `X'F8'` | PF8 |
+| `PF09`  | `DFHPF9`   | `X'F9'` | PF9 |
+| `PF10`  | `DFHPF10`  | `X'7A'` | PF10 |
+| `PF11`  | `DFHPF11`  | `X'7B'` | PF11 |
+| `PF12`  | `DFHPF12`  | `X'7C'` | PF12 |
+| `PF13`  | `DFHPF13`  | `X'C1'` | PF13 |
+| `PF14`  | `DFHPF14`  | `X'C2'` | PF14 |
+| `PF15`  | `DFHPF15`  | `X'C3'` | PF15 |
+| `PF16`  | `DFHPF16`  | `X'C4'` | PF16 |
+| `PF17`  | `DFHPF17`  | `X'C5'` | PF17 |
+| `PF18`  | `DFHPF18`  | `X'C6'` | PF18 |
+| `PF19`  | `DFHPF19`  | `X'C7'` | PF19 |
+| `PF20`  | `DFHPF20`  | `X'C8'` | PF20 |
+| `PF21`  | `DFHPF21`  | `X'C9'` | PF21 |
+| `PF22`  | `DFHPF22`  | `X'4A'` | PF22 |
+| `PF23`  | `DFHPF23`  | `X'4B'` | PF23 |
+| `PF24`  | `DFHPF24`  | `X'4C'` | PF24 |
+
+The bricks mnemonic uses uniform-width `PF01`..`PF24`; the IBM
+alias keeps the no-leading-zero form (`DFHPF1`..`DFHPF24`)
+everyone recognises from real CICS code.
+
+### Delivered copybook: DFHRESP
+
+`COPY DFHRESP.` brings in the EXEC CICS condition-code constants
+for `EIBRESP`. Each code is declared twice as well — `RESP-X`
+mnemonic and `DFHRESP-X` traditional alias. Numeric values match
+the runtime's emitter table (`cics/resp.go`), so any code bricks
+returns from a verb has a named constant here.
+
+The most useful entries:
+
+| bricks mnemonic | IBM alias | EIBRESP | Condition |
+|---|---|---|---|
+| `RESP-NORMAL`     | `DFHRESP-NORMAL`     | 0  | success |
+| `RESP-ERROR`      | `DFHRESP-ERROR`      | 1  | generic error |
+| `RESP-EOC`        | `DFHRESP-EOC`        | 6  | end-of-chain / nothing to RECEIVE |
+| `RESP-NOTFND`     | `DFHRESP-NOTFND`     | 13 | record / item / file not found |
+| `RESP-DUPREC`     | `DFHRESP-DUPREC`     | 14 | duplicate record on WRITE |
+| `RESP-DUPKEY`     | `DFHRESP-DUPKEY`     | 15 | duplicate key in browse |
+| `RESP-INVREQ`     | `DFHRESP-INVREQ`     | 16 | invalid request (bad args, sandbox violation) |
+| `RESP-IOERR`      | `DFHRESP-IOERR`      | 17 | underlying I/O failure |
+| `RESP-NOSPACE`    | `DFHRESP-NOSPACE`    | 18 | TS / TD queue full |
+| `RESP-NOTOPEN`    | `DFHRESP-NOTOPEN`    | 19 | file not open / dataset not enabled |
+| `RESP-ENDFILE`    | `DFHRESP-ENDFILE`    | 20 | end of browse |
+| `RESP-LENGERR`    | `DFHRESP-LENGERR`    | 22 | length mismatch |
+| `RESP-QZERO`      | `DFHRESP-QZERO`      | 23 | TS / TD queue empty (READQ TD returns this) |
+| `RESP-ITEMERR`    | `DFHRESP-ITEMERR`    | 26 | TS item number out of range |
+| `RESP-PGMIDERR`   | `DFHRESP-PGMIDERR`   | 27 | LINK / XCTL program not found |
+| `RESP-MAPFAIL`    | `DFHRESP-MAPFAIL`    | 36 | RECEIVE MAP with no input |
+| `RESP-INVMPSZ`    | `DFHRESP-INVMPSZ`    | 38 | map size mismatch |
+| `RESP-QIDERR`     | `DFHRESP-QIDERR`     | 44 | TS queue id unknown |
+| `RESP-ROLLEDBACK` | `DFHRESP-ROLLEDBACK` | 82 | unit-of-work rolled back |
+
+The full list (every code bricks emits) is in
+`runtime/cobolcopy/DFHRESP.cpy`. Open the file to see the codes
+not summarised above (`RESP-ILLOGIC`, `RESP-SIGNAL`, `RESP-QBUSY`,
+the various `RESP-INV...` codes, `RESP-SYSIDERR`, etc.).
+
+### Idiom: replacing raw literals
+
+Before — opaque hex and bare integers, easy to mis-key:
+
+```cobol
+       IF EIBAID = X'F3' THEN
+           MOVE 'Y' TO EXIT-FLAG
+       END-IF.
+       IF EIBRESP = 13 THEN
+           MOVE 'Customer not found.' TO MSG
+       END-IF.
+       IF EIBRESP = 23 THEN          *> TD queue empty
+           MOVE 'Y' TO DONE-FLAG
+       END-IF.
+```
+
+After — names a reader can scan:
+
+```cobol
+       WORKING-STORAGE SECTION.
+       COPY DFHAID.
+       COPY DFHRESP.
+       ...
+       IF EIBAID = PF03 THEN          *> or DFHPF3 if you prefer
+           MOVE 'Y' TO EXIT-FLAG
+       END-IF.
+       IF EIBRESP = RESP-NOTFND THEN
+           MOVE 'Customer not found.' TO MSG
+       END-IF.
+       IF EIBRESP = RESP-QZERO THEN
+           MOVE 'Y' TO DONE-FLAG
+       END-IF.
+```
+
+Live examples: `qagc.cob` (PF03 cancel branch), `gusl.cob`
+(EVALUATE EIBAID with PF03 / PF07 / PF08 / PF12), `ordr.cob`
+(`RESP-QZERO` and `RESP-DUPREC` against READQ TD / WRITE FILE),
+`exam.cob` (`RESP-EOC` after RECEIVE). All under
+`runtime/cobol/`.
+
+### Restrictions
+
+The bricks COPY preprocessor is deliberately minimal. The
+following real-CICS extensions are **not** supported:
+
+* `COPY ... REPLACING ==X== BY ==Y==.` — token substitution.
+  Rare in modern code; deferred until a concrete use case
+  appears.
+* `COPY xyz OF DFHCOB.` / `COPY xyz IN libname.` — library
+  qualifier. bricks has one search root per process.
+* `COPY xyz SUPPRESS.` — suppress copybook listing. bricks
+  produces no listing to suppress.
+* Embedded directives: multiple statements on one line including
+  a `COPY` are rejected. The line must be `COPY <name>.` and
+  nothing else.
+
+If a copybook is edited, programs that include it will pick up
+the new contents only after the program's own source mtime
+changes (the program cache keys by the program path + mtime,
+not the copybook's). A trivial way to force a reload is to
+touch the COBOL file:
+
+```
+touch runtime/cobol/qagc.cob
+```
+
+Or use `CEMT P C` from a TSO/3270 session to flush the entire
+program cache.
+
+---
+
+## Chapter 26. Restrictions and deferred features
 
 ### Disallowed
 
@@ -2954,7 +3159,7 @@ between REXX and COBOL.
 
 # Part 5. Sample programs
 
-## Chapter 26. Pre-installed sample transactions
+## Chapter 27. Pre-installed sample transactions
 
 ### COBOL
 
@@ -2966,7 +3171,14 @@ between REXX and COBOL.
 | `GUSV` | `runtime/cobol/gusv.cob` | COBOL twin of `CUSV`. Validates the customer-number COMMAREA (LINK target). |
 | `GUSL` | `runtime/cobol/gusl.cob` | COBOL twin of `CUSL`. Renders the customers file via STARTBR / READNEXT / ENDBR. Blank inbound COMMAREA = paginated all-records list (PF7/PF8). Non-blank inbound COMMAREA = filtered single-page browse: every record is `FUNCTION POS`-tested against the upper-cased filter, the first 15 matches populate ROW1..ROW15, and the total match count flows back through DFHCOMMAREA so the caller (GUST) can render a summary. |
 | `EXAM` | `runtime/cobol/exam.cob` | Worked example of reading the operator's command-line arguments. Type `EXAM 1 2 3` at the blank prompt. |
-| `ORDR` | `runtime/cobol/ordr.cob` | Conversational import: reads `runtime/tmp/orders.sample.txt` via `READQ TD`, parses pipe-delimited rows, and `WRITE FILE('ORDERS')` keyed on customer-id. Tolerates duplicates (`EIBRESP = 14`). Summary screen shows counts. See [worked example E](#e-sequential-import-via-readq-td--write-file). |
+| `ORDR` | `runtime/cobol/ordr.cob` | Conversational import: reads `runtime/tmp/orders.sample.txt` via `READQ TD`, parses pipe-delimited rows, and `WRITE FILE('ORDERS')` keyed on customer-id. Tolerates duplicates (`EIBRESP = RESP-DUPREC`). Summary screen shows counts. See [worked example E](#e-sequential-import-via-readq-td--write-file). |
+
+All five non-trivial COBOL samples (`QAGC`, `GUST`, `GUSL`,
+`ORDR`, `EXAM`) `COPY DFHAID` and/or `COPY DFHRESP` instead of
+hard-coding hex AID bytes or numeric `EIBRESP` codes. Skim any
+of them as living examples of the named-constant idiom from
+[Chapter 25](#chapter-25-copybooks).
+
 
 ### REXX (selected)
 
@@ -3000,7 +3212,7 @@ entry in the table.
 
 ---
 
-## Chapter 27. Worked examples
+## Chapter 28. Worked examples
 
 ### A. Producer / consumer over a TS queue
 

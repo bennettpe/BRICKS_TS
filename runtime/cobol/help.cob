@@ -11,7 +11,7 @@
           05 ACTION   PIC X(1).
           05 CUSTNO   PIC X(8).
           05 SEARCH   PIC X(30).
-          05 MSG      PIC X(60.
+          05 MSG      PIC X(60).
           
        PROCEDURE DIVISION.
        MAIN.

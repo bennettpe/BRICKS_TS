@@ -1,31 +1,31 @@
-/* CUSL -- list / search the customers file, paged via PF7/PF8.          */
-/* Invoked via EXEC CICS LINK PROGRAM('CUSL') from CUST.                  */
-/*                                                                        */
-/* The customers file is a KSDS (key-sequenced data set) backed by a     */
-/* B+tree, so STARTBR + READNEXT walk records in key order in O(log n)   */
+/* CUSL -- list / search the customers file, paged via PF7/PF8.  */
+/* Invoked via EXEC CICS LINK PROGRAM('CUSL') from CUST.   */
+/*   */
+/* The customers file is a KSDS (key-sequenced data set) backed by a  */
+/* B+tree, so STARTBR + READNEXT walk records in key order in O(log n)*/
 /* per seek and O(1) per step. Empty filter walks every key; a non-empty */
-/* filter does an in-program substring match against key+record so the   */
-/* search hits any field (name, address, city, phone, custno).           */
-/*                                                                        */
-/* If you want a prefix-only scan (faster, but only matches the key      */
-/* prefix), the same handler accepts:                                    */
-/*   EXEC CICS STARTBR FILE('customers')                                 */
-/*                     RIDFLD(FILTER) GENERIC                            */
-/*                     KEYLENGTH(LENGTH(FILTER)) END-EXEC                */
-/* and READNEXT then returns ENDFILE as soon as the prefix breaks.       */
+/* filter does an in-program substring match against key+record so the*/
+/* search hits any field (name, address, city, phone, custno).  */
+/*   */
+/* If you want a prefix-only scan (faster, but only matches the key  */
+/* prefix), the same handler accepts:  */
+/*   EXEC CICS STARTBR FILE('customers')  */
+/*                     RIDFLD(FILTER) GENERIC  */
+/*                     KEYLENGTH(LENGTH(FILTER)) END-EXEC  */
+/* and READNEXT then returns ENDFILE as soon as the prefix breaks.  */
 
-/* COMMAREA protocol: caller passes the search filter on the way in.    */
-/* CUSL writes the match count back into DFHCOMMAREA on return so CUST   */
-/* can render an empty-result message ("No matching records found")       */
-/* without an extra round-trip. A zero count short-circuits the list     */
-/* screen entirely.                                                      */
+/* COMMAREA protocol: caller passes the search filter on the way in. */
+/* CUSL writes the match count back into DFHCOMMAREA on return so CUST*/
+/* can render an empty-result message ("No matching records found")   */
+/* without an extra round-trip. A zero count short-circuits the list  */
+/* screen entirely.  */
 
 ADDRESS CICS
 
 FILTER = UPPER(STRIP(DFHCOMMAREA))
 
-/* Adapt to terminal model: 35 rows per page on mod 4 (43-row screen),    */
-/* 15 on mod 2. Suffix the list-map name (CUSTL → CUSTLL) the same way.   */
+/* Adapt to terminal model: 35 rows per page on mod 4 (43-row screen),*/
+/* 15 on mod 2. Suffix the list-map name (CUSTL  CUSTLL) the same way.  */
 EXEC CICS ASSIGN SCREENHT(SCRH) END-EXEC
 ROWS_PER_PAGE = 15
 LISTMAP = 'CUSTL'
@@ -58,7 +58,7 @@ PAGE   = 1
 NPAGES = (TOTAL + ROWS_PER_PAGE - 1) % ROWS_PER_PAGE
 IF NPAGES = 0 THEN NPAGES = 1
 
-/* Empty result set: skip the list screen entirely and let CUST render   */
+/* Empty result set: skip the list screen entirely and let CUST render*/
 /* the appropriate message. DFHCOMMAREA carries '0' back to the caller.  */
 IF TOTAL = 0 THEN DO
   DFHCOMMAREA = '0'
@@ -79,22 +79,24 @@ DO WHILE EXIT_LIST = 0
   START = (PAGE - 1) * ROWS_PER_PAGE + 1
   /* Always assign all 15 row slots so stale page-N values do not bleed   */
   /* into a shorter page. SCR. = '' only sets the stem default; it does  */
-  /* not clear previously-assigned tails.                                */
+  /* not clear previously-assigned tails.  */
   DO J = 1 TO ROWS_PER_PAGE
     IDX = START + J - 1
     LINE = ''
     IF IDX <= TOTAL THEN DO
       K = KEYS.IDX
       R = RECS.IDX
+
       PARSE VAR R NM '|' AD '|' CY '|' PH
       LINE = LEFT(K,8) LEFT(NM,28) LEFT(CY,18) LEFT(PH,14)
     END
     CALL VALUE 'SCR.ROW' || J, LINE
   END
 
+
   EXEC CICS SEND MAP(LISTMAP) FROM(SCR.) ERASE END-EXEC
   IF EIBRESP = 36 THEN DO
-    /* Sized variant absent — fall back to the 24x80 list. */
+    /* Sized variant absent  fall back to the 24x80 list. */
     LISTMAP = 'CUSTL'
     ROWS_PER_PAGE = 15
     NPAGES = (TOTAL + ROWS_PER_PAGE - 1) % ROWS_PER_PAGE
@@ -117,8 +119,8 @@ DO WHILE EXIT_LIST = 0
   END
 END
 
-/* Hand the match count back to the caller via DFHCOMMAREA. CUST reads  */
-/* this to compose its post-list status message.                         */
+/* Hand the match count back to the caller via DFHCOMMAREA. CUST reads*/
+/* this to compose its post-list status message.  */
 DFHCOMMAREA = TOTAL
 EXEC CICS RETURN END-EXEC
 EXIT
