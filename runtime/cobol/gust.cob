@@ -1,4 +1,10 @@
-       *> copyright 2026 by moshix
+      *> Group naming: SCR is the menu IO group (CUST1 fields), DET the
+      *> detail IO group (CUST2 fields). Children are unique across the
+      *> program (DataByName is global), so CUST2's CUSTNO is named
+      *> DCUSTNO etc.; the cobol.Frame stem-tail rewrite resolves
+      *> DET.CUSTNO -> DET's child by exact name match.
+      *>
+      *> This Cobol version does not adapt to screen size for simplicity. 
        IDENTIFICATION DIVISION.
        PROGRAM-ID. GUST.
 
@@ -26,6 +32,7 @@
 
        01 KEY-IN PIC X(8).
        01 SRCH   PIC X(30).
+       01 SAVED-SEARCH PIC X(30).
        01 REC    PIC X(120).
 
       *> Local copies (REXX uses NM/AD/CY/PH; the unique-name rule
@@ -309,10 +316,12 @@
       *> SRCH passes the operator's filter via DFHCOMMAREA on the way
       *> in; GUSL writes the match count back into the same field on
       *> RETURN. Empty SRCH degrades to ACT-LIST behaviour (matches
-      *> REXX). Substring filtering on the GUSL side needs INSPECT /
-      *> POS which the COBOL subset does not have yet, so a non-empty
-      *> SRCH is honoured by REXX's CUSL but ignored by COBOL's GUSL --
-      *> the operator sees the full list and a message that says so.
+      *> REXX). A non-empty SRCH triggers GUSL's filtered path: it
+      *> walks every record once, FUNCTION POS-tests an upper-cased
+      *> KEY || ' ' || REC haystack against the filter, displays the
+      *> first 15 matches, and returns the total match count back to
+      *> us via DFHCOMMAREA so the post-LINK message reflects what
+      *> actually matched.
            IF SRCH = SPACES THEN
                MOVE SPACES TO CMSG
                EXEC CICS LINK PROGRAM('GUSL') COMMAREA(CMSG) END-EXEC
@@ -328,11 +337,28 @@
                END-IF
            END-IF.
            IF SRCH NOT = SPACES THEN
-               STRING 'Search filter (' DELIMITED BY SIZE
-                      SRCH DELIMITED BY SIZE
-                      ') is REXX-only -- use CUST.' DELIMITED BY SIZE
-                   INTO MSG
-               END-STRING
+      *> Snapshot the operator's search term before the LINK
+      *> overwrites SRCH with the inbound-then-outbound COMMAREA
+      *> (we send SRCH as the filter and receive the match count
+      *> back into the same slot).
+               MOVE SRCH TO SAVED-SEARCH
+               EXEC CICS LINK PROGRAM('GUSL') COMMAREA(SRCH) END-EXEC
+               IF FUNCTION NUMVAL(SRCH) = 0 THEN
+                   STRING 'No customers match "' DELIMITED BY SIZE
+                          SAVED-SEARCH DELIMITED BY SIZE
+                          '".' DELIMITED BY SIZE
+                       INTO MSG
+                   END-STRING
+               END-IF
+               IF FUNCTION NUMVAL(SRCH) NOT = 0 THEN
+                   STRING 'Search "' DELIMITED BY SIZE
+                          SAVED-SEARCH DELIMITED BY SIZE
+                          '" matched ' DELIMITED BY SIZE
+                          SRCH DELIMITED BY SIZE
+                          ' record(s).' DELIMITED BY SIZE
+                       INTO MSG
+                   END-STRING
+               END-IF
            END-IF.
 
        SHOW-DETAIL-FROM-REC.

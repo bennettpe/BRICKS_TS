@@ -1,4 +1,3 @@
-       *> copyright 2026 by moshix
        IDENTIFICATION DIVISION.
        PROGRAM-ID. GUST.
 

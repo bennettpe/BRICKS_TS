@@ -3,7 +3,7 @@
 /* and exact days alive (DATE('B') basedate arithmetic), display the  */
 /* QAGR1 result map, and RETURN to the bare prompt.                   */
 /*                                                                    */
-/* Valdation failures redisplay QAGE1 with an error in MSG and chain */
+/* Validation failures redisplay QAGE1 with an error in MSG and chain */
 /* back to QAGR so the operator can keep trying without retyping the  */
 /* transid. PF3 on the redisplay still cancels (handled in qage.rexx  */
 /* on the next chained dispatch).                                     */

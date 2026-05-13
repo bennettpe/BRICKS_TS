@@ -1,0 +1,19 @@
+* EXAM transaction -- echoes back the three positional arguments the
+* operator typed after the transid (e.g. "EXAM 1 2 3"). The COBOL
+* program (runtime/cobol/exam.cob) reads the unedited terminal
+* buffer with EXEC CICS RECEIVE INTO(WS-INPUT) and parses A/B/C with
+* UNSTRING before SENDing this layout.
+MAP EXAM1 SIZE 24x80
+  FIELD AT 0,0   LEN 36 PROT BRIGHT COLOR=BLUE   "EXAM -- COBOL command-line argument echo"
+  FIELD AT 2,0   LEN 18 PROT COLOR=TURQUOISE     "Raw input buffer:"
+  FIELD RAW      AT 2,20 LEN 60 PROT BRIGHT COLOR=WHITE
+  FIELD AT 3,0   LEN 18 PROT COLOR=TURQUOISE     "Buffer length:"
+  FIELD BUFLEN   AT 3,20 LEN 5  PROT BRIGHT COLOR=WHITE
+  FIELD AT 5,0   LEN 18 PROT COLOR=TURQUOISE     "Argument 1 (A):"
+  FIELD A        AT 5,20 LEN 16 PROT BRIGHT COLOR=GREEN
+  FIELD AT 6,0   LEN 18 PROT COLOR=TURQUOISE     "Argument 2 (B):"
+  FIELD B        AT 6,20 LEN 16 PROT BRIGHT COLOR=GREEN
+  FIELD AT 7,0   LEN 18 PROT COLOR=TURQUOISE     "Argument 3 (C):"
+  FIELD C        AT 7,20 LEN 16 PROT BRIGHT COLOR=GREEN
+  FIELD AT 22,0  LEN 60 PROT DIM   COLOR=BLUE   "Try: EXAM 1 2 3   |   ENTER=continue"
+ENDMAP

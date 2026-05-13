@@ -1,5 +1,23 @@
-      *> copyright 2026 by moshix
       *> QAGC -- query age, self-contained COBOL twin of qage+qagr.rexx.
+      *> Conversational (single-task) flow: SEND the input map, RECEIVE
+      *> the typed values, validate, compute age in years and approximate
+      *> days alive, SEND the result map, RETURN.
+      *>
+      *> Validation failures loop back to redisplay QAGE1 with an error
+      *> in MSG until the operator types good values or presses PF3 to
+      *> cancel. The REXX twin (qagr.rexx) splits this across QAGE+QAGR
+      *> for the pseudo-conversational pattern; the COBOL port keeps it
+      *> in one program because the user can invoke QAGC directly without
+      *> a prior SEND from a sibling transaction.
+      *>
+      *> bricks COBOL conveniences used here:
+      *>   - X'F3' hex literal compares EIBAID against the PF3 byte.
+      *>   - EXEC CICS ASSIGN TODAYYR / TODAYMO / TODAYDY return today's
+      *>     year / month / day separately so this program needs no
+      *>     reference modification or STRING verb.
+      *>   - The age-in-days figure is an approximation
+      *>     (years * 365 + MMDD delta); exact Gregorian-day arithmetic
+      *>     is Phase 7.
        IDENTIFICATION DIVISION.
        PROGRAM-ID. QAGC.
 

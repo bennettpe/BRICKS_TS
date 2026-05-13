@@ -1,5 +1,5 @@
       *> HELC -- COBOL twin of the REXX HELO transaction. Greets the
-      *> copyright 2026 by moshix 
+      *> signed-on user using the helo1 map. Demonstrates the bricks
       *> COBOL subset: WORKING-STORAGE group items routed to map fields,
       *> EXEC CICS ASSIGN populating WORKING-STORAGE, MOVE, STRING-style
       *> concatenation via successive MOVE into a group item, and the

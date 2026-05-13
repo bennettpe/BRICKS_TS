@@ -2418,12 +2418,35 @@ buffer round-trips cleanly across an inter-language `EXEC CICS LINK`.
   `MOVE` to the parent fans out and `EXEC CICS SEND MAP FROM(PARENT)`
   walks the children for field values.
 
-* **All data names are globally unique.** `DataByName` is one map
-  per program — you cannot have `CUSTNO` as a child of both `SCR`
-  and `DET`. The convention used by `runtime/cobol/gust.cob` is to
-  prefix the second occurrence (`DCUSTNO`, `DNAME`, `DMSG`) since
-  real COBOL would normally use `MOVE x OF DET` qualification, which
-  the bricks parser doesn't support yet.
+* **Data names can be reused across groups.** A child name that
+  appears under more than one group is fine; the parser accepts the
+  declaration and tracks the collision in
+  `Program.AmbiguousNames`. Unqualified access to such a name is a
+  runtime error ("ambiguous reference") — disambiguate with `OF`
+  (or its synonym `IN`):
+
+  ```cobol
+  01 SCR.
+     05 CUSTNO PIC X(8).
+  01 DET.
+     05 CUSTNO PIC X(8).
+  ...
+  MOVE 'A1234567' TO CUSTNO OF SCR.
+  MOVE 'B7654321' TO CUSTNO OF DET.
+  DISPLAY CUSTNO OF SCR.
+  ```
+
+  Single-step qualification (`X OF Y`) picks the matching child
+  anywhere in `Y`'s subtree; multi-step (`X OF Y OF Z`) chains
+  through nested groups. Bare names that are unique across the
+  program continue to work without qualification — the pre-7
+  `runtime/cobol/gust.cob` convention of prefixed child names
+  (`DCUSTNO`, `DNAME`, `DMSG`) still compiles and runs, it just
+  isn't required any more.
+
+  A sibling-duplicate (two children of the SAME parent sharing a
+  name) is still a parse-time error — no qualifier can disambiguate
+  between siblings of one group.
 
 ---
 
@@ -2438,7 +2461,15 @@ para`, `PERFORM para UNTIL cond`, `GO TO para`, `COMPUTE target =
 expr`, `ADD a TO b [GIVING c]`, `SUBTRACT a FROM b [GIVING c]`,
 `STRING ... DELIMITED BY (SIZE | 'lit') INTO target END-STRING`,
 `UNSTRING source DELIMITED BY 'lit' INTO t1 t2 ... END-UNSTRING`,
+`INSPECT subject TALLYING counter FOR ALL needle`,
+`INSPECT subject REPLACING ALL needle BY replacement`,
 `EXEC CICS ... END-EXEC`.
+
+Every target name above (the second operand of MOVE, the target of
+COMPUTE / ADD / SUBTRACT / GIVING / STRING INTO / UNSTRING INTO /
+INSPECT, and the subject of EVALUATE / IF) accepts qualification via
+`OF` / `IN` (see the [Data Division](#chapter-21-data-division)
+section on globally non-unique names).
 
 ### Periods
 
@@ -2453,10 +2484,55 @@ IBM-style postfix NOT (`X NOT = Y`, `X NOT > Y`) is supported in
 
 ### Intrinsic functions
 
-`FUNCTION UPPER-CASE(item)` and `FUNCTION LOWER-CASE(item)` are the
-two intrinsics shipped today — enough for the
-`MOVE FUNCTION UPPER-CASE(ACTION) TO ACTION` idiom that lets a menu
-tolerate lowercase typing without an `INSPECT REPLACING` rewrite.
+The shipped intrinsic library is:
+
+| Function | Args | Result |
+|---|---|---|
+| `FUNCTION UPPER-CASE(s)` | 1 alphanumeric | s uppercased. |
+| `FUNCTION LOWER-CASE(s)` | 1 alphanumeric | s lowercased. |
+| `FUNCTION TRIM(s)` | 1 alphanumeric | s with leading and trailing spaces removed (both ends; one-arg form). |
+| `FUNCTION REVERSE(s)` | 1 alphanumeric | s reversed (rune-aware). |
+| `FUNCTION LENGTH(s)` | 1 alphanumeric | numeric byte length of the operand's storage (PIC X(8) → 8). |
+| `FUNCTION NUMVAL(s)` | 1 alphanumeric | numeric value of s after stripping leading / trailing whitespace; errors on non-numeric content (does not silently coerce to zero). |
+| `FUNCTION POS(needle, haystack)` | 2 alphanumeric | 1-based byte position of needle in haystack, or 0 when not found. Mirrors REXX's `POS()`. Empty needle returns 0. |
+
+Numeric-returning intrinsics (`LENGTH`, `NUMVAL`, `POS`) participate
+in `IF` / `EVALUATE` / arithmetic comparisons as numeric operands, so
+`IF FUNCTION POS(NEEDLE, HAY) > 0` works without an intermediate
+`COMPUTE`. The remaining intrinsics return alphanumeric and compare
+by bytes (rstripped).
+
+`FUNCTION POS` is the substring-search hook used by
+`runtime/cobol/gusl.cob` to filter the customers file when the
+operator types a search term at GUST's `S` action.
+
+### INSPECT
+
+Two simple forms are supported:
+
+```cobol
+INSPECT subject TALLYING counter FOR ALL needle
+INSPECT subject REPLACING ALL needle BY replacement
+```
+
+* **TALLYING** adds the number of `needle` occurrences in `subject`
+  to `counter` (it does not reset — successive `INSPECT TALLYING`
+  statements accumulate, matching IBM semantics).
+* **REPLACING ALL** rewrites every occurrence of `needle` in
+  `subject` with `replacement`. IBM requires `needle` and
+  `replacement` to be the same length; bricks is lenient and pads or
+  truncates `replacement` to match the needle's length so figurative
+  forms like `REPLACING ALL '*' BY SPACES` produce a deterministic
+  result.
+
+Both forms accept qualified data-names (`INSPECT REC OF DET ...`).
+Trailing PIC X padding is rstripped from both the subject and the
+needle before matching, so a 30-byte filter containing `FOO` plus
+trailing spaces matches against the meaningful content of the
+subject rather than against the padding.
+
+LEADING / CHARACTERS / BEFORE INITIAL / AFTER INITIAL qualifiers and
+multiple comma-separated phrases per `INSPECT` are not yet supported.
 
 ### EVALUATE limitations
 
@@ -2540,11 +2616,6 @@ between REXX and COBOL.
 * `LINKAGE SECTION` end-to-end (right now `DFHCOMMAREA` is
   auto-injected in WORKING-STORAGE; a real LINKAGE SECTION would
   let an operator declare per-program COMMAREA shapes).
-* `INSPECT TALLYING / REPLACING`, `POS` (substring search), and the
-  rest of the FUNCTION library (NUMVAL, LENGTH, TRIM, etc.) beyond
-  UPPER-CASE / LOWER-CASE. Substring search is what blocks GUSL's
-  filter-by-search-term path; today GUST's `S` action prints a
-  REXX-only message rather than degrading silently.
 * Reference modification (`DATE-FIELD(1:4)` for substring access).
 * `PERFORM N TIMES` / `PERFORM VARYING ... FROM ... BY ... UNTIL ...`
   and `OCCURS` arrays — needed for clean paginated browses and
@@ -2552,9 +2623,12 @@ between REXX and COBOL.
   by hand today.
 * `MULTIPLY / DIVIDE`, `ROUNDED`, `ON SIZE ERROR` (the parser
   accepts and ignores `ROUNDED` / `ON SIZE ERROR` today).
-* Group-item qualification (`MOVE x OF DET TO y OF SCR`) — until
-  this lands, group children must have unique names across the
-  program.
+* `INSPECT` variants beyond `TALLYING FOR ALL` and `REPLACING ALL`
+  — `LEADING`, `CHARACTERS`, `BEFORE INITIAL`, `AFTER INITIAL`, and
+  multiple comma-separated phrases per statement aren't parsed yet.
+  The two ALL forms are enough for substring counting and bulk
+  character replacement (the GUSL filter and figurative-driven
+  scrubs); anything more nuanced needs to wait.
 * `SCREENHT`-based map family suffix (e.g. `CUST1L` on a mod-4
   screen). REXX programs do this with a runtime
   `IF SCRH >= 43 THEN ...` fallback after a `MAPFAIL`; the COBOL
@@ -2572,9 +2646,9 @@ between REXX and COBOL.
 |---|---|---|
 | `HELC` | `runtime/cobol/hello.cob` | Hello-world; `SEND MAP('HELO1') FROM(SCR)`, `RETURN`. Smallest end-to-end demo. |
 | `QAGC` | `runtime/cobol/qagc.cob` | COBOL twin of `QAGR` (REXX). Validates the QAGE1 birthdate, computes age in years and approximate days, sends QAGR1. Pseudo-conversational redisplay of QAGE1 on validation errors. |
-| `GUST` | `runtime/cobol/gust.cob` | Cut-down COBOL `CUST`. A=Add, Q=Query, D=Delete; U/L/S print a "Phase 7" stub message because they need STRING/UNSTRING/INSPECT. |
+| `GUST` | `runtime/cobol/gust.cob` | COBOL `CUST`. A=Add, Q=Query, U=Update, D=Delete, L=List, S=Search; the S action LINKs to GUSL with the search term in COMMAREA and renders the match count returned. |
 | `GUSV` | `runtime/cobol/gusv.cob` | COBOL twin of `CUSV`. Validates the customer-number COMMAREA (LINK target). |
-| `GUSL` | `runtime/cobol/gusl.cob` | COBOL twin of `CUSL`, page-1-only. Demonstrates STARTBR / READNEXT / ENDBR. |
+| `GUSL` | `runtime/cobol/gusl.cob` | COBOL twin of `CUSL`. Renders the customers file via STARTBR / READNEXT / ENDBR. Blank inbound COMMAREA = paginated all-records list (PF7/PF8). Non-blank inbound COMMAREA = filtered single-page browse: every record is `FUNCTION POS`-tested against the upper-cased filter, the first 15 matches populate ROW1..ROW15, and the total match count flows back through DFHCOMMAREA so the caller (GUST) can render a summary. |
 | `EXAM` | `runtime/cobol/exam.cob` | Worked example of reading the operator's command-line arguments. Type `EXAM 1 2 3` at the blank prompt. |
 
 ### REXX (selected)
@@ -2788,12 +2862,14 @@ The convention used by `runtime/rexx/cust.rexx` is to give locals
 distinct names from map fields (`AKT` vs `ACTION`, `CKEY` vs
 `CUSTNO`, `BSTR` / `NDAYS` vs `BIRTH` / `DAYS`).
 
-### COBOL globally-unique data names
+### COBOL data names across groups
 
-Until group-item qualification (`MOVE x OF DET TO y OF SCR`) is
-implemented, data names must be unique across the entire program.
-The convention in `runtime/cobol/gust.cob` is to prefix duplicates
-(`DCUSTNO`, `DNAME`, `DMSG`).
+A child name reused across groups is allowed; bare references that
+match more than one declaration must be qualified with `OF` / `IN`
+(`MOVE x OF DET TO y OF SCR`). Bare names that are unique across
+the program continue to work without qualification. Sibling
+duplicates within a single group are still rejected at parse time
+because no qualifier can disambiguate them.
 
 ### 3270 has no LF
 

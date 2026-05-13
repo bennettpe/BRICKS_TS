@@ -1,4 +1,30 @@
-       *> copyright 2026 by moshix
+      *> GUSL -- COBOL twin of cusl.rexx. Lists the customers file with
+      *> PF7/PF8 paging, splitting each "name|address|city|phone" record
+      *> into columns via UNSTRING. Returns the row count back to the
+      *> LINK caller via DFHCOMMAREA so a GUST 'L' action can show
+      *> "No customers in file." on empty.
+      *>
+      *> Paging without OCCURS / PERFORM VARYING: each page restarts
+      *> the browse with STARTBR, skips (PAGE-1)*15 records by calling
+      *> READNEXT in a PERFORM UNTIL loop, then reads up to 15 records
+      *> for display. The cics handler's STARTBR/READNEXT are O(log n)
+      *> per seek + O(1) per step, so re-skipping each page is fine for
+      *> the bricks customer-file scale. (REXX cusl avoids this by
+      *> buffering all records into an in-memory stem; bricks COBOL
+      *> doesn't have OCCURS yet, so re-browse per page is the
+      *> tractable shape.)
+      *>
+      *> Filter / search behaviour:
+      *>   GUST calls GUSL via EXEC CICS LINK COMMAREA(...). When the
+      *>   inbound DFHCOMMAREA is blank, GUSL renders the standard
+      *>   paginated all-records list. When it contains a search
+      *>   filter, GUSL walks every record once via STARTBR/READNEXT,
+      *>   uppercases KEY || ' ' || REC, and uses FUNCTION POS to test
+      *>   substring containment — matching cusl.rexx's behaviour. The
+      *>   first 15 matches are written into the 15 ROW slots for a
+      *>   single CUSTL SEND; the total match count flows back through
+      *>   the outbound DFHCOMMAREA so GUST can render a summary line.
+      *>   Multi-page filtered browsing is deferred.
        IDENTIFICATION DIVISION.
        PROGRAM-ID. GUSL.
 
@@ -136,6 +162,25 @@
        01 SKIPGOAL PIC 9(8).
        01 EXIT-FLAG PIC X(1) VALUE 'N'.
 
+      *> Search-filter state. FILTER-IN holds the inbound DFHCOMMAREA
+      *> (trimmed of trailing spaces by FUNCTION TRIM); FILTER is the
+      *> uppercased, trimmed comparison key fed to FUNCTION POS so
+      *> "foo" matches a record containing "FOO" the same way the REXX
+      *> twin does. FILTERED gates the filtered-vs-paged code paths.
+      *> HAYRAW / HAY are per-record scratch: KEY-IN || ' ' || REC
+      *> uppercased for the substring test. MATCHIDX is the 1-based
+      *> POS result (0 = no match); SLOT counts matches placed in the
+      *> ROW1..ROW15 slots so additional matches past the page-1
+      *> capacity contribute to NCOUNT but aren't rendered.
+       01 FILTER-IN PIC X(2000).
+       01 FILTER    PIC X(2000).
+       01 FILTERED  PIC X(1) VALUE 'N'.
+       01 HAYRAW    PIC X(150).
+       01 HAY       PIC X(150).
+       01 MATCHIDX  PIC 9(8).
+       01 SLOT      PIC 9(4) VALUE 0.
+       01 SCAN-DONE PIC X(1) VALUE 'N'.
+
       *> Scratch UNSTRING targets, overwritten per row.
        01 SNAME    PIC X(28).
        01 SADDR    PIC X(40).
@@ -144,11 +189,138 @@
 
        PROCEDURE DIVISION.
        MAIN.
-           PERFORM PAGE-LOOP UNTIL EXIT-FLAG = 'Y'.
+      *> Inbound DFHCOMMAREA optionally carries a search filter from
+      *> GUST's S action. Upper-case + trim it once so the per-record
+      *> comparison below is a simple FUNCTION POS call. A blank
+      *> filter (the LIST case) falls through to the legacy paginated
+      *> all-records flow.
+           MOVE DFHCOMMAREA TO FILTER-IN.
+           MOVE FUNCTION UPPER-CASE(FILTER-IN) TO FILTER.
+           IF FUNCTION TRIM(FILTER) NOT = SPACES THEN
+               MOVE 'Y' TO FILTERED
+           END-IF.
+
+           IF FILTERED = 'Y' THEN
+               PERFORM FILTERED-LIST
+           ELSE
+               PERFORM PAGE-LOOP UNTIL EXIT-FLAG = 'Y'
+           END-IF.
 
            MOVE NCOUNT TO DFHCOMMAREA.
            EXEC CICS RETURN END-EXEC.
            STOP RUN.
+
+       FILTERED-LIST.
+      *> Walk every record once, applying FUNCTION POS against the
+      *> upper-cased "KEY || ' ' || REC" haystack. NCOUNT accumulates
+      *> ALL matches (so GUST can report the total even when there
+      *> are more than 15 hits); SLOT tracks page-1 placements so the
+      *> first 15 matches populate ROW1..ROW15 for display.
+           PERFORM CLEAR-ROWS.
+           MOVE 0 TO NCOUNT.
+           MOVE 0 TO SLOT.
+           MOVE 'N' TO SCAN-DONE.
+           MOVE SPACES TO INFOLINE.
+           EXEC CICS STARTBR FILE('customers') END-EXEC.
+           PERFORM SCAN-ONE UNTIL SCAN-DONE = 'Y'.
+           EXEC CICS ENDBR FILE('customers') END-EXEC.
+
+           STRING 'GUSL -- search: ' DELIMITED BY SIZE
+                  FILTER DELIMITED BY SIZE
+                  '  matched: ' DELIMITED BY SIZE
+                  NCOUNT DELIMITED BY SIZE
+               INTO INFOLINE
+           END-STRING.
+
+      *> Show the page even on zero matches so the operator sees the
+      *> infoline confirming the filter that ran.
+           EXEC CICS SEND MAP('CUSTL') FROM(SCR) ERASE END-EXEC.
+           EXEC CICS RECEIVE MAP('CUSTL') END-EXEC.
+
+       SCAN-ONE.
+           MOVE SPACES TO REC.
+           MOVE SPACES TO KEY-IN.
+           EXEC CICS READNEXT FILE('customers') INTO(REC)
+                              RIDFLD(KEY-IN) END-EXEC.
+           IF EIBRESP NOT = 0 THEN
+               MOVE 'Y' TO SCAN-DONE
+           END-IF.
+           IF EIBRESP = 0 THEN
+      *> Build the haystack KEY || ' ' || REC and upper-case it.
+      *> STRING with DELIMITED BY SIZE rstrips each segment per the
+      *> bricks pragmatic concat rule, which is what we want here.
+               MOVE SPACES TO HAYRAW
+               STRING KEY-IN DELIMITED BY SIZE
+                      ' ' DELIMITED BY SIZE
+                      REC DELIMITED BY SIZE
+                   INTO HAYRAW
+               END-STRING
+               MOVE FUNCTION UPPER-CASE(HAYRAW) TO HAY
+               COMPUTE MATCHIDX = FUNCTION POS(
+                   FUNCTION TRIM(FILTER), HAY)
+               IF MATCHIDX > 0 THEN
+                   COMPUTE NCOUNT = NCOUNT + 1
+                   IF SLOT < 15 THEN
+                       COMPUTE SLOT = SLOT + 1
+                       PERFORM SPLIT
+                       PERFORM PLACE-ROW
+                   END-IF
+               END-IF
+           END-IF.
+
+       PLACE-ROW.
+      *> Fan out the current match into the ROW<SLOT> slot. Without
+      *> OCCURS the dispatch is unrolled with EVALUATE — same shape as
+      *> the unfiltered fan-out above.
+           EVALUATE SLOT
+               WHEN 1
+                   MOVE KEY-IN TO K1  MOVE SNAME TO N1
+                   MOVE SCITY TO C1   MOVE SPHONE TO P1
+               WHEN 2
+                   MOVE KEY-IN TO K2  MOVE SNAME TO N2
+                   MOVE SCITY TO C2   MOVE SPHONE TO P2
+               WHEN 3
+                   MOVE KEY-IN TO K3  MOVE SNAME TO N3
+                   MOVE SCITY TO C3   MOVE SPHONE TO P3
+               WHEN 4
+                   MOVE KEY-IN TO K4  MOVE SNAME TO N4
+                   MOVE SCITY TO C4   MOVE SPHONE TO P4
+               WHEN 5
+                   MOVE KEY-IN TO K5  MOVE SNAME TO N5
+                   MOVE SCITY TO C5   MOVE SPHONE TO P5
+               WHEN 6
+                   MOVE KEY-IN TO K6  MOVE SNAME TO N6
+                   MOVE SCITY TO C6   MOVE SPHONE TO P6
+               WHEN 7
+                   MOVE KEY-IN TO K7  MOVE SNAME TO N7
+                   MOVE SCITY TO C7   MOVE SPHONE TO P7
+               WHEN 8
+                   MOVE KEY-IN TO K8  MOVE SNAME TO N8
+                   MOVE SCITY TO C8   MOVE SPHONE TO P8
+               WHEN 9
+                   MOVE KEY-IN TO K9  MOVE SNAME TO N9
+                   MOVE SCITY TO C9   MOVE SPHONE TO P9
+               WHEN 10
+                   MOVE KEY-IN TO K10 MOVE SNAME TO N10
+                   MOVE SCITY TO C10  MOVE SPHONE TO P10
+               WHEN 11
+                   MOVE KEY-IN TO K11 MOVE SNAME TO N11
+                   MOVE SCITY TO C11  MOVE SPHONE TO P11
+               WHEN 12
+                   MOVE KEY-IN TO K12 MOVE SNAME TO N12
+                   MOVE SCITY TO C12  MOVE SPHONE TO P12
+               WHEN 13
+                   MOVE KEY-IN TO K13 MOVE SNAME TO N13
+                   MOVE SCITY TO C13  MOVE SPHONE TO P13
+               WHEN 14
+                   MOVE KEY-IN TO K14 MOVE SNAME TO N14
+                   MOVE SCITY TO C14  MOVE SPHONE TO P14
+               WHEN 15
+                   MOVE KEY-IN TO K15 MOVE SNAME TO N15
+                   MOVE SCITY TO C15  MOVE SPHONE TO P15
+               WHEN OTHER
+                   CONTINUE
+           END-EVALUATE.
 
        PAGE-LOOP.
       *> Reset per-page state. Each page restarts the browse and

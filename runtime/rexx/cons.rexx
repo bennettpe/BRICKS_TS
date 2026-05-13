@@ -1,6 +1,14 @@
 /* CONS -- consumer demo: reads one item per ENTER from a TS queue   */
+/* using the implicit cursor. Each cursor-less READQ TS returns the  */
+/* next item; when the queue is exhausted the screen shows ITEMERR   */
+/* and the operator can either DELETE the queue (PF4), restart from  */
+/* item 1 (PF5), or PF3 to leave.                                    */
 /*                                                                   */
-/* Varaible naming: REXX compound-symbol tail substitution turns     */
+/* The cursor lives on the running task — closing the transaction    */
+/* (PF3 / RETURN) releases it via Store.ClearTaskState in the        */
+/* dispatcher, so the next CONS invocation starts fresh at item 1.   */
+/*                                                                   */
+/* Variable naming: REXX compound-symbol tail substitution turns     */
 /* SCR.LASTITEM into SCR.<value-of-LASTITEM> if a local variable     */
 /* named LASTITEM exists — silently writing to the wrong tail and    */
 /* leaving the map field empty. Same trap cust.rexx and qagr.rexx    */

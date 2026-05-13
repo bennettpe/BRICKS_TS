@@ -1,4 +1,7 @@
 /* QAGE -- query age, prompt half. Pseudo-conversational: paint the    */
+/* QAGE1 input map and chain to QAGR which will RECEIVE MAP, validate, */
+/* compute age + days alive, and display the result. PF3 from the      */
+/* prompt cancels the chain and lands the operator at the bare prompt. */
 
 ADDRESS CICS
 
