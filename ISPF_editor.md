@@ -177,16 +177,16 @@ Prefix colors:
 | Key | Action |
 |---|---|
 | `F1` | Show the help overlay (any key dismisses). |
-| `F2` | Open the file browser without closing the editor. The current file stays in the multi-file slot; pick another file to open it as buffer 2. |
-| `F3` | Exit. If the buffer is modified, an abandon-confirmation overlay appears; press F9 to discard changes, anything else returns to editing. |
-| `F4` | Open this manual's help text as an editable buffer. F9 cycles back to your file. |
+| `F2` | Open the file browser without closing the editor. The current file stays open in the multi-file slot; pick another file to open it as buffer 2. |
+| `F3` | Close the **current** buffer. If it's modified, an abandon-confirmation overlay appears; F9 confirms the discard. **The editor stays alive as long as any other buffer is open** — it switches to the next remaining buffer. Only when the last buffer is closed does the editor return to the browser. See [Multi-file editing](#multi-file-editing). |
+| `F4` | Open this manual's help text as an additional editable buffer. F9 cycles back to your file. |
 | `F5` | Repeat the last `FIND` (continues from the previous match). |
 | `F7` | Scroll up by the amount in the `Scroll ===>` field. |
 | `F8` | Scroll down by the amount in the `Scroll ===>` field. |
 | `F9` | Cycle to the next open file in the multi-file slot. |
 | `F10` | Scroll left by 8 columns. |
 | `F11` | Scroll right by 8 columns. |
-| `F12` | Save and exit. On a parse error, paints the error and refuses; press F12 again to save anyway. |
+| `F12` | Save the **current** buffer and close it (same close-and-cycle behaviour as F3 on a clean buffer). On a parse error, the message paints on row 0 and the buffer stays open; press F12 again to save anyway. |
 
 The `Scroll ===>` field accepts:
 
@@ -231,8 +231,8 @@ Quotes can be used to embed spaces: `FIND 'no records'` /
 
 | Command | Effect |
 |---|---|
-| `SAVE` | Persist the buffer to disk and stay in the editor. On a parse error the message is shown on row 0; a second `SAVE` (or PF12) saves anyway. |
-| `CANCEL` / `CAN` | Exit immediately, discarding changes. No abandon-confirmation prompt. |
+| `SAVE` | Persist the current buffer to disk and stay in the editor (does **not** close the buffer — unlike F12). On a parse error the message is shown on row 0; a second `SAVE` (or F12) saves anyway. |
+| `CANCEL` / `CAN` | Close the current buffer without saving, no abandon-confirmation prompt. Same close-and-cycle behaviour as F3-then-F9: if other buffers are open, the editor switches to the next one; only the last buffer triggers an exit. |
 | `UNDO` | Restore the buffer from the most recent undo snapshot. Same as the `U` line command from the prefix area. |
 
 ### Display toggles
@@ -361,37 +361,110 @@ The status messages match the canonical ISPF wording:
 
 ## Multi-file editing
 
-The editor supports up to 9 open files in one ISPF session. Files are
-added to the slot when:
+The editor holds **up to 9 buffers open simultaneously**. Each
+buffer keeps its own content, cursor position, scroll offset, undo
+snapshot, modified-line markers, and dirty bit. They never share
+state — editing one buffer can't affect another.
 
-- The browser opens a file the first time.
-- F2 from inside the editor returns to the browser, and you pick
-  another file (the existing file stays open).
-- F4 opens the help text as an additional buffer.
+### Opening a second (third, …) file
 
-F9 cycles `CurrentIdx` through the open files. The active file's
-number (1–9) appears at column 78 of row 0 in yellow intense.
+Buffers are added to the slot when:
 
-When you `F3` exit the active file, control returns to the browser.
-If multi-file state already has other open buffers, picking another
-file in the browser switches you to the most-recently-active one.
+- The browser opens a file for the first time (always becomes
+  buffer 1 if none are open).
+- You press **F2** from inside the editor: the current buffer stays
+  resident, the browser appears, you pick another file → it opens
+  as the next available buffer.
+- You press **F4** to open this manual's help text as an additional
+  editable buffer.
+
+The current buffer's **file number** (1–9) is painted in yellow
+intense at column 78 of row 0, so you always know which slot you're
+on.
+
+### Cycling between buffers
+
+**F9** cycles forward through `OpenFiles`. Modified buffers keep
+their dirty bit on the round trip — turquoise prefix markers, the
+`Modified` flag, and any pending block-command markers all survive
+when you leave a buffer and come back.
+
+### Closing a buffer — the hard rule
+
+The editor **never exits while other buffers are still open**. F3,
+F12, the `CANCEL` command, and the abandon-confirm overlay (F9 over
+"Changes have not been saved!") all act on the **active buffer
+only**:
+
+| Action | What happens to the active buffer | What happens to OTHER buffers |
+|---|---|---|
+| F3 (clean buffer) | Dropped from the slot | Untouched — editor cycles to the next |
+| F3 (dirty buffer) → F9 confirm | Dropped, edits discarded | Untouched — editor cycles to the next |
+| F12 (successful save) | Saved to disk, then dropped | Untouched — editor cycles to the next |
+| F12 (validator refused) | Stays open with error on row 0 | Untouched |
+| `CANCEL` command | Dropped, edits discarded | Untouched — editor cycles to the next |
+| `SAVE` command | Saved to disk, **stays open** | Untouched — operator keeps editing |
+
+The editor returns to the browser **only when the last open buffer
+is closed**. To exit the whole ISPF session with multiple buffers
+open you have to F3 / F12 / CANCEL each one in turn — every dirty
+buffer gets its own abandon-confirm so unsaved edits in buffer N
+can't be silently lost when you F3 buffer 1.
+
+### Edit locks across buffers
+
+Each open buffer holds its own exclusive edit lock for the duration
+of the editing session. When you F9-cycle from buffer A to buffer B,
+the editor releases the lock on A and acquires the lock on B before
+the first render of B. A concurrent `dev` operator can grab A's
+lock the moment you leave it; when you F9 back, if A is now held by
+someone else you'll see the `Locked by USER123` message and return
+to the browser — A's buffer is dropped from your slot since you no
+longer own the file.
+
+### The 9-buffer limit
+
+The 10th open attempt errors with `Maximum files open (9)` on the
+file browser's error line. Close one of the existing buffers (F3 or
+F12) and try again.
+
+### What survives a F2 round-trip
+
+When you F2 back to the browser and then ENTER on the same file
+you're already editing, the editor reuses the existing buffer
+instead of re-reading from disk. If another tool has modified the
+file on disk in the meantime, the row-0 banner shows `External
+changes - buffer kept` so you know your in-memory copy is stale.
 
 ---
 
 ## Edit locks
 
-While a file is open in the editor it is locked process-wide. A second
-`dev` operator who tries to open the same file in their browser sees
-a red `Locked by USER123 since HH:MM` message on the row above the
-function-key legend; the editor doesn't open for them. Locks release
-automatically when:
+While a file is open in the editor it is locked process-wide,
+**per-buffer**. A second `dev` operator who tries to open the same
+file in their browser sees a red `Locked by USER123 since HH:MM`
+message and the file's syntax-status column shows `edit` in
+turquoise. Locks are also consulted by the file browser before any
+`D` (delete) on the file — a delete against a held file is refused
+with the same "Locked by" message.
 
-- You PF3-exit (with or without saving).
-- Your TCP connection drops.
+A buffer's lock is held from the moment it becomes the active
+buffer (open, F2-pick-again, or F9-cycle-to) until the moment it
+stops being active (F9 to another buffer, F3/F12/CANCEL closing it,
+or the TCP connection dropping). Closing a buffer with F3 releases
+**only that buffer's** lock; other open buffers keep their locks
+until you close them too.
+
+Locks release automatically when:
+
+- You close the buffer with F3, F12, or `CANCEL`.
+- You F9-cycle away from the buffer (and acquire the lock for the
+  new active buffer).
+- Your TCP connection drops or your sign-on times out.
 - The bricks process panics during your session (deferred cleanup
   catches this).
 
-The browser also paints the **filename** of a currently-locked file in
+The browser paints the **filename** of a currently-locked file in
 red intense so you can see contention without trying to open.
 
 ---
