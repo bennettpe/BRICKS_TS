@@ -18,6 +18,10 @@ program_cache=16
 # where temporary files, for example for import/export will be stored
 tmp_dir=runtime/tmp
 
+# Default when omitted: runtime/cobolcopy under runtime_dir.
+copybook_dir=runtime/cobolcopy
+
+
 ntp_server=time.google.com
 ntp_server=pool.ntp.org
 ntp_server=on
@@ -85,3 +89,21 @@ time_zone=Z
 # (UTC+10). Half-hour zones (India UTC+5:30, Adelaide UTC+9:30)
 # have no military letter -- pick the nearest and adjust inside
 # the REXX/COBOL program if precision matters.
+
+# LOGGING !! important for production and tracing!
+# Each line carries a 4-character subsystem tag so the log file
+# tabulates at column 6 regardless of which subsystem produced it:
+#
+#   LOAD  program loader / parser / cache (REXX / COBOL / MAP)
+#   EXEC  transaction dispatch + REXX/COBOL runtime
+#   CICS  EXEC CICS verb handlers (FILE, TS / TD queues, MAP, etc.)
+#   AUTH  sign-on / sign-off / per-transaction ACL checks
+#   NET   3270 / TLS / WebSocket / TCP listeners
+#   SYS   everything else (config, startup, NTP, signals, console)
+#
+# Default "log" (under the directory bricks was started
+# Set to "off" to disable file logging entirely, but why do that???
+#
+log_location=log
+# log_location=/var/log/bricks
+# log_location=off
