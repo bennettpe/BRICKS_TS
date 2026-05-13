@@ -2984,6 +2984,20 @@ Run any TRANSID by typing it at the blank prompt after CSSN sign-on.
 Refer to `runtime/transactions.conf` for the full list and ACL
 configuration.
 
+### Built-in transactions (no entry in `transactions.conf`)
+
+The bricks core dispatches a handful of TRANSIDs directly, without
+consulting `transactions.conf`. They take precedence over a same-name
+entry in the table.
+
+| Transid | Purpose | Notes |
+|---|---|---|
+| `CSSN` | Sign-on | Default authentication flow. Configurable via `secure_login_transacton` in `bricks.cnf`. |
+| `CSSF` | Sign-off | `CSSF LOGOFF` clears the session's identity; bare `CSSF` is a no-op. |
+| `CEMT` | Master-operator | INQUIRE / MONITOR / PERFORM trees; CONTROLBLOCKS sub-tree and PERFORM gated on the `admin` group. |
+| `CEDA` | Resource definitions | TRANSACTION / PROGRAM / USER screens; admin-only. |
+| `ISPF` | Source editor | Browse and edit the REXX, COBOL, and BMS-map source trees. Gated on the `dev` group. **Operator manual:** [`ISPF_editor.md`](ISPF_editor.md) — covers every PF key, every command-line word, every line-prefix command (D / I / C / M / R / U / L / ) / ( / X / O / A / B plus the doubled block forms), the file browser, the warn-then-save flow, multi-file editing, and edit locks. |
+
 ---
 
 ## Chapter 27. Worked examples

@@ -18,7 +18,15 @@ program_cache=16
 # where temporary files, for example for import/export will be stored
 tmp_dir=runtime/tmp
 
-# ── Filesystem layout ────────────────────────────────────────────
+ntp_server=time.google.com
+ntp_server=pool.ntp.org
+ntp_server=on
+time_zone=Z
+# see below for time zone and ntp handling (important for proper app processing!)
+
+
+
+# Filesystem layout 
 # Each path below is overridable. Defaults shown in
 # comments are what Bricks uses when the config line is mising.
 #
@@ -37,3 +45,43 @@ tmp_dir=runtime/tmp
 # data_dir=data
 # users_file=runtime/users.conf
 # transactions_file=runtime/transactions.conf
+
+
+
+# Time synchronisation 
+# time sync is importnat for correct propcessing of international transactions 
+# that span time zones! 
+
+# Bricks polls this NTP server every 5 minutes and applies the
+# offset in memory. It does NOT set the host OS clock (that would
+# require root). EXEC CICS ASKTIME, FORMATTIME, ABSTIME, and
+# ASSIGN DATE/TIME all consult this corrected clock.
+#
+# On startup, bricks does 1 syncronous NTP query and prints
+# either "ntp: initial sync ok skew=±N.NNms server=X" or
+# "ntp: initial sync failed (X): ... -- continuing with host clock"
+#
+# Default when omitted: time.google.com  (Google's smear-aware
+# public NTP service; handles leap seconds gracefully).
+# Set to "off" to disable NTP entirely.
+#
+# IMPORTANT: NTP failures are NEVER fatal. maybe they will in the future...
+#The runtime keeps
+# serving transactions even if the server is unreachable, returns
+# garbage, or DNS fails. Each failure logs one console line and
+# the goroutine retries on the next 5-minute tick.
+# ----------------------------------------------------
+# Military time zone for EIBTIME / EIBDATE / FORMATTIME's TIME and
+# DATE outputs, and the ASSIGN DATE / TIME / TODAYYR / TODAYMO /
+# TODAYDY values. ABSTIME stays UTC milliseconds since 1900-01-01
+# regardless. Single uppercase letter:
+#
+#   Z = UTC          (default)
+#   A = UTC+1   B = UTC+2  C = UTC+3   ... M = UTC+12
+#   N = UTC-1   O = UTC-2  P = UTC-3   ... Y = UTC-12
+#
+# Examples: New York winter = R (UTC-5); London winter = Z;
+# Frankfurt winter = A (UTC+1); Tokyo = I (UTC+9); Sydney = K
+# (UTC+10). Half-hour zones (India UTC+5:30, Adelaide UTC+9:30)
+# have no military letter -- pick the nearest and adjust inside
+# the REXX/COBOL program if precision matters.

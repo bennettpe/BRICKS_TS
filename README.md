@@ -69,7 +69,11 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `transactions_file`          | `runtime/transactions.conf`   | TRANSID dispatch table. |
 | `maps_dir`                   | `runtime/map`                 | Directory of `*.map` files. |
 | `rexx_dir`                   | `runtime/rexx`                | Directory of REXX programs. |
+| `cobol_dir`                  | `runtime/cobol`               | Directory of COBOL programs. |
 | `data_dir`                   | `data`                        | Holds `files.boltdb` (FILE store + TS queues). |
+| `tmp_dir`                    | `runtime/tmp`                 | Sandbox directory for sequential text I/O (REXX `LINEIN`/`LINEOUT`, COBOL `READQ TD`/`WRITEQ TD`). Strict: ASCII only, LF-terminated, flat namespace, no traversal. See [Sequential file I/O — `tmp_dir`](#sequential-file-io--tmp_dir). |
+| `ntp_server`                 | `time.google.com`             | NTP server polled every 5 minutes to correct bricks's in-memory wall clock. EIBTIME / EIBDATE / FORMATTIME consult this corrected clock. Set to `off` to disable. Failures are non-fatal — bricks logs and continues with the previous offset (or the raw host clock if no sync has ever succeeded). See [Time synchronisation](#time-synchronisation). |
+| `time_zone`                  | `Z` (UTC)                     | Military zone letter (`Z`=UTC, `A`–`M`=UTC+1..+12, `N`–`Y`=UTC-1..-12). Applies to operator-visible time fields; ABSTIME stays UTC milliseconds. See [Time synchronisation](#time-synchronisation). |
 | `idle_timeout_secs`          | `900`                         | Read deadline applied to the CSSN sign-on flow and to every blank/logon prompt. A peer that holds the connection open without sending input is dropped at this many seconds. |
 | `max_conns_per_ip`           | `8`                           | Per-client cap. |
 | `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as eight contiguous byte slabs — one per shard — and reused for the life of the process; Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
@@ -144,14 +148,29 @@ truth):
 
 ```
 # user:bcrypt_hash:groups(comma-separated)
-admin:$2a$10$.....:admin,users
-alice:$2a$10$.....:users
+admin:$2a$10$.....:admin,dev,users
+alice:$2a$10$.....:dev,users
+bob:$2a$10$.....:users
 ```
+
+Group names are case-insensitive, application-defined strings. The
+operator decides what each group means — bricks just compares the
+TCB's group list against the per-transaction ACL (next section). Two
+groups carry a built-in meaning the dispatcher honours directly,
+without needing an entry in `transactions.conf`:
+
+| Group | Gate |
+|---|---|
+| `admin` | Required for the `CEMT CONTROLBLOCKS` / `PERFORM` sub-trees and the entire `CEDA` transaction. |
+| `dev` | Required for the `ISPF` source editor — see [ISPF — built-in source editor](#ispf--built-in-source-editor) and the operator manual at [`ISPF_editor.md`](ISPF_editor.md). A user without `dev` who types `ISPF` at the prompt gets `ISPF requires DEV group membership.` and is returned to the prompt. |
+
+Anything else (`users`, `ops`, `qa`, …) is yours to define and use in
+the per-transaction ACL column of `runtime/transactions.conf`.
 
 To add or rotate passwords:
 
 ```sh
-./add_brick_user.bash alice newpassword users          # add
+./add_brick_user.bash alice newpassword dev,users      # add (with ISPF access)
 ./add_brick_user.bash --update alice newpassword admin # update / change groups
 go run ./cmd/brickspw "raw password"                   # just emit a hash
 ```
@@ -443,6 +462,123 @@ The seeder is idempotent; re-running adds only the missing rows.
 
 ---
 
+## Sequential file I/O — `tmp_dir`
+
+The `tmp_dir` directory is a sandboxed staging area for sequential
+text files. It exists so REXX and COBOL programs can import data
+from a `.csv` / `.txt` / `.tab` file into the VSAM (bbolt) store, or
+export records out of it, without giving the application code raw
+filesystem access.
+
+Both languages hit the same backend (`cics.TmpStore`):
+
+| Surface | Verbs |
+|---|---|
+| COBOL EXEC CICS | `READQ TD QUEUE(name) INTO(rec)` · `WRITEQ TD QUEUE(name) FROM(rec)` · `DELETEQ TD QUEUE(name)` |
+| REXX builtins | `LINEIN(name)` · `LINEOUT(name, line)` · `LINES(name)` · `CHARIN/CHAROUT/CHARS(name)` · `STREAM(name, ...)` |
+
+So a file produced by REXX is readable by COBOL and vice-versa; the
+only constraint is an agreed column format inside each line.
+
+The sandbox is **strict**:
+
+* **Flat namespace.** Filenames match `[A-Za-z0-9._-]{1,255}` — no
+  leading dot, no `..`, no slash or backslash, no NUL. Bricks runs
+  `filepath.Rel` against every resolved path as defense-in-depth, so
+  symlink and `..`-rebound attacks bounce too.
+* **ASCII only.** Bytes must be `0x09` (TAB), `0x0A` (LF — the
+  terminator), or `0x20`–`0x7E` (printable ASCII). No EBCDIC, no
+  UTF-8, no UTF-16. The write path rejects the first violation with
+  `INVREQ` (COBOL) or `ERROR` (REXX `STREAM('S')`) and names the
+  offending byte's hex value and offset.
+* **Unix line endings only.** Lines end with a single LF (`0x0A`).
+  CR (`0x0D`) is explicitly rejected on write — bricks emits no
+  CR-LF output ever. The read path splits on LF and preserves any
+  CR bytes it finds verbatim (not stripped). To ingest a Windows
+  file, pre-strip: `tr -d '\r' < windows.csv > runtime/tmp/clean.csv`.
+* **Task-end cleanup.** Every handle a program opens is closed
+  automatically at task end. A program that forgets `STREAM CLOSE`
+  or `DELETEQ TD` does not leak descriptors.
+
+The shipped `ORDR` sample transaction
+(`runtime/cobol/ordr.cob`) demonstrates the canonical
+"text → VSAM" pattern: read `runtime/tmp/orders.sample.txt` with
+`READQ TD`, parse pipe-delimited rows, and `WRITE FILE('ORDERS')`
+keyed on customer-id. Duplicates (`EIBRESP = 14`) are counted but
+not fatal, so the import is idempotent on re-run. The full verb
+reference is in
+[PROGRAMMING.md, Chapter 9](PROGRAMMING.md#chapter-9-temporary-storage-and-transient-data-commands),
+and the worked walk-through is in
+[Chapter 27, example E](PROGRAMMING.md#e-sequential-import-via-readq-td--write-file).
+
+---
+
+## Time synchronisation
+
+EXEC CICS `ASKTIME`, `FORMATTIME`, the `EIBTIME` / `EIBDATE` fields,
+and the `EXEC CICS ASSIGN DATE / TIME / TODAYYR / TODAYMO / TODAYDY /
+DAYCOUNT` shortcuts all consult an **NTP-corrected, time-zone-aware
+wall clock** rather than the raw host clock. The implementation lives
+in `bricks/timesync/`.
+
+**How it works.** On startup bricks performs one synchronous SNTP-v4
+query against the configured `ntp_server` (default `time.google.com`)
+and logs the result:
+
+```
+ntp: initial sync ok skew=12.3ms server=time.google.com
+```
+
+or, on failure:
+
+```
+ntp: initial sync failed (time.google.com): dial: timeout -- continuing with host clock
+```
+
+The returned offset is stored in an `atomic.Int64` and applied to
+every `Clock.Now()` call. A background goroutine repeats the query
+every 5 minutes; each result is logged the same way.
+
+**Important: NTP failures are non-fatal.** If the server is
+unreachable, returns garbage, or DNS fails, bricks logs one console
+line and continues serving transactions. The previous successful
+offset stays in effect (or zero on first failure, meaning bricks
+falls back to the raw host clock). The 5-minute ticker retries
+automatically.
+
+Bricks **never** sets the host OS clock — that would require root
+and break the pure-Go / OS-independent guarantee. The offset is
+purely a per-process correction applied at format time.
+
+**Time zones.** The `time_zone` knob takes a single military letter
+(`Z`=UTC, `A`–`M`=UTC+1..+12, `N`–`Y`=UTC-1..-12; `J` is reserved).
+The selected zone applies to every operator-visible time field;
+`ABSTIME` stays canonical UTC milliseconds since 1900-01-01
+regardless. Examples:
+
+| Letter | Offset | Typical city (winter) |
+|---|---|---|
+| `Z` | UTC+0 | London, Reykjavík |
+| `A` | UTC+1 | Frankfurt, Paris |
+| `B` | UTC+2 | Athens, Cairo |
+| `I` | UTC+9 | Tokyo, Seoul |
+| `K` | UTC+10 | Sydney, Brisbane |
+| `M` | UTC+12 | Auckland, Wellington |
+| `R` | UTC-5 | New York, Toronto |
+| `U` | UTC-8 | San Francisco, Los Angeles |
+
+Half-hour zones (India UTC+5:30, Adelaide UTC+9:30,
+Newfoundland UTC-3:30) have no military letter; pick the nearest
+whole-hour letter and adjust inside the program if 30-minute
+precision matters.
+
+**Disabling NTP.** Set `ntp_server = off` in `bricks.cnf` to skip
+both the startup sync and the 5-minute goroutine. Bricks then uses
+the raw host clock unchanged. Useful for air-gapped deployments
+where outbound UDP/123 is blocked.
+
+---
+
 ## Performance counters
 
 All counters are `atomic.Uint64` so they can be sampled at any time without
@@ -506,6 +642,89 @@ transaction's INQUIRE CONTROLBLOCKS sub-tree and the MONITOR screen
 
 Pass `--no-console` to disable the frame and emit raw log output
 (suitable for `nohup` / `systemd` / piping through `tee`).
+
+---
+
+## ISPF — built-in source editor
+
+`ISPF` is a built-in TRANSID (no entry in `transactions.conf`,
+implemented in package `ispf/`) that lets operators browse and edit
+the REXX, COBOL, and BMS-map source trees from a 3270 session. It is
+restricted to users who belong to the **`dev`** group in
+`runtime/users.conf`; everyone else gets `ISPF requires DEV group
+membership.` and a return to the blank prompt.
+
+**The full operator manual** — every PF key, every command-line word,
+every line-prefix command (D / I / C / M / R / U / L / ) / ( / X / O /
+A / B plus the doubled block forms), the file browser, the warn-then-
+save flow, multi-file editing, and edit locks — lives in
+[`ISPF_editor.md`](ISPF_editor.md). The summary below is the operator-
+quick-start; consult the manual for the verb and command surface.
+
+The transaction follows the authentic ISPF *DATA SET LIST UTILITY*
+look: white dashed banner, blue prompts, turquoise body, red intense
+values in the writable fields. Three layers:
+
+1. **Menu.** Pick the area: `1` REXX (`cfg.RexxDir`), `2` COBOL
+   (`cfg.CobolDir`), or `3` MAPS (`cfg.MapsDir`). `F3` exits ISPF and
+   returns to the blank prompt.
+
+2. **File browser.** Two-column paged listing of files under the
+   chosen area (filtered by extension: `.rexx` / `.cob` / `.map`).
+   Type any character in the selector field next to a file and press
+   ENTER to open it; type `D` and press ENTER to delete (with a `F9`
+   confirmation overlay). `F6` creates a new file (prompts for a
+   filename, auto-appends the extension, validates against the
+   sandbox rules, creates an empty file, and drops into the editor).
+   `F7` / `F8` paginate. `F3` returns to the menu.
+
+3. **Editor.** ISPF-style line editor with column ruler, command
+   line, scroll-mode field, and per-token syntax highlighting driven
+   by the bricks REXX / COBOL / MAP lexers. AID map:
+
+   | Key | Action |
+   |---|---|
+   | `F1` | Show the help overlay (any key dismisses) |
+   | `F3` | Exit; prompts to abandon if the buffer is modified |
+   | `F7` / `F8` | Scroll up / down (honours the `Scroll` field) |
+   | `F10` / `F11` | Scroll left / right by 8 columns |
+   | `F12` | Save and exit |
+   | ENTER | Apply on-screen edits, process command-line if present |
+
+**Per-path edit lock.** While a file is open in the editor it is
+locked against other ISPF users. A second `dev` operator opening the
+same file in the browser sees a red `Locked by USER123 since HH:MM`
+message on the status line; the editor doesn't open. Locks release
+on PF3 / PF12 / TCP drop / panic-unwind, all via
+`txn.Dispatcher.runISPF`'s deferred `EditLocks.ReleaseAllByTerm`.
+
+**Syntax highlighting.** Per-token color via go3270 `AttributeOnly`
+overlay fields layered over each writable line. Palette: blue intense
+keywords, turquoise strings, yellow numbers, green comments, white
+identifiers. REXX block comments that span lines won't fully colorize
+past the opening line — known v1 limitation, documented in the plan.
+
+**File creation race.** Two `dev` users pressing `F6` with the same
+filename are resolved by acquire-lock-before-create: the loser sees
+`Locked by` on the status line and bounces back to the browser
+without creating the file.
+
+The full implementation plan (visual mockups, color palette, lock
+semantics, save-validation strategy, EBCDIC 037 character discipline,
+and risks) is in [`ispf_plan.md`](ispf_plan.md). The source layout:
+
+| File | What |
+|---|---|
+| `ispf/menu.go` | The 1=REXX / 2=COBOL / 3=MAPS picker. |
+| `ispf/ispf_filebrowser.go` | Two-column paged browser (port of the tsu source). |
+| `ispf/ispfeditor.go` | Editor screen + AID dispatch (port of the tsu source). |
+| `ispf/newfile.go` | PF6 "create new file" prompt + validator. |
+| `ispf/highlight.go` | Per-line REXX / COBOL / MAP tokenizers. |
+| `ispf/style.go` | Color palette constants (banner / prompt / body / value). |
+| `ispf/host.go` + `ispf/area.go` | `EditorHost` interface and area enum. |
+| `ispf/dispatch.go` | `ispf.Run` top-level menu → browser → editor loop. |
+| `txn/ispf.go` | `Dispatcher.runISPF` — DEV-group gate + host shim. |
+| `session/editlocks.go` | Process-wide `EditLockRegistry`. |
 
 ---
 
