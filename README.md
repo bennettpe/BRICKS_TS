@@ -627,6 +627,106 @@ R  RESCAN    trans / maps / programs       -- on-disk diagnostic scans
 
 ---
 
+## CEDA — resource definitions
+
+`CEDA` is a separate built-in TRANSID (no entry needed in
+`transactions.conf`, implemented alongside CEMT in package `cemt/`).
+It is **admin-only** end-to-end. The three screens cover the
+mutation surfaces that actually matter for a bricks deployment — the
+user database, the transaction table, and the program load library
+on disk:
+
+```
++-----------------------------------------------------------+
+| BRICKS Transaction Server  •  CEDA — resource definitions |
+|                                                           |
+|   Pick an option and press ENTER. PF3 to back out.        |
+|                                                           |
+|     U  USER         (N users)                             |
+|     T  TRANSACTION  (N transactions)                      |
+|     P  PROGRAM      (N REXX, M COBOL on disk)             |
+|     Q  QUIT         (or press PF3)                        |
+|                                                           |
+|   Choice: _                                               |
++-----------------------------------------------------------+
+```
+
+CEDA shares CEMT's title bar, palette, and `pagedTable` layout — so
+the screens look identical to a CEMT INQUIRE screen — but lives in
+its own command tree. Tokens chain the same way: `CEDA U`, `CEDA
+USER`, `CEDA CED U` (a no-op prefix that drops through), and `CEDA
+TRANS` all reach the right screen via the existing
+unambiguous-prefix matcher.
+
+Real CICS CEDA's Groups / Lists / INSTALL / COPY / CHECK
+abstractions are intentionally absent — bricks already collapses
+CEDA's "definition + install" cycle into "edit text file,
+hot-reload" — so this is a focused three-screen tool, not a
+verbatim CICS port.
+
+* **CEDA USER** (`CEDA U`) lists every user from `users.conf` with a
+  per-row `SEL` cell. Type `A` to ALTER, `D` to DELETE, press ENTER to
+  apply. PF6 opens a full-screen DEFINE form with USERID / PASSWORD
+  (hidden) / GROUPS fields. The bcrypt hash is generated in-screen —
+  no need to run `cmd/brickspw` and paste the hash by hand. Leaving
+  the password blank on an ALTER keeps the existing hash; on a
+  DEFINE it's required. Deleting your own userid is refused so an
+  operator can't lock themselves out. Every mutation is written
+  atomically to `users.conf` in canonical form (sorted by userid;
+  comments are not preserved) and the in-memory view is refreshed
+  immediately, so the next sign-on attempt sees the change with no
+  restart.
+
+* **CEDA TRANSACTION** (`CEDA T`) lists every transaction with the
+  same `SEL` selector pattern. The form takes TRANSID (4 chars,
+  uppercased), LANGUAGE (REXX or COBOL), PROGRAM (file relative to
+  `rexx_dir` or `cobol_dir`), and GROUPS (CSV). Validation runs
+  before the write: bad TRANSID format, unknown language,
+  path-traversal in the program filename, malformed group tokens —
+  all refused with the message on the status line. Runtime counters
+  (`Invocations`, `CacheHits`) are preserved across ALTER so an
+  operator who tweaks an ACL doesn't reset the cache-hit ratio shown
+  in CEMT INQUIRE TRANSACTION.
+
+* **CEDA PROGRAM** (`CEDA P`) is the read-only counterpart — a
+  combined view of `rexx_dir` and `cobol_dir` showing LANG, FILE,
+  SIZE, MODIFIED, the TRANSIDs that reference the file, and a SYNTAX
+  cell that says `OK` when the parser accepts the file or `ERR …`
+  with the first parse error otherwise. Only the page currently
+  visible is re-parsed on each refresh, so the cost per ENTER is
+  bounded regardless of how many programs are deployed. Useful for
+  spot-checking a freshly-deployed file before referencing it from a
+  new CEDA TRANSACTION definition.
+
+The DEFINE / ALTER forms are plain full screens — no overlay, no
+decorative box — modelled on the CSSN sign-on screen's layout. Row
+0 carries the breadcrumb (`CEDA DEFINE USER`, `CEDA ALTER
+TRANSACTION`). The labeled input fields sit at fixed rows 2 / 4 /
+(5) / 6 / 7 / 8 depending on the form, with each writable field's
+attribute byte at column 11 and the cursor landing one column past
+it (column 12) — the same 3270 convention the rest of bricks uses.
+The `PF5=Apply  PF3=Cancel` legend is pinned to the actual last row
+of the terminal (row 23 on mod 2, 31 on mod 3, 42 on mod 4) so it's
+always where the operator expects to find it.
+
+**Concurrency**: every CEDA write is mtime-guarded. If the on-disk
+`users.conf` or `transactions.conf` has been modified by another
+process (a parallel `vi`, a script, etc.) between when CEDA read the
+file and when it's about to write, the mutation is refused with a
+"file changed under us; press ENTER to refresh and retry" message.
+The CEDA in-memory snapshot then reloads from the new state so the
+retry sees what's on disk.
+
+**Audit**: every applied mutation emits a single-line `ceda=…` log
+record so an admin can grep the bricks log to see who did what:
+
+```
+ceda=USER op=DEFINE target=test1 detail="USERS" term=T0001 user=admin
+ceda=TRANS op=ALTER target=HELO detail="rexx hello.rexx" term=T0001 user=admin
+```
+
+---
+
 ## CLI utilities
 
 | Command                           | Purpose |
