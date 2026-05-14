@@ -1,8 +1,8 @@
-dns_name=www.moshix.tech                                                                                                                                                             
+dns_name=localhost
 port=2300                                                                                                                                                                            
 tlsport=2023                                                                                                                                                                         
-tlscert=www.moshix.tech.crt                                                                                                                                                          
-tlskey=www.moshix.tech.key                                                                                                                                                           
+tlscert=
+tlskey=
 #start_TLS=yes         
 enforce_secure_login=no
 #secure_login_transacton=cssn
