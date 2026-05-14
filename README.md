@@ -75,7 +75,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `ntp_server`                 | `time.google.com`             | NTP server polled every 5 minutes to correct bricks's in-memory wall clock. EIBTIME / EIBDATE / FORMATTIME consult this corrected clock. Set to `off` to disable. Failures are non-fatal — bricks logs and continues with the previous offset (or the raw host clock if no sync has ever succeeded). See [Time synchronisation](#time-synchronisation). |
 | `time_zone`                  | `Z` (UTC)                     | Military zone letter (`Z`=UTC, `A`–`M`=UTC+1..+12, `N`–`Y`=UTC-1..-12). Applies to operator-visible time fields; ABSTIME stays UTC milliseconds. See [Time synchronisation](#time-synchronisation). |
 | `log_location`               | `log`                         | Directory where bricks writes per-run log files. On startup a new file `YYYY-MM-DD_HH-MM-SS.log` is created; every console line is appended (with ANSI color stripped) and prefixed with a 4-character subsystem tag. Set to `off` to disable file logging. See [Logging](#logging). |
-| `idle_timeout_secs`          | `900`                         | Read deadline applied to the CSSN sign-on flow and to every blank/logon prompt. A peer that holds the connection open without sending input is dropped at this many seconds. |
+| `idle_timeout_secs`          | `900`                         | Read deadline applied **only before sign-on** — to the LogonPrompt and to the BlankPrompt of an unauthenticated session, plus the CSSN sign-on input reads. A peer that completes telnet negotiation but never signs on is dropped after this many seconds so a half-open handshake doesn't tie up a `max_conns_per_ip` slot forever. **Once the operator has signed on, the deadline is not set** — a signed-on terminal sits at the blank prompt indefinitely and only disconnects on TCP close or an explicit `CSSF DISC` / `DISCONNECT` / `GOODNIGHT`. `CSSF LOGOFF` clears the authentication flag, so the deadline resumes for the now-unauthenticated session. |
 | `max_conns_per_ip`           | `8`                           | Per-client cap. |
 | `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as eight contiguous byte slabs — one per shard — and reused for the life of the process; Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
 | `banner`                     | `BRICKS Transaction Server`   | Shown at top of system screens. |
@@ -138,11 +138,17 @@ The connection lifecycle is owned by `main.go::handle()`:
    user was signed on and this was their last terminal the UCB is also
    dropped.
 
-Each top-level prompt sets a `conn.SetReadDeadline(now + idle_timeout_secs)`
-before reading and clears the deadline on success, so a peer that completes
-telnet negotiation but never sends a screen response is bumped after
-`idle_timeout_secs` rather than tying up a `max_conns_per_ip` slot
-indefinitely.
+The top-level prompt sets `conn.SetReadDeadline(now + idle_timeout_secs)`
+**only while the session is unauthenticated** — that's the
+half-open-handshake guard, not a session-idle timer. A peer that
+completes telnet negotiation but never signs on is dropped after
+`idle_timeout_secs` so it doesn't tie up a `max_conns_per_ip` slot
+forever. A signed-on operator gets no read deadline at all; the
+blank prompt waits indefinitely. The only intentional disconnects
+are TCP close (the peer pulls the plug) and `CSSF DISC` /
+`DISCONNECT` / `GOODNIGHT` (the operator explicitly asks bricks to
+hang up). `CSSF LOGOFF` keeps the connection open and the deadline
+resumes for the now-unauthenticated session.
 
 `runtime/users.conf` format (the comment header in the file is the source of
 truth):
@@ -609,7 +615,7 @@ the bracketed area:
 2026/05/13 14:35:19 CICS term=T0001 READ FILE('CUSTOMERS') RID=00100 OK
 ```
 
-Six tags cover the codebase — kept deliberately few; more tags
+Seven tags cover the codebase — kept deliberately few; more tags
 fragment grep patterns without adding signal:
 
 | Tag    | Subsystem |
@@ -620,6 +626,7 @@ fragment grep patterns without adding signal:
 | `AUTH` | sign-on / sign-off / per-transaction ACL gates |
 | `NET`  | 3270 / TLS / WebSocket / TCP listeners |
 | `SYS`  | catch-all: config, startup, NTP, signals, console |
+| `AUDT` | resource-mutation audit trail (CEDA DEFINE / ALTER / DELETE) — **file only**; falls back to console when `log_location=off` |
 
 Untouched legacy `log.Printf` call sites get the `SYS` tag by
 default (the dual writer is wired in as the standard `log` writer
@@ -1365,11 +1372,19 @@ segments.
 
 ### Idle read deadlines on prompt screens
 
-Each top-level prompt (`BlankPrompt`, `LogonPrompt`) sets
-`conn.SetReadDeadline(now + idle_timeout_secs)` before reading and clears
-the deadline after a successful read (`main.go::handle`). A peer that
-completes telnet negotiation but never sends a screen response is
-dropped, freeing its `max_conns_per_ip` slot.
+The top-level prompt loop sets
+`conn.SetReadDeadline(now + idle_timeout_secs)` **only while
+`sess.Authenticated` is false** (`main.go::handle`). That's the
+half-open-handshake guard — a peer that completes telnet
+negotiation but never signs on gets dropped after the deadline,
+freeing its `max_conns_per_ip` slot. The CSSN sign-on flow
+inherits the same deadline so a half-finished sign-on times out
+too. A signed-on session has **no** read deadline: the BlankPrompt
+read blocks indefinitely, and the only way for the server to drop
+the connection is the operator's TCP close or an explicit
+`CSSF DISC` / `DISCONNECT` / `GOODNIGHT`. `CSSF LOGOFF` clears
+`sess.Authenticated`, so the deadline resumes on the next loop
+iteration.
 
 ### CSSF LOGOFF cleanup
 
