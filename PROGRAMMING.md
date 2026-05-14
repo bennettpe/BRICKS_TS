@@ -12,7 +12,7 @@
 ## About this document
 
 This reference describes the application programming interface of the Bricks
-Transaction Server: the `EXEC CICS` command set, the REXX and COBOL dialects
+Transaction Server: the `EXEC CICS` command set, teh REXX and COBOL dialects
 that may issue those commands, the BMS-flavoured map DSL used to build 3270
 panels, and the catalogue of sample programs shipped under `runtime/`.
 
@@ -35,7 +35,7 @@ behaviour the difference is documnted  explicitly.
 * **`lowercase`** in syntax — supplied by the programmer (a name or
   expression).
 * **`[ ]`** — optional clauses.
-* **`{ a | b }`** — choose one of the alternatives.
+* **`{ a | b }`** — choose one of teh alternatives.
 * **`...`** — the preceding clause may repeat.
 * Command syntax is shown in `EXEC CICS … END-EXEC` form. The bare-string
   form (`"VERB OPTIONS"` under `ADDRESS CICS`, REXX only) is described in
@@ -145,7 +145,7 @@ GUST:cobol:gust.cob:public
 
 The first time a TRANSID is dispatched, its program is parsed and the
 AST is cached (see *Parsed-program cache* in the README); subsequent
-dispatches skip the parse. Each running task has its own heap and
+dispatches skip teh  parse. Each running task has its own heap and
 stack — there is no shared mutable state between concurrently running
 tasks of the same TRANSID.
 
@@ -480,6 +480,64 @@ CKEY   = IN.CUSTNO
 
 ---
 
+### CONVERSE
+
+A single verb that fuses `SEND MAP` and `RECEIVE MAP` against the
+same map. Semantically identical to issuing the two halves
+back-to-back; provided because real-world CICS programs written
+between the 1970s and the 1990s used `CONVERSE` heavily, and
+porting them shouldn't require a SEND/RECEIVE rewrite.
+
+#### Format
+
+```
+EXEC CICS CONVERSE MAP(name) [MAPSET(set)]
+                   [FROM(area) | FROMMAP(area)]
+                   [INTO(area)]
+                   [ERASE] [CURSOR(pos)]
+END-EXEC
+```
+
+* `FROM(area)` and `FROMMAP(area)` are accepted spellings for the
+  outbound stem; either works, both feed the SEND half.
+* `INTO(area)` is the inbound stem; it feeds the RECEIVE half.
+  May be omitted only if the program follows up with a separate
+  `RECEIVE MAP` (rare; using CONVERSE without INTO is technically
+  legal but defeats the point).
+* `MAPSET`, `ERASE`, `CURSOR` pass through to both halves.
+
+#### Behaviour
+
+CONVERSE issues `SEND MAP` first, then `RECEIVE MAP` against the
+same `MAP(name)`. If the SEND half returns anything other than
+`RESP-NORMAL`, the RECEIVE half is **skipped** and the SEND's
+response code is returned — matches real CICS semantics (no
+screen ever made it to the terminal, so there's no operator
+response to wait for).
+
+#### Example
+
+```cobol
+EXEC CICS CONVERSE MAP('TIM1') FROM(SCR) INTO(SCR)
+                   ERASE
+END-EXEC.
+IF EIBAID = PF03 THEN
+    EXEC CICS RETURN END-EXEC
+END-IF.
+```
+
+This replaces the longer pair:
+
+```cobol
+EXEC CICS SEND MAP('TIM1') FROM(SCR) ERASE END-EXEC.
+EXEC CICS RECEIVE MAP('TIM1') INTO(SCR)     END-EXEC.
+```
+
+Live example: `runtime/cobol/timc.cob` uses CONVERSE for both the
+input screen and the reminder screen.
+
+---
+
 ### SEND TEXT
 
 Free-form text output without a BMS map.
@@ -775,6 +833,155 @@ it in the `TxCB`'s status; pseudo-conversational chains are broken
 IF EIBRESP <> 0 THEN
    EXEC CICS ABEND ABCODE('FIO1') END-EXEC
 ```
+
+---
+
+### START
+
+Schedule a transaction to fire on this same terminal after a
+delay (or at a wall-clock time), optionally passing a byte
+payload the new task picks up via `RETRIEVE`. This is bricks's
+implementation of CICS's classic deferred-work pattern: a task
+queues "do X in 60 seconds" and ends; the terminal returns to
+the blank prompt; when the timer elapses, bricks dispatches X
+automatically.
+
+#### Format
+
+```
+EXEC CICS START TRANSID(name)
+                [INTERVAL(hhmmss) | TIME(hhmmss)]
+                [FROM(area) [LENGTH(n)]]
+                [TERMID(tttt)]
+END-EXEC
+```
+
+#### Options
+
+**TRANSID(name)** *(required)*
+   4-character transaction id, must exist in
+   `runtime/transactions.conf`. The dispatcher applies the
+   normal per-transaction ACL at fire time, so the operator
+   must still be authorised to invoke `name`.
+
+**INTERVAL(hhmmss)**
+   Delay before firing, expressed as up to 6 digits in
+   `HHMMSS` form (left-padded with zeroes). `INTERVAL(30)` =
+   30 s; `INTERVAL(000130)` = 1 min 30 s; `INTERVAL(010000)`
+   = 1 h. Omit (or pair with `INTERVAL(0)`) to fire on the
+   next prompt-loop iteration.
+
+**TIME(hhmmss)**
+   Absolute wall-clock target, also `HHMMSS`. Respects the
+   operator's `time_zone=` setting. If the target is earlier
+   than now, bricks rolls forward to the same time tomorrow
+   (real-CICS semantics). Mutually exclusive with `INTERVAL`.
+
+**FROM(area) [LENGTH(n)]**
+   Payload bytes the new task will pull back via `RETRIEVE`.
+   `LENGTH` truncates `area` to `n` bytes; if omitted, the
+   entire string value of `area` is queued. The bytes are
+   copied at `START` time, so the issuing task may mutate
+   `area` afterwards without disturbing the queued payload.
+
+**TERMID(tttt)**
+   Must equal the issuing terminal's `EIBTRMID` in this
+   version. Cross-terminal STARTs return `RESP-INVREQ` with
+   "only same-terminal STARTs are supported."
+
+#### Scope and limitations (v1)
+
+* **Same-terminal only.** A START always fires on the issuing
+  TCB. No-`TERMID` background tasks and `TERMID(other)` are
+  rejected; both require infrastructure (synthetic TCBs,
+  cross-session authorisation) that's deferred.
+* **In-memory queue.** Pending STARTs do **not** survive a
+  bricks restart. If you need recovery-protected scheduling
+  you'll have to wait for `START PROTECT` (out of scope).
+* **No `REQID`, `SYSID`, `QUEUE`, `PROTECT`, `HOURS`,
+  `MINUTES`, `SECONDS` options.** Each returns `RESP-INVREQ`
+  with the option name in the error string so a port can be
+  triaged.
+* **One pending payload per task.** When the START fires,
+  the FROM bytes go into `tcb.RetrieveBuf`. The new task's
+  first `RETRIEVE` drains it; a second `RETRIEVE` returns
+  `RESP-ENDDATA` (29).
+
+#### Conditions
+
+* `RESP-NORMAL` on successful enqueue.
+* `RESP-INVREQ` for missing TRANSID, cross-terminal TERMID,
+  unsupported option, or malformed INTERVAL/TIME.
+
+#### Example
+
+```cobol
+       EXEC CICS START TRANSID('TIMC') INTERVAL('000030')
+                       FROM(MSG)
+       END-EXEC.
+```
+
+Schedules `TIMC` to fire on this terminal in 30 seconds with
+the contents of `MSG` queued as the payload. See
+`runtime/cobol/timc.cob` and `runtime/rexx/timr.rexx` for the
+worked examples.
+
+---
+
+### RETRIEVE
+
+Pull back the `FROM(...)` payload of the `START` that
+scheduled the *current* task. RETRIEVE is the receiving half
+of the START / RETRIEVE pair; the first thing a transaction
+fired by `START` typically does.
+
+#### Format
+
+```
+EXEC CICS RETRIEVE INTO(var) [LENGTH(lenvar)] END-EXEC
+```
+
+#### Options
+
+**INTO(var)** *(required)*
+   Variable / DATA area to receive the payload bytes. Must be
+   a name reference, not a string literal.
+
+**LENGTH(lenvar)**
+   Optional. The variable named here is written with the
+   actual byte length of the payload after a successful read,
+   so the caller can size the consumer code correctly.
+
+#### Behaviour
+
+* Cold dispatch (operator typed the TRANSID at the prompt) →
+  `RESP-ENDDATA` (29), nothing written to `INTO`.
+* Scheduled re-entry → `RESP-NORMAL`, payload bytes copied
+  into `INTO`, `tcb.RetrieveBuf` cleared.
+* Second RETRIEVE in the same task → `RESP-ENDDATA` (the
+  buffer is cleared on first read; v1 supports one pending
+  payload per task).
+
+#### Idiom
+
+The canonical START / RETRIEVE program tests `EIBRESP` first
+to discover *which dispatch path* it's on, then branches:
+
+```cobol
+       MOVE SPACES TO BUF.
+       EXEC CICS RETRIEVE INTO(BUF) END-EXEC.
+
+       IF EIBRESP = RESP-NORMAL THEN
+           PERFORM SHOW-REMINDER       *> scheduled fire
+           EXEC CICS RETURN END-EXEC
+       END-IF.
+
+       *> Cold path: prompt the operator, schedule next fire.
+       PERFORM PROMPT-AND-SCHEDULE.
+```
+
+REXX equivalent in `runtime/rexx/timr.rexx`; COBOL in
+`runtime/cobol/timc.cob`.
 
 ---
 
@@ -2351,9 +2558,17 @@ recognize them at all:
 
 | Command | Use |
 |---|---|
-| `START`, `RETRIEVE` | Asynchronous transaction starting. |
 | `GETMAIN`, `FREEMAIN` | Dynamic storage. REXX has dynamic variables; COBOL has `WORKING-STORAGE`. |
 | `ENQ`, `DEQ` | User-level resource locking. File-level locking already exists via `READ … UPDATE`. |
+
+### Recently added
+
+* **`CONVERSE`** — see [Chapter 4](#chapter-4-terminal-io-commands).
+  Syntactic sugar for `SEND MAP` + `RECEIVE MAP`.
+* **`START` / `RETRIEVE`** — see Chapter 5. Same-terminal
+  scheduling with payload pass-through. Cross-terminal and
+  no-`TERMID` (headless) STARTs are still deferred; the v1
+  surface rejects them with `RESP-INVREQ` and a clear message.
 
 ---
 
@@ -3172,6 +3387,7 @@ program cache.
 | `GUSL` | `runtime/cobol/gusl.cob` | COBOL twin of `CUSL`. Renders the customers file via STARTBR / READNEXT / ENDBR. Blank inbound COMMAREA = paginated all-records list (PF7/PF8). Non-blank inbound COMMAREA = filtered single-page browse: every record is `FUNCTION POS`-tested against the upper-cased filter, the first 15 matches populate ROW1..ROW15, and the total match count flows back through DFHCOMMAREA so the caller (GUST) can render a summary. |
 | `EXAM` | `runtime/cobol/exam.cob` | Worked example of reading the operator's command-line arguments. Type `EXAM 1 2 3` at the blank prompt. |
 | `ORDR` | `runtime/cobol/ordr.cob` | Conversational import: reads `runtime/tmp/orders.sample.txt` via `READQ TD`, parses pipe-delimited rows, and `WRITE FILE('ORDERS')` keyed on customer-id. Tolerates duplicates (`EIBRESP = RESP-DUPREC`). Summary screen shows counts. See [worked example E](#e-sequential-import-via-readq-td--write-file). |
+| `TIMC` | `runtime/cobol/timc.cob` | Timed-reminder demo: exercises `CONVERSE`, `START` (with `INTERVAL` + `FROM`), and `RETRIEVE` end-to-end. Shares `tim1.map` + `tim2.map` with `TIMR`. |
 
 All five non-trivial COBOL samples (`QAGC`, `GUST`, `GUSL`,
 `ORDR`, `EXAM`) `COPY DFHAID` and/or `COPY DFHRESP` instead of
@@ -3191,6 +3407,7 @@ of them as living examples of the named-constant idiom from
 | `QAGE` / `QAGR` | `runtime/rexx/qage.rexx` / `qagr.rexx` | Pseudo-conversational chain; `QAGE` prompts for a birthdate and chains to `QAGR` to render the result. |
 | `PROD` / `CONS` | `runtime/rexx/prod.rexx` / `cons.rexx` | TS queue producer / consumer pair. Conversational; PF3 to exit. |
 | `GETC` | `runtime/rexx/getc.rexx` | `RECEIVE` of command-line + `READ FILE` + `SEND TEXT` (no map). |
+| `TIMR` | `runtime/rexx/timr.rexx` | REXX twin of `TIMC`: `START` schedules a reminder; `RETRIEVE` discriminates cold vs scheduled entry. Shares `tim1.map` + `tim2.map` with `TIMC`. |
 
 Run any TRANSID by typing it at the blank prompt after CSSN sign-on.
 Refer to `runtime/transactions.conf` for the full list and ACL
@@ -3476,13 +3693,16 @@ the program continue to work without qualification. Sibling
 duplicates within a single group are still rejected at parse time
 because no qualifier can disambiguate them.
 
-### 3270 has no LF
+### 3270 has no LF...obviously.
 
 `SEND TEXT` lays its body out as a flat row-major buffer, every
 `cols` bytes wrapping to the next row. Programs that expect newline
 semantics must pad each logical line to the column width
 (`LEFT(s,80)` in REXX, `PIC X(80)` group children in COBOL) and
 concatenate.
+
+Kinda obvious, but just making sure it's clear to folks who are new to 3270.
+
 
 ### Reset stems before paginated reads
 

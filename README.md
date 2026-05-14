@@ -115,7 +115,15 @@ The connection lifecycle is owned by `main.go::handle()`:
      `runtime/users.conf`, verifies the bcrypt hash with `golang.org/x/crypto/bcrypt`,
      and on success sets `tcb.UserID`, `tcb.Groups`, `tcb.Authenticated=true`,
      and attaches the TCB to a UCB via `Registry.AttachUserToTerminal`.
-     Failures bump `Registry.AuthFailure` and re-prompt.
+     Failures bump `Registry.AuthFailure` and re-prompt — but only
+     up to a per-session cap. After **3 consecutive failed credential
+     checks** on the same TCP connection, `RunCSSN` logs
+     `term=Tnnnn disconnecting after 3 failed sign-on attempts` and
+     returns `ErrDisconnect`; `main.go::handle` then drops the
+     connection. The counter does not advance on usage errors like
+     an empty userid (the operator gets to correct the form without
+     burning an attempt), and it resets the next time the peer
+     reconnects. The cap lives at `auth.MaxSignonFailures`.
    * Otherwise, if `enforce_secure_login=yes` and the session is not
      authenticated, the dispatcher is bypassed and the user is shown
      `Not signed on. Run <logon> first.` then sent back to the prompt.

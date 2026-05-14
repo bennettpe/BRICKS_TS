@@ -1,0 +1,14 @@
+* TIM2 -- shared reminder display for TIMR (REXX) and TIMC (COBOL).
+* Rendered by the scheduled transaction after its EXEC CICS RETRIEVE
+* picks up the FROM(...) payload from the originating START. ENTER
+* dismisses the reminder and returns the terminal to the blank prompt.
+MAP TIM2 SIZE 24x80
+  FIELD AT 0,2  LEN 30 PROT BRIGHT COLOR=BLUE  "Timed Reminder -- fired"
+  FIELD AT 0,60 LEN 5  PROT COLOR=BLUE         "TERM="
+  INPUT TERMID  AT 0,65 LEN 8  PROT COLOR=BLUE
+  FIELD AT 4,4  LEN 60 PROT COLOR=BLUE         "Your scheduled reminder is up:"
+  INPUT MSG     AT 8,4  LEN 70 PROT BRIGHT COLOR=YELLOW
+  INPUT FIRED   AT 12,4 LEN 30 PROT COLOR=TURQUOISE
+  FIELD AT 22,2 LEN 50 PROT COLOR=BLUE         "ENTER=Dismiss"
+  CURSOR        AT 22,2
+ENDMAP

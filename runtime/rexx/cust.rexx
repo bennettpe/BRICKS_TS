@@ -6,7 +6,7 @@
 /* The 'customers' file is a KSDS (key-sequenced) backed by a      */
 /* B+tree, so READ/WRITE/REWRITE/DELETE are O(log n) and STARTBR + */
 /* READNEXT walk records in key order. The on-disk record format   */
-/* (name|addr|city|phone) is chosen here, by the application —     */
+/* (name|addr|city|phone) is chosen here, by the application      */
 /* bricks stores record bodies opaquely.                           */
 /*                                                                 */
 /* Note: variables are deliberately named distinctly from map      */

@@ -6,6 +6,9 @@ session. It models the classic IBM ISPF editor: a command line at the
 top, a 6-byte prefix area on every content row for line commands, and
 PF-key shortcuts.
 
+Most mainframers are very familiar with this editor or with the very
+simialr REVEDIT editor. 
+
 ## Contents
 
 - [Access](#access)
@@ -32,6 +35,9 @@ core. To use it you must:
 
 1. Sign on with `CSSN` (the bricks logon transaction).
 2. Belong to the `dev` group in `runtime/users.conf`.
+
+Non-authenticated users, and users who now in the dev group will not
+be able to call this transaction.
 
 Type `ISPF` at the blank prompt and press ENTER. Non-`dev` users see
 `ISPF requires DEV group membership.` and are returned to the prompt.
@@ -100,6 +106,9 @@ file in the directory:
 | `OK` (green) | The file parses cleanly with the area's parser. |
 | `Err:N` (red) | The parser reported a syntax error at line N. |
 | `Err` (red, no line) | I/O error or no line number available. |
+
+Notice that the file browser does a syntax check on maps, REXX and COBOL and
+shows the status of the syntax of each file. 
 
 ### Browser command line
 
@@ -211,7 +220,7 @@ case-insensitive; quoted arguments preserve case.
 
 | Command | Effect |
 |---|---|
-| `FIND text` or `F text` | Locate the next occurrence of `text` (case-insensitive). Wraps from end of file back to the start. The cursor lands on the match, every match across the buffer is highlighted in red + underscore, and the status line shows `Found N matches`. |
+| `FIND text` or `F text` | Locate teh next occurence of `text` (case-insensitive). Wraps from end of file back to the start. The cursor lands on the match, every match across the buffer is highlighted in red + underscore, and the status line shows `Found N matches`. |
 | `F` (no argument) or `RFIND` | Repeat the last FIND from the current cursor position. Same as PF5. |
 | `CHANGE old new` or `C old new` | Replace the first occurrence of `old` with `new` and report `Changed N`. The status line shows `not found.` if the search string isn't present. |
 | `CHANGE old new ALL` or `C old new ALL` | Replace every occurrence in every line. |
@@ -232,7 +241,7 @@ Quotes can be used to embed spaces: `FIND 'no records'` /
 | Command | Effect |
 |---|---|
 | `SAVE` | Persist the current buffer to disk and stay in the editor (does **not** close the buffer — unlike F12). On a parse error the message is shown on row 0; a second `SAVE` (or F12) saves anyway. |
-| `CANCEL` / `CAN` | Close the current buffer without saving, no abandon-confirmation prompt. Same close-and-cycle behaviour as F3-then-F9: if other buffers are open, the editor switches to the next one; only the last buffer triggers an exit. |
+| `CANCEL` / `CAN` | Close teh current buffer without saving, no abandon-confirmation prompt. Same close-and-cycle behaviour as F3-then-F9: if other buffers are open, the editor switches to the next one; only the last buffer triggers an exit. |
 | `UNDO` | Restore the buffer from the most recent undo snapshot. Same as the `U` line command from the prefix area. |
 
 ### Display toggles
@@ -364,7 +373,7 @@ The status messages match the canonical ISPF wording:
 The editor holds **up to 9 buffers open simultaneously**. Each
 buffer keeps its own content, cursor position, scroll offset, undo
 snapshot, modified-line markers, and dirty bit. They never share
-state — editing one buffer can't affect another.
+state — editing one buffer can't affect anothr.
 
 ### Opening a second (third, …) file
 
