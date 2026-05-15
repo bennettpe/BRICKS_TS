@@ -6,6 +6,8 @@ run REXX or COBOL programs whose `EXEC CICS` commands are interpreted by
 built-in REXX and COBOL VMs with `EXEC CICS` handlers backed by an on-disk
 record store.
 
+Chat with BRICKS users and administrators [here](https://discord.gg/6NWE4Gp7kR)
+
 Both REXX and COBOL dialects, and their interpreter implementations, are
 original — not related to BREXX or Regina. The `EXEC CICS` surface is
 compatible with CICS, and the supported verb set is enough to run
@@ -661,6 +663,94 @@ time-based rotation. Long-running deployments should rely on
 external tools (`logrotate`, `cronolog`, etc.) pointed at
 `log_location`. A bricks restart always opens a new file, so
 rotating by restarting cuts a clean boundary.
+
+---
+
+## SQL support — Phase 1 (connectivity + CEDA viewer)
+
+Bricks can open a Postgres connection at startup. Programs cannot
+yet issue `EXEC SQL` — that's Phase 2 (COBOL) and Phase 3 (REXX
++ cursors + CEDA database lifecycle). Phase 1 ships the
+plumbing: connection pool, startup ping, and a read-only
+`CEDA DATABASE` viewer.
+
+### Configuration
+
+The `db_*` block in `bricks.cnf` describes the **Postgres server**
+(host / port / credentials / sslmode / pool size). The list of
+databases bricks talks to lives in a separate `databases.conf`
+file, managed via CEDA DATABASE A/D/U the same way `users.conf`
+is managed via CEDA USER.
+
+```
+db_host=localhost
+db_port=5432
+db_user=bricks
+db_password=...
+db_sslmode=disable
+db_max_conns=8
+databases_file=runtime/databases.conf
+```
+
+Driver is `github.com/jackc/pgx/v5/stdlib` (database/sql adapter).
+All keys are optional — when `db_host` is empty bricks runs
+SQL-less and CEDA DATABASE reports `(SQL not configured)`. A
+startup ping failure for any individual database is non-fatal
+— one log line, and CEDA DATABASE shows that row as OFFLINE.
+
+### `databases.conf`
+
+One row per Postgres database, in the same style as
+`users.conf`:
+
+```
+# bricks databases catalogue.
+# Format: name[:description]
+bricks:default application data
+orders:order-management system
+customers:customer master file
+ledger:general ledger
+```
+
+The **first row is the default database** — transactions that
+don't bind to a specific database fall back to it. To pick a
+different default, just re-order the file (or use CEDA's add/
+delete actions).
+
+Each transaction in `transactions.conf` can optionally bind to a
+named database via a 5th colon-separated field:
+
+```
+SQLD:cobol:sqld.cob:public                  # default db
+ORDQ:cobol:ordq.cob:public:orders           # orders db
+LEDQ:cobol:ledq.cob:admin,users:ledger      # ledger db, ACL'd
+```
+
+bricks does **not** create the PG-side database when you add a
+row to `databases.conf` — the operator runs `CREATE DATABASE` in
+psql. Phase 3 will add a CEDA action that drives the PG-side
+DDL too.
+
+### CEDA DATABASE
+
+The screen (`CEDA → D`) lists every row of `databases.conf` with
+its current connection state, and supports the standard CEDA
+A/D/U pattern:
+
+| Cmd | Action |
+|---|---|
+| `A` | Add a new database row (form for name + description, writes `databases.conf`). |
+| `D` | Delete a row (refuses the default row; the operator re-orders first). |
+| `U` | Alter a row's description. |
+| `R` | Retest one row's connection. |
+| `L` | Show that row's user-schema tables (one-line summary). |
+| `PF6` | Open the Add form directly. |
+| `PF3` | Back to CEDA menu. |
+
+Every A/D/U mutation flows through `brickslog.Audit` —
+`ceda=DATABASE op=ADD target=orders detail="…"` — and the
+file rewrites atomically (write-and-rename), so a crash mid-
+mutation can't corrupt the catalogue.
 
 ---
 
@@ -1426,9 +1516,6 @@ transaction between the `STARTBR` snapshot and the read. The skip is
 implemented as a bounded forward loop over the snapshot
 (`cics/files.go::readNextFile`), replacing an unbounded recursion, so no
 amount of in-flight deletes can blow the goroutine stack.
-
----
-
-## Roadmap
-
-* SQL — bricks does not embed a database; only VSAM is supported at thi s time.
+<p align="center">
+  <img src="bricks.png" width="50%">
+</p>
