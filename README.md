@@ -11,26 +11,30 @@
 
 > Bricks follow the same approach*
 
+Chat with BRICKS users and administrators [here](https://discord.gg/6NWE4Gp7kR)
+
 A Go implementation of an IBM CICS-compatible 3270 transaction server. Users
 dial in with a 3270 terminal emulator, sign on via a built-in CSSN screen, and
 run REXX or COBOL programs whose `EXEC CICS` commands are interpreted by
-built-in REXX and COBOL VMs with `EXEC CICS` handlers backed by an on-disk
-record store.
+built-in REXX and COBOL VMs (virtual machines)  with `EXEC CICS` handlers 
+backed by an on-disk record store.
 
-Chat with BRICKS users and administrators [here](https://discord.gg/6NWE4Gp7kR)
-
-Both REXX and COBOL dialects, and their interpreter implementations, are
-original — not related to BREXX or Regina. The `EXEC CICS` surface is
-compatible with CICS, and the supported verb set is enough to run
-pseudo-conversational and conversational programs as usual.
+Both REXX and COBOL dialects, and their interpreter implementations, are designed
+by moshix and are not related to BREXX, Regina, or GNUCobol . The `EXEC CICS` surface is
+compatible with CICS, and the supported verb set is able to run
+complex pseudo-conversational and conversational programs as usual.
 
 Bricks also features a built-in VSAM-style KSDS access method whose records
 are stored inside a single bbolt database for easy management and backup.
+
+As of v2 of BRICKS, SQL support thru EXEC SQL statements is available to the programmers. 
+** The extensive SQL support is document [here](SQL_guide.md)**
 
 COBOL and REXX programs are parsed once and then cached, so repeat dispatches
 skip the lex+parse cost. Each instantiated program has its own heap and stack,
 so there are no re-entrancy issues. Bricks expressly disallows calculated
 GOTOs in COBOL programs for the same reason.
+
 
 > **Application programmers:** see **[PROGRAMMING.md](PROGRAMMING.md)** —
 > the *Bricks Application Programming Reference*. It documents the
