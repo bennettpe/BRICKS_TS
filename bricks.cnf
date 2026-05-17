@@ -1,38 +1,63 @@
-dns_name=localhost
+# BRICKS config file
+# copyright 2026 by moshix
+
+dns_name=YourDNS                                                                                                                                                             
 port=2300                                                                                                                                                                            
 tlsport=2023                                                                                                                                                                         
 tlscert=
-tlskey=
+tlskey=www.moshix.tech.key                                                                                                                                                           
 #start_TLS=yes         
 enforce_secure_login=no
 #secure_login_transacton=cssn
 start_web3270=yes
 web3270_port=9000
-
-max_conns_per_ip=8
-
-#program cache is for transactions cache, outside the reach of GC
-#program cache is always in megabytyes, defaults to 4MB, max 16GB, min 1MB
-program_cache=16
-
-# where temporary files, for example for import/export will be stored
+max_conns_per_ip=16
+# ── Sandbox for sequential file I/O
+# Directory used by REXX (LINEIN / LINEOUT / STREAM) and COBOL
+# (EXEC CICS READQ TD / WRITEQ TD / DELETEQ TD) for sequential text
+# files -- the staging area for imports into and exports out of the
+# VSAM (bbolt) database. The tmp_dir is a hard sandbox:
+#   * files only, no subdirectories
+#   * names match [A-Za-z0-9._-]{1,255}, no leading dot, no '..'
+#   * payload must be ASCII (TAB / 0x20..0x7E) -- no EBCDIC, no UTF
+#   * lines terminate with a single LF; CR (0x0D) is rejected on write
+# A program that tries to escape (../etc/passwd, subdir/x, etc.)
+# gets INVREQ in COBOL or ERROR from REXX STREAM and no I/O runs.
+# Default when the line is omitted: runtime/tmp under runtime_dir.
 tmp_dir=runtime/tmp
-
+# ── COBOL copybooks
+# Directory bricks searches for copybooks named by the COBOL
+# `COPY name.` directive. Names are flat (no slashes, no `..`).
+# The standard CICS copybooks ship under this directory:
+#   DFHAID   3270 AID byte mnemonics. Compare EIBAID against names
+#            like PF03, ENTER, CLEAR, PA1 instead of raw hex.
+#            Each constant is also delivered under its
+#            IBM-traditional alias (DFHPF3, DFHENTER, ...) so code
+#            ported from real CICS keeps compiling.
+#   DFHRESP  EIBRESP condition codes (RESP-NORMAL = 0,
+#            RESP-NOTFND = 13, etc., with DFHRESP-X aliases).
 # Default when omitted: runtime/cobolcopy under runtime_dir.
 copybook_dir=runtime/cobolcopy
 
 
-ntp_server=time.google.com
-ntp_server=pool.ntp.org
-ntp_server=on
-time_zone=Z
-# see below for time zone and ntp handling (important for proper app processing!)
+# ── Metrics endpoint
+# /metrics serves a JSON snapshot of session / transaction / file /
+# CICS-verb counters. Consumed by cmd/bricksload's live dashboard
+# and by any external scrape integration.
+#
+# Pairing rule: when start_metrics=yes is set explicitly, a paired
+# metrics_port=N line MUST also be present — bricks refuses to
+# start otherwise so the operator owns the port choice instead of
+# silently inheriting 9100 (which may collide with other local
+# services). start_metrics=no disables the listener entirely (no
+# log line, no port bound).
+#
+start_metrics=yes
+metrics_port=9100
 
-
-
-# Filesystem layout 
-# Each path below is overridable. Defaults shown in
-# comments are what Bricks uses when the config line is mising.
+# ── Filesystem layout ────────────────────────────────────────────
+# Each path below is independently overridable. Defaults shown in
+# comments are what bricks uses when the line is missing.
 #
 # users_file:        runtime/users.conf      (CSSN authentication table)
 # transactions_file: runtime/transactions.conf
@@ -42,26 +67,34 @@ time_zone=Z
 # once to relocate the whole tree, and bricks derives map/, rexx/,
 # cobol/ from it; or override any of the three independently.
 #
-# runtime_dir=/optbricks/runtime
-# maps_dir=runtime/map
-# rexx_dir=runtime/rexx
-# cobol_dir=runtime/cobol
-# data_dir=data
-# users_file=runtime/users.conf
-# transactions_file=runtime/transactions.conf
+runtime_dir=runtime/
+maps_dir=runtime/map
+rexx_dir=runtime/rexx
+cobol_dir=runtime/cobol
+data_dir=data
+users_file=runtime/users.conf
+transactions_file=runtime/transactions.conf
 
+# ── Program cache
+# LRU pool for parsed REXX/COBOL programs, allocated once at startup
+# as a contiguous byte slab. Because the slab is a single
+# pointer-free []byte, Go's garbage collector scans the slab header
+# in O(1) and never visits the program bytes inside. When the pool
+# fills, the least-recently-used entries are evicted to make room.
+#
+# Default when the line is omitted: 4 MB.
+# Valid range: 1..16384 MB (1 MB floor, 16 GB cap).
+# Out-of-range values are rejected at startup.
+#
+program_cache=32
 
-
-# Time synchronisation 
-# time sync is importnat for correct propcessing of international transactions 
-# that span time zones! 
-
+# ── Time synchronisation
 # Bricks polls this NTP server every 5 minutes and applies the
 # offset in memory. It does NOT set the host OS clock (that would
 # require root). EXEC CICS ASKTIME, FORMATTIME, ABSTIME, and
 # ASSIGN DATE/TIME all consult this corrected clock.
 #
-# On startup, bricks does 1 syncronous NTP query and prints
+# On startup, bricks does ONE syncronous NTP query and prints
 # either "ntp: initial sync ok skew=±N.NNms server=X" or
 # "ntp: initial sync failed (X): ... -- continuing with host clock"
 #
@@ -69,12 +102,79 @@ time_zone=Z
 # public NTP service; handles leap seconds gracefully).
 # Set to "off" to disable NTP entirely.
 #
-# IMPORTANT: NTP failures are NEVER fatal. maybe they will in the future...
-#The runtime keeps
+# IMPORTANT: NTP failures are NEVER fatal. The runtime keeps
 # serving transactions even if the server is unreachable, returns
 # garbage, or DNS fails. Each failure logs one console line and
 # the goroutine retries on the next 5-minute tick.
-# ----------------------------------------------------
+#
+ntp_server=time.google.com
+ntp_server=pool.ntp.org
+ntp_server=on
+time_zone=Z
+
+# ── Logging
+# Directory where bricks writes per-run log files. On startup a new
+# file named YYYY-MM-DD_HH-MM-SS.log is created here; every line
+# emitted to the framed console is ALSO appended to the file (with
+# ANSI color codes stripped, since editors / pagers don't render
+# them).
+#
+# Each line carries a 4-character subsystem tag so the log file
+# tabulates at column 6 regardless of which subsystem produced it:
+#
+#   LOAD  program loader / parser / cache (REXX / COBOL / MAP)
+#   EXEC  transaction dispatch + REXX/COBOL runtime
+#   CICS  EXEC CICS verb handlers (FILE, TS / TD queues, MAP, etc.)
+#   AUTH  sign-on / sign-off / per-transaction ACL checks
+#   NET   3270 / TLS / WebSocket / TCP listeners
+#   SYS   everything else (config, startup, NTP, signals, console)
+#   AUDT  resource-mutation audit trail (CEDA DEFINE / ALTER /
+#         DELETE on USER and TRANSACTION). Goes only to the log
+#         file -- audit records are persistent compliance
+#         artefacts, not live operator-console events. When
+#         log_location=off the line falls back to the console
+#         so the trail isn't silently lost.
+#
+# Default when omitted: "log" (under the directory bricks was
+# started in). Set to "off" to disable file logging entirely (the
+# console keeps working in either case).
+#
+log_location=log
+# log_location=/var/log/bricks
+# log_location=off
+
+# ── SQL support (Phase 1: connectivity + CEDA viewer)
+# bricks can talk to a Postgres database for the EXEC SQL surface
+# that future phases will add to COBOL and REXX programs. Phase 1
+# only opens the connection and exposes it through the CEDA
+# DATABASE screen -- programs cannot run EXEC SQL yet.
+#
+# When no `db_*` lines are configured (the default below, all
+# commented out), bricks runs SQL-less: non-SQL transactions are
+# unaffected, and CEDA DATABASE reports "(SQL not configured)".
+# When db_host is set, bricks pings the database at startup; a
+# failed ping is non-fatal -- one log line plus an OFFLINE state
+# in CEDA -- and the operator can recover with the R (retest)
+# action in CEDA DATABASE without restarting.
+#
+# Default ports / sslmode / pool size mirror standard Postgres
+# expectations and the pgx driver's recommendations.
+#
+db_host=localhost
+db_port=123456789
+db_user=bricks
+db_password=brickspassword
+db_sslmode=disable
+db_max_conns=8
+db_stmt_timeout=4
+# The actual list of databases bricks talks to lives in
+# `databases.conf` (one per line, optional description after `:`).
+# CEDA DATABASE manages this catalogue with A/D/U row actions, the
+# same way CEDA USER and CEDA TRANSACTION manage their files. The
+# first row of databases.conf is the DEFAULT database -- transactions.conf
+# rows without a 5th field bind to it.
+databases_file=runtime/databases.conf
+
 # Military time zone for EIBTIME / EIBDATE / FORMATTIME's TIME and
 # DATE outputs, and the ASSIGN DATE / TIME / TODAYYR / TODAYMO /
 # TODAYDY values. ABSTIME stays UTC milliseconds since 1900-01-01
@@ -89,21 +189,4 @@ time_zone=Z
 # (UTC+10). Half-hour zones (India UTC+5:30, Adelaide UTC+9:30)
 # have no military letter -- pick the nearest and adjust inside
 # the REXX/COBOL program if precision matters.
-
-# LOGGING !! important for production and tracing!
-# Each line carries a 4-character subsystem tag so the log file
-# tabulates at column 6 regardless of which subsystem produced it:
 #
-#   LOAD  program loader / parser / cache (REXX / COBOL / MAP)
-#   EXEC  transaction dispatch + REXX/COBOL runtime
-#   CICS  EXEC CICS verb handlers (FILE, TS / TD queues, MAP, etc.)
-#   AUTH  sign-on / sign-off / per-transaction ACL checks
-#   NET   3270 / TLS / WebSocket / TCP listeners
-#   SYS   everything else (config, startup, NTP, signals, console)
-#
-# Default "log" (under the directory bricks was started
-# Set to "off" to disable file logging entirely, but why do that???
-#
-log_location=log
-# log_location=/var/log/bricks
-# log_location=off

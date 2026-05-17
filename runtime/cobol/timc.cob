@@ -11,7 +11,7 @@
       *>   CONVERSE -- single-verb SEND+RECEIVE used on the input
       *>               form, replacing the SEND MAP / RECEIVE MAP
       *>               pair every other COBOL sample writes by hand.
-      *>
+      *> Copryght 2026 by moshix
       *> Maps TIM1 (input form) and TIM2 (reminder display) are
       *> shared with the REXX twin TIMR; both programs render
       *> against the same field names.

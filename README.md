@@ -1,4 +1,15 @@
 # Bricks Transaction Server
+> *In professional cycling, the philosophy of marginal gains was immortalized by Team Sky.
+> Instead of chasing revolutionary breakthroughs, they pursued relentless refinement:
+> a slightly more efficient bike fit, marginally lighter components,
+> deeper sleep, cleaner nutrition, better recovery routines.
+>
+> Any single adjustment was almost trivial in isolation.
+> But compounded across hundreds of decisions,
+> those tiny advantages accumulated into a decisive competitive edge—
+> one powerful enough to redefine the sport and sustain dominance for years.
+
+> Bricks follow the same approach*
 
 A Go implementation of an IBM CICS-compatible 3270 transaction server. Users
 dial in with a 3270 terminal emulator, sign on via a built-in CSSN screen, and
@@ -72,6 +83,8 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `maps_dir`                   | `runtime/map`                 | Directory of `*.map` files. |
 | `rexx_dir`                   | `runtime/rexx`                | Directory of REXX programs. |
 | `cobol_dir`                  | `runtime/cobol`               | Directory of COBOL programs. |
+| `copybook_dir`               | `runtime/cobolcopy`           | Directory of COBOL copybooks (`SQLCA.cpy`, etc.). |
+| `runtime_dir`                | `runtime`                     | Root for `maps_dir` / `rexx_dir` / `cobol_dir` / `tmp_dir` / `copybook_dir` when those aren't set explicitly. Set this to relocate the whole runtime tree in one knob. |
 | `data_dir`                   | `data`                        | Holds `files.boltdb` (FILE store + TS queues). |
 | `tmp_dir`                    | `runtime/tmp`                 | Sandbox directory for sequential text I/O (REXX `LINEIN`/`LINEOUT`, COBOL `READQ TD`/`WRITEQ TD`). Strict: ASCII only, LF-terminated, flat namespace, no traversal. See [Sequential file I/O — `tmp_dir`](#sequential-file-io--tmp_dir). |
 | `ntp_server`                 | `time.google.com`             | NTP server polled every 5 minutes to correct bricks's in-memory wall clock. EIBTIME / EIBDATE / FORMATTIME consult this corrected clock. Set to `off` to disable. Failures are non-fatal — bricks logs and continues with the previous offset (or the raw host clock if no sync has ever succeeded). See [Time synchronisation](#time-synchronisation). |
@@ -86,6 +99,14 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `web3270_port`               | `9000`                        | HTTP port for the web3270 frontend (only used when `start_web3270=yes`). |
 | `start_metrics`              | `yes`                         | `yes` exposes a JSON `/metrics` endpoint with runtime + counter snapshots. Independent of `start_web3270`. |
 | `metrics_port`               | `9100`                        | HTTP port for the dedicated `/metrics` listener. The same route is also mounted on the web3270 listener when both are on. |
+| `db_host`                    | (none)                        | Postgres server hostname. Empty means SQL is not configured — bricks runs normally; `EXEC SQL` paths return SQLCODE = -1. See [SQL support](#sql-support). |
+| `db_port`                    | `5432`                        | Postgres server TCP port. |
+| `db_user`                    | (none)                        | Postgres login. |
+| `db_password`                | (none)                        | Postgres password. URL-escaped when bricks builds the DSN, so special characters survive intact. |
+| `db_sslmode`                 | `disable`                     | Passed straight to libpq (`disable`, `require`, `verify-ca`, `verify-full`, etc.). |
+| `db_max_conns`               | `8`                           | Per-database connection pool cap (`SetMaxOpenConns` on the `*sql.DB`). |
+| `db_stmt_timeout`            | `30s`                         | Per-statement wall-clock cap, enforced **from the bricks client side**. The cap counts every millisecond from the moment bricks sends the SQL to the moment the last result byte arrives — round-trip time on the wire is bounded, not just the server's CPU time. (PG's own `statement_timeout` is server-side only and would miss a network-bound stall; bricks layers both, so either side firing produces SQLSTATE 57014 → SQLCODE -952 / `SQL-TIMEOUT`.) Accepts a Go duration (`5s`, `100ms`, `1m30s`), a bare integer (seconds), or `0`/`off`/`none` to disable. Cursors are exempt — only single-shot statements (SELECT INTO, INSERT, UPDATE, DELETE) get the per-statement deadline; FETCH iteration is bounded only by PG's server-side timer. |
+| `databases_file`             | `runtime/databases.conf`      | Catalogue of Postgres databases bricks knows about (CEDA-managed). First row is the default database for transactions that don't bind to a specific one. See [`databases.conf`](#databasesconf). |
 
 Command-line flags (in addition to `--conf`):
 
@@ -666,13 +687,16 @@ rotating by restarting cuts a clean boundary.
 
 ---
 
-## SQL support — Phase 1 (connectivity + CEDA viewer)
+## SQL support
 
-Bricks can open a Postgres connection at startup. Programs cannot
-yet issue `EXEC SQL` — that's Phase 2 (COBOL) and Phase 3 (REXX
-+ cursors + CEDA database lifecycle). Phase 1 ships the
-plumbing: connection pool, startup ping, and a read-only
-`CEDA DATABASE` viewer.
+Bricks programs (COBOL and REXX) can run `EXEC SQL` against a
+catalogue of Postgres databases. Same surface for both
+languages: single-row CRUD (`SELECT INTO`, `INSERT`, `UPDATE`,
+`DELETE`, `COMMIT`, `ROLLBACK`), the four-verb cursor lifecycle
+(`DECLARE` / `OPEN` / `FETCH` / `CLOSE`), and per-task
+`CONNECT TO 'name'` to switch between databases. See
+[PROGRAMMING.md, Chapter 26](PROGRAMMING.md#chapter-26-embedded-sql-cobol)
+for the full surface; this section covers operator-side setup.
 
 ### Configuration
 
@@ -726,31 +750,63 @@ ORDQ:cobol:ordq.cob:public:orders           # orders db
 LEDQ:cobol:ledq.cob:admin,users:ledger      # ledger db, ACL'd
 ```
 
-bricks does **not** create the PG-side database when you add a
-row to `databases.conf` — the operator runs `CREATE DATABASE` in
-psql. Phase 3 will add a CEDA action that drives the PG-side
-DDL too.
+Adding a row to `databases.conf` (or CEDA DATABASE `A`) **only**
+tells bricks about the database; it doesn't yet exist in
+Postgres. To create the PG-side database, select the row and use
+`C` on the CEDA DATABASE screen — bricks runs `CREATE DATABASE`
+against PG's `postgres` maintenance connection and re-pings the
+pool so it flips to ONLINE. The matching destructive action is
+`X` (DROP DATABASE), which prompts the operator to re-type the
+name as a safety gate and audit-logs both the attempt and the
+outcome.
 
 ### CEDA DATABASE
 
 The screen (`CEDA → D`) lists every row of `databases.conf` with
-its current connection state, and supports the standard CEDA
-A/D/U pattern:
+its current connection state and supports the standard CEDA
+selector pattern:
 
 | Cmd | Action |
 |---|---|
 | `A` | Add a new database row (form for name + description, writes `databases.conf`). |
-| `D` | Delete a row (refuses the default row; the operator re-orders first). |
+| `C` | Create the PG-side database for an existing row (runs `CREATE DATABASE` via the maintenance connection; re-pings the pool). |
+| `D` | Delete a row from the catalogue (refuses the default row). |
+| `X` | Drop the PG-side database (confirmation form; closes the bricks pool first so PG won't complain about "other users connected"). |
 | `U` | Alter a row's description. |
 | `R` | Retest one row's connection. |
 | `L` | Show that row's user-schema tables (one-line summary). |
-| `PF6` | Open the Add form directly. |
-| `PF3` | Back to CEDA menu. |
 
-Every A/D/U mutation flows through `brickslog.Audit` —
-`ceda=DATABASE op=ADD target=orders detail="…"` — and the
-file rewrites atomically (write-and-rename), so a crash mid-
-mutation can't corrupt the catalogue.
+`A` + `C` is the standard add-a-database flow; `X` + `D` is the
+matching teardown. Each mutation flows through `brickslog.Audit`
+— `ceda=DATABASE op=PG-CREATE target=orders status=OK term=T01
+user=admin` — and the `databases.conf` rewrites are atomic
+(write-and-rename), so a crash mid-mutation can't corrupt the
+catalogue.
+
+### Integration tests
+
+The unit tests (`go test ./...`) cover the SQL executor's parsing
+and mapping logic without a database. A second tier of live
+integration tests exercises the executor end-to-end against a
+real Postgres — they're behind the `pgtest` build tag so a normal
+`go test ./...` (and CI without a database) stays green:
+
+```
+go test -tags pgtest ./cics/
+```
+
+These read the real connection parameters straight from
+`bricks.cnf` (`db_host` / `db_user` / `db_password` /
+`databases_file`), so they validate exactly the config an
+operator runs with. When no database is reachable every test
+`t.Skip()`s with a clear message. All work happens against a
+hermetic scratch table (`bricks_pgtest_t`) created fresh at
+start and dropped at the end — the operator's own data is never
+touched. Coverage: SELECT INTO (row / no-row / multi-row),
+INSERT / UPDATE / DELETE with `SQLERRD3` row counts, duplicate-key
+and undefined-table SQLCODE mapping, null indicators (read and
+write), the cursor lifecycle, COMMIT / ROLLBACK durability,
+NUMERIC-scale and boolean coercion, the DDL gate, and `CONNECT TO`.
 
 ---
 
@@ -1516,6 +1572,5 @@ transaction between the `STARTBR` snapshot and the read. The skip is
 implemented as a bounded forward loop over the snapshot
 (`cics/files.go::readNextFile`), replacing an unbounded recursion, so no
 amount of in-flight deletes can blow the goroutine stack.
-<p align="center">
-  <img src="bricks.png" width="50%">
-</p>
+
+![BRICKS](bricks.png)
