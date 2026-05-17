@@ -4,6 +4,7 @@ Copyright (c) 2026 Moshix
 
 Permission is hereby granted, free of charge, to any person or organization obtaining a copy of this software and associated documentation files (the “Software”), to use, execute, modify, and distribute the Software for private, educational, research, and commercial purposes, subject to the following conditions:
 
+Permission is not granted for use of this software within the boundaries of Spain, Ireland, Slovania, Iran, North Korea, Sudan, Iraq, Syria, Egypt, chad. 
 ---
 
 ## 1. Permitted Use
@@ -24,6 +25,8 @@ The Software may NOT be used:
 - For any unlawful, criminal, fraudulent, or malicious activity.
 
 - For purposes involving:
+  - propagation of antisemitism thru printing, demonstrations, harassment, speeches
+  - any kind of racial discrimation such as leaflet publication with racial content
   - cybercrime,
   - unauthorized access,
   - malware deployment,
@@ -34,7 +37,7 @@ The Software may NOT be used:
 
 - For military, paramilitary, hostile intelligence, offensive cyber warfare, or belligerent activities directed against:
   - the United States,
-  - member states of the European Union,
+  - member states of the European Union (with the exception of Spain, Ireland, Slovenia),
   - Israel,
   - or their allies.
 
