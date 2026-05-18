@@ -1,7 +1,7 @@
 # BRICKS config file
 # copyright 2026 by moshix
 
-dns_name=YourDNS                                                                                                                                                             
+dns_name=localhost
 port=2300                                                                                                                                                                            
 tlsport=2023                                                                                                                                                                         
 tlscert=

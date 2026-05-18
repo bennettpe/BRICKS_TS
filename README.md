@@ -98,7 +98,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `max_conns_per_ip`           | `8`                           | Per-client cap. |
 | `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as eight contiguous byte slabs — one per shard — and reused for the life of the process; Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
 | `banner`                     | `BRICKS Transaction Server`   | Shown at top of system screens. |
-| `dns_name`                   | (none)                        | Informational; printed at startup. |
+| `dns_name`                   | (none)                        | **Bind address.** Every bricks listener — the plain-TCP and TLS 3270 listeners, and the web3270 / `/metrics` HTTP services — binds **only** to the single IP this name resolves to (a literal IP is used as-is; a hostname resolves to one address, IPv4 preferred). A `dns_name` that is set but unresolvable is a fatal startup error. When `dns_name` is **empty**, listeners fall back to binding *all* interfaces (`0.0.0.0`) and bricks logs a `WARNING` — set `dns_name` to confine the server to one interface. |
 | `start_web3270`              | `no`                          | `yes` enables the in-process browser-based 3270 emulator. |
 | `web3270_port`               | `9000`                        | HTTP port for the web3270 frontend (only used when `start_web3270=yes`). |
 | `start_metrics`              | `yes`                         | `yes` exposes a JSON `/metrics` endpoint with runtime + counter snapshots. Independent of `start_web3270`. |
@@ -1115,8 +1115,8 @@ unambiguous-prefix matcher.
 Real CICS CEDA's Groups / Lists / INSTALL / COPY / CHECK
 abstractions are intentionally absent — bricks already collapses
 CEDA's "definition + install" cycle into "edit text file,
-hot-reload" — so this is a focused three-screen tool, not a
-verbatim CICS port.
+hot-reload" — so this is a focused resource-management tool, not
+a verbatim CICS port.
 
 * **CEDA USER** (`CEDA U`) lists every user from `users.conf` with a
   per-row `SEL` cell. Type `A` to ALTER, `D` to DELETE, press ENTER to
@@ -1178,6 +1178,38 @@ record so an admin can grep the bricks log to see who did what:
 ceda=USER op=DEFINE target=test1 detail="USERS" term=T0001 user=admin
 ceda=TRANS op=ALTER target=HELO detail="rexx hello.rexx" term=T0001 user=admin
 ```
+
+### CEDA VSAM
+
+`CEDA VSAM` — any abbreviation works: `CEDA V`, `CEDA VS`,
+`CEDA VSA` all reach it via the same unambiguous-prefix matcher —
+opens the VSAM file catalogue. It lists every KSDS file inside
+`files.boltdb` with its record count, key / record maximum
+lengths, last-modified time, and a `LOCK` column showing the
+terminal holding a `READ FILE UPDATE` lock (or `-` when free).
+See [How file storage works](#how-file-storage-works) for the
+bbolt internals.
+
+The one row action is `P` (purge). Mark one or more files with
+`P` in the selector column and press ENTER; a secondary
+confirmation screen lists each selected file beside an input
+field, and a file is purged **only** when its name is re-typed
+exactly. A mismatched or blank entry drops that file from the
+purge; `PF3` cancels the whole operation. A file currently
+holding a `READ FILE UPDATE` lock is **blocked** — it is
+reported as skipped and never reaches the confirmation screen,
+so a purge can't surprise an in-flight task.
+
+Purging a file drops both its bbolt data bucket and its
+catalogue entry; it disappears from `CEMT INQUIRE FILE` as well.
+A later `WRITE FILE` re-creates it empty. Every purge — success
+or failure — is audit-logged:
+
+```
+ceda=VSAM op=PURGE target=CUSTOMERS term=T0001 user=admin status=OK
+```
+
+Like the rest of CEDA, the VSAM screen is admin-only.
 
 ---
 
