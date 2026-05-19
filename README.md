@@ -11,7 +11,7 @@
 
 > Bricks follow the same approach*
 
-Chat with BRICKS users and administrators [here](https://discord.gg/6NWE4Gp7kR)
+Chat with BRICKS developers and master operators [here](https://discord.gg/6NWE4Gp7kR)
 
 A Go implementation of an IBM CICS-compatible 3270 transaction server. Users
 dial in with a 3270 terminal emulator, sign on via a built-in CSSN screen, and
@@ -66,6 +66,38 @@ c3270 -port 2300 localhost
 On connect you'll see the `bricks.logo` splash in blue. Press ENTER to reach
 the TRANSID prompt; type `CSSN` to sign on, then any defined TRANSID
 (e.g. `HELO`).
+
+---
+
+## Breaking out of a transaction — `PA1`
+
+A transaction program drives the terminal with `EXEC CICS SEND MAP` /
+`SEND TEXT` and waits for the operator to press a key. A well-behaved
+program offers an exit — conventionally `PF3` — but a program that never
+checks `EIBAID` for an exit key (or simply has a logic bug) can leave the
+terminal stuck on its screen with no way back to the TRANSID prompt.
+
+**Press `PA1` to break out.** bricks intercepts `PA1` at every screen
+wait, *before* the program sees it: the running transaction is aborted
+and the terminal is returned to the empty TRANSID prompt. `PA1` cannot be
+consumed by the program — even one that arms `HANDLE AID PA1(...)` never
+receives it — so it is a guaranteed escape from a stuck transaction.
+
+Break-out is treated like an abend, not a clean `RETURN`: any recoverable
+work the task did since its last `SYNCPOINT` (FILE / TS / TD writes,
+uncommitted SQL) is rolled back, because the task did not finish, and no
+chained `RETURN TRANSID` task starts. The console logs one line naming
+the terminal:
+
+```
+term=T123: PA1 break-out, transaction aborted
+```
+
+> **SysReq.** The 3270 *System Request* key is not decoded by the
+> datastream layer bricks is built on, so it cannot trigger break-out —
+> `PA1` is the single supported break-out key. Most emulators expose
+> `PA1` directly (in c3270 / x3270 it is the `PA(1)` action); consult
+> your emulator's key map.
 
 ---
 
