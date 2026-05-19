@@ -1,0 +1,32 @@
+* BANK3 -- Address change. Pre-filled from the current account.
+* Operator overwrites any of street/city/state/zip and presses
+* ENTER to save (one UPDATE accounts SET ...). PF3 cancels and
+* returns to the detail screen without changes.
+MAP BANK3 SIZE 24x80
+  FIELD AT 0,24 LEN 32 PROT BRIGHT COLOR=WHITE     "BRICKS BANK NA - ADDRESS CHANGE"
+
+  FIELD AT 2,2  LEN 11 PROT COLOR=BLUE             "Account #:"
+  FIELD ACCT    AT 2,14 LEN 23 PROT BRIGHT COLOR=YELLOW
+  FIELD AT 3,2  LEN 11 PROT COLOR=BLUE             "Name:"
+  FIELD NAME    AT 3,14 LEN 66 PROT COLOR=TURQUOISE
+
+  FIELD AT 6,2  LEN 11 PROT COLOR=BLUE             "Street:"
+  INPUT STREET  AT 6,14 LEN 60 UNDERSCORE COLOR=GREEN
+  STOP          AT 6,75
+
+  FIELD AT 8,2  LEN 11 PROT COLOR=BLUE             "City:"
+  INPUT CITY    AT 8,14 LEN 40 UNDERSCORE COLOR=GREEN
+  STOP          AT 8,55
+
+  FIELD AT 10,2 LEN 11 PROT COLOR=BLUE             "State:"
+  INPUT STATE   AT 10,14 LEN 2  UNDERSCORE COLOR=GREEN
+  STOP          AT 10,17
+
+  FIELD AT 12,2 LEN 11 PROT COLOR=BLUE             "ZIP:"
+  INPUT ZIP     AT 12,14 LEN 10 UNDERSCORE COLOR=GREEN
+  STOP          AT 12,25
+
+  FIELD MSG     AT 22,2 LEN 76 PROT BRIGHT COLOR=RED
+  FIELD AT 23,0 LEN 80 PROT DIM COLOR=BLUE         "ENTER=Save  PF3=Cancel"
+  CURSOR        AT 6,15
+ENDMAP

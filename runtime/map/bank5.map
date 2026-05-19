@@ -1,0 +1,27 @@
+* BANK5 -- Close-account confirm. Shows the read-only summary
+* and requires the operator to type CLOSE in the CONFIRM field
+* to actually proceed. ENTER with anything else cancels.
+* PF3 also cancels back to the detail screen.
+MAP BANK5 SIZE 24x80
+  FIELD AT 0,22 LEN 36 PROT BRIGHT COLOR=WHITE     "BRICKS BANK NA - CLOSE ACCOUNT"
+
+  FIELD AT 2,2  LEN 11 PROT COLOR=BLUE             "Account #:"
+  FIELD ACCT    AT 2,14 LEN 23 PROT BRIGHT COLOR=YELLOW
+
+  FIELD AT 3,2  LEN 11 PROT COLOR=BLUE             "Name:"
+  FIELD NAME    AT 3,14 LEN 66 PROT COLOR=TURQUOISE
+
+  FIELD AT 4,2  LEN 11 PROT COLOR=BLUE             "Balance:"
+  FIELD BALANCE AT 4,14 LEN 18 PROT BRIGHT COLOR=YELLOW
+
+  FIELD AT 8,2  LEN 76 PROT BRIGHT COLOR=RED       "WARNING: this sets the balance to zero and marks the account closed."
+  FIELD AT 9,2  LEN 76 PROT COLOR=TURQUOISE        "The action is logged as a final transaction. It is NOT reversible."
+
+  FIELD AT 12,2 LEN 30 PROT COLOR=BLUE             "Type CLOSE to confirm:"
+  INPUT CONFIRM AT 12,33 LEN 8 UNDERSCORE COLOR=GREEN
+  STOP          AT 12,42
+
+  FIELD MSG     AT 22,2 LEN 76 PROT BRIGHT COLOR=RED
+  FIELD AT 23,0 LEN 80 PROT DIM COLOR=BLUE         "ENTER=Confirm  PF3=Cancel"
+  CURSOR        AT 12,34
+ENDMAP

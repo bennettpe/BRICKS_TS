@@ -1,0 +1,45 @@
+* BANK1 -- Search screen for the BANK pseudo-conversational
+* transaction. Operator fills in ONE search term (account number
+* takes priority, then last, first, address fragment) and presses
+* ENTER. Exact account-number hits go straight to detail (BANK2);
+* name/address searches paint up to 8 rows in ROW1..ROW8 and the
+* operator types the selection number into SEL.
+MAP BANK1 SIZE 24x80
+  FIELD AT 0,22 LEN 36 PROT BRIGHT COLOR=WHITE      "BRICKS BANK NA - SEARCH"
+  FIELD AT 1,2  LEN 76 PROT COLOR=TURQUOISE         "Enter ONE search term. Priority: ACCT > LAST > FIRST > ADDR."
+
+  FIELD AT 3,2  LEN 15 PROT COLOR=BLUE              "Last name:"
+  INPUT LAST    AT 3,18 LEN 40 UNDERSCORE COLOR=GREEN
+  STOP          AT 3,59
+
+  FIELD AT 5,2  LEN 15 PROT COLOR=BLUE              "First name:"
+  INPUT FIRST   AT 5,18 LEN 40 UNDERSCORE COLOR=GREEN
+  STOP          AT 5,59
+
+  FIELD AT 7,2  LEN 15 PROT COLOR=BLUE              "Address frag:"
+  INPUT ADDR    AT 7,18 LEN 40 UNDERSCORE COLOR=GREEN
+  STOP          AT 7,59
+
+  FIELD AT 9,2  LEN 15 PROT COLOR=BLUE              "Account #:"
+  INPUT ACCT    AT 9,18 LEN 23 UNDERSCORE COLOR=GREEN
+  STOP          AT 9,42
+
+  FIELD AT 11,2 LEN 15 PROT COLOR=BLUE              "Pick row (1-8):"
+  INPUT SEL     AT 11,18 LEN 2  UNDERSCORE COLOR=GREEN
+  STOP          AT 11,21
+
+  FIELD AT 13,2 LEN 76 PROT DIM COLOR=TURQUOISE     "# ACCOUNT NUMBER          NAME                          CITY"
+
+  FIELD ROW1    AT 14,2 LEN 76 PROT COLOR=GREEN
+  FIELD ROW2    AT 15,2 LEN 76 PROT COLOR=GREEN
+  FIELD ROW3    AT 16,2 LEN 76 PROT COLOR=GREEN
+  FIELD ROW4    AT 17,2 LEN 76 PROT COLOR=GREEN
+  FIELD ROW5    AT 18,2 LEN 76 PROT COLOR=GREEN
+  FIELD ROW6    AT 19,2 LEN 76 PROT COLOR=GREEN
+  FIELD ROW7    AT 20,2 LEN 76 PROT COLOR=GREEN
+  FIELD ROW8    AT 21,2 LEN 76 PROT COLOR=GREEN
+
+  FIELD MSG     AT 22,2 LEN 76 PROT BRIGHT COLOR=RED
+  FIELD AT 23,0 LEN 80 PROT DIM COLOR=BLUE          "ENTER=Search/Pick  PF3=Exit"
+  CURSOR        AT 3,19
+ENDMAP
