@@ -1078,19 +1078,20 @@ what used to be `CEMT P PERFORMANCE`:
 
 ### CEMT PERFORM
 
-The TS-queue purge screen (which used to live under the old `CEMT C S`)
-plus the diagnostic rescans grouped under their own sub-branch:
+The diagnostic rescans plus the live program-cache controls grouped
+under one admin sub-branch:
 
 ```
-U  PURGE     (N queues -- type P to purge) -- TS queue purge selector
 R  RESCAN    trans / maps / programs       -- on-disk diagnostic scans
    ├── T  TRANS     (N transactions, M missing)   -- rescan transactions.conf
    ├── M  MAP       (N maps, M syntax errors)     -- parse every *.map in MapsDir
    └── P  PROGRAMS  (N programs, M orphans)       -- walk rexx_dir + cobol_dir
+C  PROGRAMCACHE   (L1 N/M, L2 N MB)              -- resize / inspect the cache
 ```
 
-* **PERFORM PURGE** (`CEMT P U`) is the TS-queue list with a per-row
-  P-selector and a confirmation overlay (was `CEMT C S`).
+(TS-queue purge moved to `CEDA QUEUES` — purges live alongside the
+other CEDA mutations.)
+
 * **RESCAN TRANS** (`CEMT P R T`) re-stats every program path declared
   in `runtime/transactions.conf` and renders TRANSID / LANG / PROGRAM /
   STATUS / PATH. STATUS is `OK` when the file is present, `MISSING` when
@@ -1117,24 +1118,25 @@ R  RESCAN    trans / maps / programs       -- on-disk diagnostic scans
 
 `CEDA` is a separate built-in TRANSID (no entry needed in
 `transactions.conf`, implemented alongside CEMT in package `cemt/`).
-It is **admin-only** end-to-end. The three screens cover the
-mutation surfaces that actually matter for a bricks deployment — the
-user database, the transaction table, and the program load library
-on disk:
+It is **admin-only** end-to-end. Every mutation surface that matters
+for a bricks deployment — users, transactions, programs on disk,
+SQL databases, VSAM files, and TS queues — lives under CEDA:
 
 ```
-+-----------------------------------------------------------+
-| BRICKS Transaction Server  •  CEDA — resource definitions |
-|                                                           |
-|   Pick an option and press ENTER. PF3 to back out.        |
-|                                                           |
-|     U  USER         (N users)                             |
-|     T  TRANSACTION  (N transactions)                      |
-|     P  PROGRAM      (N REXX, M COBOL on disk)             |
-|     Q  QUIT         (or press PF3)                        |
-|                                                           |
-|   Choice: _                                               |
-+-----------------------------------------------------------+
++--------------------------------------------------------------+
+| BRICKS Transaction Server  •  CEDA — resource definitions    |
+|                                                              |
+|   Pick an option and press ENTER. PF3 to back out.           |
+|                                                              |
+|     U  USER         (N users)                                |
+|     T  TRANSACTION  (N transactions)                         |
+|     P  PROGRAM      (N REXX, M COBOL on disk)                |
+|     D  DATABASE     (N databases)                            |
+|     V  VSAM         (N VSAM files)                           |
+|     Q  QUEUES       (N queues -- type P to purge)            |
+|                                                              |
+|   Choice: _                                                  |
++--------------------------------------------------------------+
 ```
 
 CEDA shares CEMT's title bar, palette, and `pagedTable` layout — so
@@ -1242,6 +1244,27 @@ ceda=VSAM op=PURGE target=CUSTOMERS term=T0001 user=admin status=OK
 ```
 
 Like the rest of CEDA, the VSAM screen is admin-only.
+
+### CEDA QUEUES
+
+`CEDA QUEUES` — any abbreviation works (`CEDA Q`, `CEDA QU`,
+`CEDA QUEU` all reach it via the same unambiguous-prefix matcher;
+CEDA carries no `QUIT` child so Q is unambiguous, and PF3 still
+backs out of the menu) — opens the TS-queue list. Every TS queue
+currently in the data store shows one row with its ITEMS / READS
+/ WRITES / REWRT / LASTACC / STATUS counters — the same per-queue
+stats `CEMT INQUIRE TS` renders for read-only inspection.
+
+The one row action is `P` (purge). Type `P` (or `D` as an alias for
+"delete") in a row's selector cell and press ENTER; a centred
+confirmation overlay names the target queue and waits for `Y` to
+commit the `DELETEQ TS`. Anything else cancels. Only one queue can
+be marked per submit; mark more and the screen rejects the batch
+with `Type P on only one queue at a time.`
+
+Like the rest of CEDA, the QUEUES screen is admin-only. The
+read-only counterpart — `CEMT INQUIRE TS` — remains available to
+any signed-on operator.
 
 ---
 
