@@ -12,6 +12,10 @@ enforce_secure_login=no
 start_web3270=yes
 web3270_port=9000
 max_conns_per_ip=16
+
+# how many most frequently used maps should be kept in memory 
+map_cache = 128
+
 # ── Sandbox for sequential file I/O
 # Directory used by REXX (LINEIN / LINEOUT / STREAM) and COBOL
 # (EXEC CICS READQ TD / WRITEQ TD / DELETEQ TD) for sequential text

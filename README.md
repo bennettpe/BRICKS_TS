@@ -129,6 +129,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `idle_timeout_secs`          | `900`                         | Read deadline applied **only before sign-on** — to the LogonPrompt and to the BlankPrompt of an unauthenticated session, plus the CSSN sign-on input reads. A peer that completes telnet negotiation but never signs on is dropped after this many seconds so a half-open handshake doesn't tie up a `max_conns_per_ip` slot forever. **Once the operator has signed on, the deadline is not set** — a signed-on terminal sits at the blank prompt indefinitely and only disconnects on TCP close or an explicit `CSSF DISC` / `DISCONNECT` / `GOODNIGHT`. `CSSF LOGOFF` clears the authentication flag, so the deadline resumes for the now-unauthenticated session. |
 | `max_conns_per_ip`           | `8`                           | Per-client cap. |
 | `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as eight contiguous byte slabs — one per shard — and reused for the life of the process; Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
+| `map_cache`                  | `128`                         | LRU bound on the number of **parsed** 3270 maps held resident. The directory index — `(map name → file path, mtime, size, SHA-256)` — always covers every `*.map` in `maps_dir`, so any map remains resolvable by name; only the parsed body is bounded. A `SEND/RECEIVE MAP` for a cached map is zero-parse; an evicted map is re-parsed on next lookup (microseconds) and re-inserted. Evicted entries drop their `*Map` pointer and the Go GC reclaims them on the next cycle, capping both steady-state memory and per-GC pointer-graph walk regardless of how many maps a deployment ships. Valid range is `1..1028`; rejected at startup if out of range. Live counters and runtime resize are visible in `CEMT P M`. |
 | `banner`                     | `BRICKS Transaction Server`   | Shown at top of system screens. |
 | `dns_name`                   | (none)                        | **Bind address.** Every bricks listener — the plain-TCP and TLS 3270 listeners, and the web3270 / `/metrics` HTTP services — binds **only** to the single IP this name resolves to (a literal IP is used as-is; a hostname resolves to one address, IPv4 preferred). A `dns_name` that is set but unresolvable is a fatal startup error. When `dns_name` is **empty**, listeners fall back to binding *all* interfaces (`0.0.0.0`) and bricks logs a `WARNING` — set `dns_name` to confine the server to one interface. |
 | `start_web3270`              | `no`                          | `yes` enables the in-process browser-based 3270 emulator. |
@@ -1078,15 +1079,16 @@ what used to be `CEMT P PERFORMANCE`:
 
 ### CEMT PERFORM
 
-The diagnostic rescans plus the live program-cache controls grouped
-under one admin sub-branch:
+The diagnostic rescans plus the live program- and map-cache
+controls grouped under one admin sub-branch:
 
 ```
-R  RESCAN    trans / maps / programs       -- on-disk diagnostic scans
+M  MAPCACHE        (N/M entries)                  -- resize / inspect the map LRU
+R  RESCAN    trans / maps / programs              -- on-disk diagnostic scans
    ├── T  TRANS     (N transactions, M missing)   -- rescan transactions.conf
    ├── M  MAP       (N maps, M syntax errors)     -- parse every *.map in MapsDir
    └── P  PROGRAMS  (N programs, M orphans)       -- walk rexx_dir + cobol_dir
-C  PROGRAMCACHE   (L1 N/M, L2 N MB)              -- resize / inspect the cache
+C  PROGRAMCACHE   (L1 N/M, L2 N MB)               -- resize / inspect the program cache
 ```
 
 (TS-queue purge moved to `CEDA QUEUES` — purges live alongside the
@@ -1111,6 +1113,17 @@ other CEDA mutations.)
   lists every regular file, and shows the TRANSIDs in
   `transactions.conf` that reference it. Files with no matching
   TRANSID render with TRANSID=`-` so stale leftovers stand out.
+* **MAPCACHE** (`CEMT P M`) shows the live counters for the parsed-
+  map LRU set by `map_cache` in `bricks.cnf`: capacity, current
+  occupancy, hits / misses / hit-ratio, and eviction count. The one
+  writable cell takes a new capacity (`1..1028`); PF5 applies it
+  immediately. Shrinking evicts the LRU overflow in place; counters
+  survive the resize so the hit-ratio stays meaningful across an
+  operator adjustment. Saturated occupancy paired with a steady
+  eviction stream is the signal that the cap should be raised.
+* **PROGRAMCACHE** (`CEMT P C`) is the parallel screen for the
+  REXX/COBOL program cache — see the dedicated section under
+  "Performance and security hardening" for the L1/L2 details.
 
 ---
 
