@@ -19,6 +19,11 @@ max_conns_per_ip=16
 # how many most frequently used maps should be kept in memory 
 map_cache = 128
 
+#exec cics relaed settings
+enable_wapi=yes
+wapi_port=8080
+wapi_tls_port=8443
+
 # ── Sandbox for sequential file I/O
 # Directory used by REXX (LINEIN / LINEOUT / STREAM) and COBOL
 # (EXEC CICS READQ TD / WRITEQ TD / DELETEQ TD) for sequential text

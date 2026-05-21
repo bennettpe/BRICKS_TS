@@ -1,17 +1,16 @@
       *> SQLD -- embedded-SQL demo (COBOL). Operator types a customer
-      *>   id; SQLD runs a SELECT INTO against customers_sql and renders
+      *> id; SQLD runs a SELECT INTO against customers_sql and renders
       *> the result + SQLCA on the SQLD1 screen. SQLR is the REXX
       *> twin -- same demo, same map.
-      *> Copyright 2026 by moshix 
-      *> SQL syntx  shown here:
+      *>
+      *> Phase 4 SQL surface shown here:
       *>   - EXEC SQL WHENEVER       -- declarative error-handling
       *>                                directive (see the comment
       *>                                at WHENEVER below).
       *>   - a null indicator on the SELECT INTO ( :NM :NMIND ).
       *>   - EVALUATE over the expanded SQLCODE catalogue, including
       *>     SQL-TIMEOUT / SQL-DEADLOCK / SQL-CONNLOST / SQL-UNDEF-TBL.
-      *>   - the SQLCA copybook constants 
-      *>    Use the SQLCA copybook (COPY SQLCA)!!
+      *>   - the SQLCA copybook constants (COPY SQLCA).
       *>
       *> Expected schema (run once via sql_bricks_statements.sql):
       *>

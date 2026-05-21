@@ -1,0 +1,12 @@
+* WZEN transaction -- displays the result of a real outbound HTTP
+* GET (https://api.github.com/zen) issued via EXEC CICS WEB OPEN /
+* WEB CONVERSE / WEB CLOSE. The REXX/COBOL handler fills the named
+* fields below from the returned body; layout is pure presentation.
+MAP WZEN1 SIZE 24x80
+  FIELD HEADER  AT 0,0   LEN 78 PROT BRIGHT COLOR=TURQUOISE
+  FIELD URLLINE AT 2,0   LEN 78 PROT DIM    COLOR=BLUE
+  FIELD STATLN  AT 4,0   LEN 78 PROT BRIGHT COLOR=GREEN
+  FIELD ZEN     AT 8,5   LEN 70 PROT BRIGHT COLOR=WHITE
+  FIELD ERRMSG  AT 14,5  LEN 70 PROT BRIGHT COLOR=RED
+  FIELD FOOTER  AT 23,2  LEN 60 PROT DIM    COLOR=BLUE
+ENDMAP

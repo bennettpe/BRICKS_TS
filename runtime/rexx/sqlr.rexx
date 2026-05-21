@@ -5,7 +5,7 @@
 /*     EXEC SQL SELECT name INTO :CUSTNM :CUSTNMIND                 */
 /*              FROM customers_sql WHERE id = :CUSTID END-EXEC      */
 /*                                                                  */
-/* SQL stynax  shown here:                                  */
+/* Phase 4 SQL surface shown here:                                  */
 /*   - EXEC SQL WHENEVER       declarative error-handling directive */
 /*   - a null indicator on the SELECT INTO ( :CUSTNM :CUSTNMIND )   */
 /*   - a SELECT/WHEN over the expanded SQLCODE catalog, including   */
@@ -16,7 +16,7 @@
 /* var its value would become the tail. We dodge that classic REXX */
 /* gotcha by using host-var names (CUSTNM, CUSTNMIND) that are not  */
 /* also tails of the SCR. map stem.                                 */
-/*                                                            */
+/*                                                                  */
 /* Expected schema (run once via sql_bricks_statements.sql):        */
 /*                                                                  */
 /*     CREATE TABLE customers_sql (                                 */
@@ -53,7 +53,7 @@ CUSTNMIND = ''
 
 /* WHENEVER SQLERROR CONTINUE states explicitly that this program  */
 /* inspects SQLCODE itself -- via the SELECT/WHEN below -- rather  */
-/* than SIGNALing to a label. CONTINUE is the default, and  this     */
+/* than SIGNALing to a label. CONTINUE is the default, so this     */
 /* documents intent. To use the declarative style instead, swap    */
 /* it for `WHENEVER SQLERROR GOTO SQLERR` and control jumps to the */
 /* SQLERR: label after any statement whose SQLCODE is negative.    */

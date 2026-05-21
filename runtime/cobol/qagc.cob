@@ -75,7 +75,7 @@
                EXEC CICS RETURN END-EXEC
            END-IF.
 
-      *> Today's date components — pulled out of the bricks-specific
+      *> Today's date components -- pulled out of the bricks-specific
       *> ASSIGN options so we don't need reference modification.
            EXEC CICS ASSIGN TODAYYR(TY) TODAYMO(TM) TODAYDY(TD) END-EXEC.
 

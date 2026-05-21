@@ -4,13 +4,13 @@
 /* and the operator can either DELETE the queue (PF4), restart from  */
 /* item 1 (PF5), or PF3 to leave.                                    */
 /*                                                                   */
-/* The cursor lives on the running task  closing the transaction*/
+/* The cursor lives on the running task -- closing the transaction*/
 /* (PF3 / RETURN) releases it via Store.ClearTaskState in the        */
 /* dispatcher, so the next CONS invocation starts fresh at item 1.   */
 /*                                                                   */
 /* Variable naming: REXX compound-symbol tail substitution turns     */
 /* SCR.LASTITEM into SCR.<value-of-LASTITEM> if a local variable     */
-/* named LASTITEM exists  silently writing to the wrong tail and*/
+/* named LASTITEM exists -- silently writing to the wrong tail and*/
 /* leaving the map field empty. Same trap cust.rexx and qagr.rexx    */
 /* warn about. So local names are deliberately distinct from the     */
 /* CONS1 map fields (LASTITEM/LASTPAY/NREAD/QNAME/MSG):              */
@@ -27,7 +27,7 @@ EXEC CICS ASSIGN TERMID(TRM) END-EXEC
 
 DO FOREVER
   IF \DATATYPE(NRD,'W') THEN NRD = 0
-  IF QNM = 'QNM' THEN QNM = ''         /* unset → NOVALUE returns 'QNM' */
+  IF QNM = 'QNM' THEN QNM = ''         /* unset -> NOVALUE returns 'QNM' */
   IF LITM = 'LITM' THEN LITM = ''
   IF LPAY = 'LPAY' THEN LPAY = ''
 
@@ -75,7 +75,7 @@ DO FOREVER
   /* Default ENTER: consume the next item via the implicit cursor.    */
   /*                                                                  */
   /* DROP GOTI first so its value resolves to the literal "GOTI" via  */
-  /* REXX NOVALUE — the handler then treats ITEM(GOTI) as a cursor-   */
+  /* REXX NOVALUE -- the handler then treats ITEM(GOTI) as a cursor-   */
   /* less READ and writes the item number actually read back into     */
   /* GOTI on success. Without DROP, GOTI keeps the prior iteration's  */
   /* value (e.g. "1") and the handler reads item 1 again forever.     */

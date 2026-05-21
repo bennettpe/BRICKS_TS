@@ -20,7 +20,7 @@
       *>   paginated all-records list. When it contains a search
       *>   filter, GUSL walks every record once via STARTBR/READNEXT,
       *>   uppercases KEY || ' ' || REC, and uses FUNCTION POS to test
-      *>   substring containment  matching cusl.rexx's behaviour. The
+      *>   substring containment -- matching cusl.rexx's behaviour. The
       *>   first 15 matches are written into the 15 ROW slots for a
       *>   single CUSTL SEND; the total match count flows back through
       *>   the outbound DFHCOMMAREA so GUST can render a summary line.
@@ -272,7 +272,7 @@
 
        PLACE-ROW.
       *> Fan out the current match into the ROW<SLOT> slot. Without
-      *> OCCURS the dispatch is unrolled with EVALUATE  same shape as
+      *> OCCURS the dispatch is unrolled with EVALUATE -- same shape as
       *> the unfiltered fan-out above.
            EVALUATE SLOT
                WHEN 1

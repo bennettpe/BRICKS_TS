@@ -6,7 +6,7 @@
 /* The 'customers' file is a KSDS (key-sequenced) backed by a      */
 /* B+tree, so READ/WRITE/REWRITE/DELETE are O(log n) and STARTBR + */
 /* READNEXT walk records in key order. The on-disk record format   */
-/* (name|addr|city|phone) is chosen here, by the application      */
+/* (name|addr|city|phone) is chosen here, by the application --     */
 /* bricks stores record bodies opaquely.                           */
 /*                                                                 */
 /* Note: variables are deliberately named distinctly from map      */
@@ -62,7 +62,7 @@ DO FOREVER
     SCR.MSG = 'Customer # required.'
   END
   ELSE DO
-    /* Validate the customer number via LINK to CUSV (skip for L and S — */
+    /* Validate the customer number via LINK to CUSV (skip for L and S -- */
     /* listing/searching does not need a key). CUSV uppercases           */
     /* DFHCOMMAREA and writes a status string back; CUST reads the       */
     /* normalised value via COMMAREA(CKEY).                              */

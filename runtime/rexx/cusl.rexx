@@ -96,7 +96,7 @@ DO WHILE EXIT_LIST = 0
 
   EXEC CICS SEND MAP(LISTMAP) FROM(SCR.) ERASE END-EXEC
   IF EIBRESP = 36 THEN DO
-    /* Sized variant absent  fall back to the 24x80 list. */
+    /* Sized variant absent -- fall back to the 24x80 list. */
     LISTMAP = 'CUSTL'
     ROWS_PER_PAGE = 15
     NPAGES = (TOTAL + ROWS_PER_PAGE - 1) % ROWS_PER_PAGE
