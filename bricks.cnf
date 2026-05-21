@@ -8,7 +8,10 @@ tlscert=
 tlskey=www.moshix.tech.key                                                                                                                                                           
 #start_TLS=yes         
 enforce_secure_login=no
-#secure_login_transacton=cssn
+
+
+#secure_login_transaction=CSSN
+start_transaction=HELP
 start_web3270=yes
 web3270_port=9000
 max_conns_per_ip=16
