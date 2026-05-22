@@ -118,13 +118,13 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `users_file`                 | `runtime/users.conf`          | Auth source. |
 | `transactions_file`          | `runtime/transactions.conf`   | TRANSID dispatch table. |
 | `maps_dir`                   | `runtime/map`                 | Directory of `*.map` files. |
-| `rexx_dir`                   | `runtime/rexx`                | Directory of REXX programs. |
-| `cobol_dir`                  | `runtime/cobol`               | Directory of COBOL programs. |
+| `rexx_dir`                   | `runtime/rexx`                | Directory of REXX programs. Sub-directories are supported: `transactions.conf` may reference programs as `subdir/file.rexx`. `CEDA PROGRAM` walks the tree recursively (depth cap 8, hidden-prefixed entries skipped). |
+| `cobol_dir`                  | `runtime/cobol`               | Directory of COBOL programs. Same sub-directory support as `rexx_dir`. |
 | `copybook_dir`               | `runtime/cobolcopy`           | Directory of COBOL copybooks (`SQLCA.cpy`, etc.). |
 | `runtime_dir`                | `runtime`                     | Root for `maps_dir` / `rexx_dir` / `cobol_dir` / `tmp_dir` / `copybook_dir` when those aren't set explicitly. Set this to relocate the whole runtime tree in one knob. |
 | `data_dir`                   | `data`                        | Holds `files.boltdb` (FILE store + TS queues). |
 | `tmp_dir`                    | `runtime/tmp`                 | Sandbox directory for sequential text I/O (REXX `LINEIN`/`LINEOUT`, COBOL `READQ TD`/`WRITEQ TD`). Strict: ASCII only, LF-terminated, flat namespace, no traversal. See [Sequential file I/O — `tmp_dir`](#sequential-file-io--tmp_dir). |
-| `ntp_server`                 | `time.google.com`             | NTP server polled every 5 minutes to correct bricks's in-memory wall clock. EIBTIME / EIBDATE / FORMATTIME consult this corrected clock. Set to `off` to disable. Failures are non-fatal — bricks logs and continues with the previous offset (or the raw host clock if no sync has ever succeeded). See [Time synchronisation](#time-synchronisation). |
+| `ntp_server`                 | `time.google.com`             | NTP server polled every 12 hours to correct bricks's in-memory wall clock. EIBTIME / EIBDATE / FORMATTIME consult this corrected clock. Set to `off` to disable. Failures are non-fatal — bricks logs and continues with the previous offset (or the raw host clock if no sync has ever succeeded). See [Time synchronisation](#time-synchronisation). |
 | `time_zone`                  | `Z` (UTC)                     | Military zone letter (`Z`=UTC, `A`–`M`=UTC+1..+12, `N`–`Y`=UTC-1..-12). Applies to operator-visible time fields; ABSTIME stays UTC milliseconds. See [Time synchronisation](#time-synchronisation). |
 | `log_location`               | `log`                         | Directory where bricks writes per-run log files. On startup a new file `YYYY-MM-DD_HH-MM-SS.log` is created; every console line is appended (with ANSI color stripped) and prefixed with a 4-character subsystem tag. Set to `off` to disable file logging. See [Logging](#logging). |
 | `idle_timeout_secs`          | `900`                         | Read deadline applied **only before sign-on** — to the LogonPrompt and to the BlankPrompt of an unauthenticated session, plus the CSSN sign-on input reads. A peer that completes telnet negotiation but never signs on is dropped after this many seconds so a half-open handshake doesn't tie up a `max_conns_per_ip` slot forever. **Once the operator has signed on, the deadline is not set** — a signed-on terminal sits at the blank prompt indefinitely and only disconnects on TCP close or an explicit `CSSF DISC` / `DISCONNECT` / `GOODNIGHT`. `CSSF LOGOFF` clears the authentication flag, so the deadline resumes for the now-unauthenticated session. |
@@ -137,6 +137,20 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `web3270_port`               | `9000`                        | HTTP port for the web3270 frontend (only used when `start_web3270=yes`). |
 | `start_metrics`              | `yes`                         | `yes` exposes a JSON `/metrics` endpoint with runtime + counter snapshots. Independent of `start_web3270`. |
 | `metrics_port`               | `9100`                        | HTTP port for the dedicated `/metrics` listener. The same route is also mounted on the web3270 listener when both are on. |
+| `enable_wapi`                | `no`                          | `yes` enables the WAPI listener — the inbound-HTTP server that turns each matched request into a transaction dispatch via the `EXEC CICS WEB *` verbs (Phase 1 — server side). On startup bricks logs `WAPI listening on http://<host>:<port>/ (routes_file=…, N route(s) loaded)` (and a second `https://…` line when TLS opens). Off by default — no HTTP listener opens unless the operator opts in. Port defaults below apply unless overridden. |
+| `enforce_wapi_tls`           | `no`                          | `yes` suppresses the plain HTTP listener — only the HTTPS port opens. Requires `tlscert` and `tlskey` to be set (rejected at startup otherwise). Use this for any deployment where the API is reachable from outside `localhost` so credentials and payloads aren't sniffable. |
+| `wapi_port`                  | `8080`                        | TCP port for the **plain (non-TLS)** inbound EXEC CICS WEB listener. Bound to `dns_name` like every other bricks listener. Suppressed entirely when `enforce_wapi_tls=yes`. (`web_port` is accepted as a back-compat alias for the same field.) |
+| `wapi_tls_port`              | `443`                         | TCP port for the **TLS** inbound EXEC CICS WEB listener. Opens whenever `enable_wapi=yes` AND `tlscert`/`tlskey` are set — the same cert/key as the 3270 TLS listener. The standard 443 is the default; on macOS / Linux bricks needs `CAP_NET_BIND_SERVICE` or root to bind it. Use `1443` / `8443` / etc. when running unprivileged. |
+| `web_routes_file`            | `runtime/web_routes.conf`     | URIMAP-equivalent file. One row per route: `METHOD PATH-PATTERN TRANSID [groups] [response_timeout]`. `{name}` placeholders in the path are exposed to the transaction via `WEB READ QUERYPARM('name')`. Bad rows are skipped with a warning; bricks still starts. Hot-reload on mtime change. |
+| `web_request_max_bytes`      | `1048576` (1 MiB)             | Hard cap on inbound body size — anything above returns 413. |
+| `web_request_timeout`        | `30s`                         | Per-request total wall-clock cap. Accepts Go duration syntax (`5s`, `100ms`) or a bare integer (seconds). |
+| `web_header_max_bytes`       | `65536`                       | Cap on combined inbound header size — protects against header-bomb attacks. |
+| `web_client_timeout`         | `30s`                         | Per-outbound-request total wall-clock cap on the shared `*http.Client` driving `EXEC CICS WEB OPEN / CONVERSE / SEND / RECEIVE / CLOSE`. Go duration (`5s`, `100ms`) or bare integer seconds. `0` / `off` disables (no cap). |
+| `web_client_max_idle_conns`  | `32`                          | Idle-connection pool size for the outbound `*http.Transport`. Per-host limit is the same value, so 32 hosts × 32 idle conns is the worst-case pool. |
+| `web_client_tls_skip_verify` | `no`                          | `yes` accepts ANY TLS certificate on outbound HTTPS — test-only escape hatch for self-signed endpoints. Logs a loud `WARNING` at startup. Never use in production. |
+| `web_client_ca_bundle`       | (none)                        | Path to a PEM file of trusted CAs to use for outbound TLS verification **instead of** the host system's trust store. Useful when bricks must trust an internal CA that's not installed system-wide. |
+| `web_client_cert` / `web_client_key` | (none)                | PEM client-certificate + key for outbound mTLS — presented when an upstream service requires the caller to authenticate with a certificate (e.g. partner APIs gated by mTLS). Both must be set together; either alone is a startup error. |
+| `web_inbound_client_ca`      | (none)                        | PEM CA bundle for **inbound mTLS**. When set, the WAPI TLS listener requires every client to present a certificate signed by this CA — handshakes from clients without an accepted cert are rejected at the TLS layer (no transaction dispatch happens). The dispatched program reads the verified peer cert via `EXEC CICS WEB EXTRACT CERTIFICATE` (see [`DFHWBCC.cpy`](runtime/cobolcopy/DFHWBCC.cpy)). Plain (non-TLS) listeners ignore this knob. |
 | `db_host`                    | (none)                        | Postgres server hostname. Empty means SQL is not configured — bricks runs normally; `EXEC SQL` paths return SQLCODE = -1. See [SQL support](#sql-support). |
 | `db_port`                    | `5432`                        | Postgres server TCP port. |
 | `db_user`                    | (none)                        | Postgres login. |
@@ -151,6 +165,181 @@ Command-line flags (in addition to `--conf`):
 | Flag             | Notes |
 |------------------|-------|
 | `--no-console`   | Disable the framed operator console; emit raw `log.Printf` lines on stderr. Use under `nohup` / `systemd` / when piping through `tee`. |
+
+---
+
+## WAPI routing — URL → TRANSID → program
+
+Once `enable_wapi=yes` is set, the inbound listener resolves an
+incoming HTTP request through **two operator-editable layers**.
+Nothing is hard-wired — adding a new web application is one row
+per layer, no code changes, no restart (both files reload on
+mtime change).
+
+```
+HTTP request
+    │
+    ▼
+runtime/web_routes.conf      ── URL pattern → 4-character TRANSID
+    │
+    ▼
+runtime/transactions.conf    ── TRANSID → program file + ACL groups
+    │
+    ▼
+runtime/rexx/*.rexx | runtime/cobol/*.cob       ── the program that runs
+```
+
+A four-app example mixing REST GET, REST POST, browse, and an
+admin endpoint, in both REXX and COBOL:
+
+**`runtime/web_routes.conf`** (URL → TRANSID):
+
+```
+# method  path-pattern         transid  [groups]   [response_timeout]
+GET       /api/customer/{id}   WAPI     public
+POST      /api/customer        WAPC     admin
+GET       /api/orders/{id}     OAPI     users
+DELETE    /admin/cache/{key}   CACR     admin                 5s
+```
+
+**`runtime/transactions.conf`** (TRANSID → program + ACL):
+
+```
+WAPI:rexx:wapi.rexx:public,users,admin
+WAPC:cobol:wapic.cob:admin
+OAPI:rexx:orders.rexx:users,admin
+CACR:cobol:cacheclr.cob:admin
+```
+
+Each TRANSID is reachable from **both** front doors with no
+extra wiring: a 3270 operator who types `WAPI` at the prompt runs
+the exact same program that an HTTP `GET /api/customer/{id}`
+request reaches. The transaction can tell which front door it's
+serving by checking whether the `EXEC CICS WEB *` verbs return
+data — they all return `INVREQ` on a 3270 dispatch — but most
+programs don't need to: a transaction written for the 3270
+naturally renders maps, and a transaction written for HTTP
+naturally calls `WEB SEND`. Each side just doesn't reach the
+other's verbs.
+
+Live hot-reload — add a row to either file, save, hit the URL.
+A bad row in `web_routes.conf` logs `web_routes.conf:N: skipping:
+…` and is dropped; the surrounding good rows keep working
+(opt-in ACL — see [Per-transaction ACL](#per-transaction-acl) —
+applies to web rows too).
+
+When you have hundreds of web applications, the two files just
+grow longer; nothing about the dispatch path changes. CEMT
+INQUIRE TRANSACTION pages through every transaction regardless
+of which front door reaches it; `CEMT INQUIRE WEB` (Phase 3) will
+do the same for routes.
+
+### URIMAP — named outbound endpoints
+
+A URIMAP entry in `runtime/web_routes.conf` defines a named
+upstream service that outbound transactions reference by symbol
+instead of hardcoded host/port/scheme. Real CICS uses URIMAPs
+for the same purpose; the layered name → endpoint indirection
+lets one row swap an entire fleet of programs to a new
+upstream without code changes.
+
+```
+# Format: URIMAP NAME scheme://host[:port][/path-prefix]
+URIMAP   GITHUB    https://api.github.com
+URIMAP   WEATHER   https://api.openweathermap.org/data/2.5
+URIMAP   INTRANET  https://api.internal:8443/v1
+```
+
+A program calls `EXEC CICS WEB OPEN URIMAP('GITHUB') SESSTOKEN(t)`
+to resolve scheme/host/port from the named entry; the optional
+path-prefix is recorded on the session and prepended to every
+subsequent `WEB SEND` / `WEB CONVERSE` PATH. Operators can
+inspect the loaded entries via `CEMT INQUIRE URIMAP`, and the
+active inbound requests via `CEMT INQUIRE WEB`.
+
+URIMAP rows load even when `enable_wapi=no` — the outbound-only
+deployment (programs call external services, no inbound HTTP
+listener) is fully supported.
+
+Operators edit the URIMAP catalogue live from the 3270 console:
+`CEDA URIMAP` lists every loaded row and accepts an `A` (alter) /
+`D` (delete) selector per row, plus PF6 to define a new entry.
+The editor uses the same mtime-guarded optimistic-concurrency
+check the other CEDA screens use — if `web_routes.conf` was
+modified externally between read and write, the screen reports
+`file changed under us -- press ENTER to refresh` and the row is
+not touched. Every successful change emits an audit line in the
+bricks log (`ceda=URIMAP op=DEFINE …`), so the change history is
+greppable.
+
+### Inbound mTLS — verifying the caller's certificate
+
+Set `web_inbound_client_ca=ca.pem` to require every HTTPS client
+to present a certificate signed by `ca.pem`. The TLS handshake
+rejects unauthenticated clients before they ever reach a route
+handler — no `WEB *` verb runs, no transaction is dispatched.
+
+Inside a dispatched program, `EXEC CICS WEB EXTRACT CERTIFICATE`
+reads the verified peer cert into WORKING-STORAGE:
+
+```cobol
+       COPY DFHWBCC.   *> DFH-WB-CN, DFH-WB-ORG, DFH-WB-CO,
+                       *> DFH-WB-SERIAL, DFH-WB-ISSUER, …
+       EXEC CICS WEB EXTRACT CERTIFICATE
+                       COMMONNAME(DFH-WB-CN)
+                       ORGANISATION(DFH-WB-ORG)
+                       COUNTRY(DFH-WB-CO)
+                       SERIALNUM(DFH-WB-SERIAL)
+                       ISSUER(DFH-WB-ISSUER)
+       END-EXEC.
+       EVALUATE EIBRESP
+           WHEN DFHRESP(NORMAL)  ...   *> use the fields
+           WHEN DFHRESP(NOTFND)  ...   *> non-TLS or no client cert
+       END-EVALUATE.
+```
+
+`NOTFND` is returned on plain (non-TLS) requests and on TLS
+requests where no client cert was presented — useful when one
+TRANSID serves both authenticated and anonymous callers.
+
+### Outbound HTTP — calling external APIs from a transaction
+
+The other half of `EXEC CICS WEB *` is **outbound** — a bricks
+transaction calling an HTTP API on a remote host. No `bricks.cnf`
+toggle is needed; the outbound client is always available. Bricks
+builds a single shared `*http.Client` at startup with the
+`web_client_*` knobs above (timeout, idle-pool size, TLS-verify
+escape hatch); every task reuses it.
+
+The verb set is small: `WEB OPEN` (open a logical session and
+return a `SESSTOKEN`), `WEB CONVERSE` (one-shot send + receive),
+`WEB SEND` / `WEB RECEIVE` (the split form), and `WEB CLOSE`.
+Sessions left open at task end are auto-closed by the dispatcher.
+
+The shipped COBOL sample (`runtime/cobol/wzen.cob`, TRANSID
+`WZEN`) fetches GitHub's public `/zen` endpoint over HTTPS and
+displays the one-line reply on a 3270 map. Trace through it for
+the canonical "make an HTTPS call from CICS" pattern:
+
+```
+EXEC CICS WEB OPEN HOST('api.github.com') PORT(443)
+                   SCHEME('HTTPS')
+                   SESSTOKEN(DFH-WB-SESS) END-EXEC.
+
+EXEC CICS WEB CONVERSE SESSTOKEN(DFH-WB-SESS)
+                       METHOD('GET') PATH('/zen')
+                       INTO(BODY)
+                       STATUSCODE(STAT) END-EXEC.
+
+EXEC CICS WEB CLOSE SESSTOKEN(DFH-WB-SESS) END-EXEC.
+```
+
+Sign on with `CSSN` → `admin` / `admin`, type `WZEN`, press
+ENTER — within `web_client_timeout` (30 s by default) the
+program returns with the body in `BODY` and the HTTP status in
+`STAT`. The system's CA bundle validates the api.github.com cert
+automatically; no TLS configuration is required for outbound
+HTTPS to a normal public endpoint.
 
 ---
 
@@ -613,14 +802,15 @@ ntp: initial sync failed (time.google.com): dial: timeout -- continuing with hos
 
 The returned offset is stored in an `atomic.Int64` and applied to
 every `Clock.Now()` call. A background goroutine repeats the query
-every 5 minutes; each result is logged the same way.
+every 12 hours; each result is logged the same way.
 
 **Important: NTP failures are non-fatal.** If the server is
 unreachable, returns garbage, or DNS fails, bricks logs one console
 line and continues serving transactions. The previous successful
 offset stays in effect (or zero on first failure, meaning bricks
-falls back to the raw host clock). The 5-minute ticker retries
-automatically.
+falls back to the raw host clock). The 12-hour ticker retries
+automatically — for one-off forced syncs in the meantime, restart
+bricks (the initial sync runs synchronously at startup).
 
 Bricks **never** sets the host OS clock — that would require root
 and break the pure-Go / OS-independent guarantee. The offset is
