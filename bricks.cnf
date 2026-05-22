@@ -19,7 +19,8 @@ max_conns_per_ip=16
 # how many most frequently used maps should be kept in memory 
 map_cache = 128
 
-#exec cics relaed settings
+
+#EXEC CICS WEB related settings
 enable_wapi=yes
 wapi_port=8080
 wapi_tls_port=8443
