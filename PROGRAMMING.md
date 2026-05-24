@@ -1,101 +1,86 @@
-# Bricks Application Programming Refrence
+<div align="center">
 
-| | |
-|---|---|
-| **Document** | Bricks Application Programming Reference |
-| **Edition** | First Edition |
-| **Applies to** | Bricks Transaction Server, version 1.5 and later |
-| **Companion** | [README.md](README.md) — installation, configuration, and operations |
+<h1 style="color:#0a1f44;">BRICKS<br/>Transaction&nbsp;Server</h1>
+
+<h2 style="color:#0a1f44;">Application&nbsp;Programming&nbsp;Reference</h2>
+
+<p style="color:#7a0a0a;"><b>Order&nbsp;number:</b> BX26-1500-01<br/>
+<b>Edition:</b> First Edition<br/>
+<b>Date:</b> 2026<br/>
+<b>Applies&nbsp;to:</b> Bricks Transaction Server, version 1.5 and later</p>
+
+</div>
 
 ---
 
-## About this document
+<table>
+<tr><td><b>Document</b></td><td>Bricks Application Programming Reference</td></tr>
+<tr><td><b>Audience</b></td><td>Application programmers writing REXX or COBOL transactions for Bricks.</td></tr>
+<tr><td><b>Companion</b></td><td><a href="README.md">README.md</a> — installation, configuration, and operations.</td></tr>
+<tr><td><b>Operator manual</b></td><td><a href="ISPF_editor.md">ISPF_editor.md</a> — the in-3270 source editor reference.</td></tr>
+</table>
 
-This reference describes the application programming interface of the Bricks
-Transaction Server: the `EXEC CICS` command set, teh REXX and COBOL dialects
-that may issue those commands, the BMS-flavoured map DSL used to build 3270
-panels, and the catalogue of sample programs shipped under `runtime/`.
+---
 
-Operational and installation topics — running `bricks`, editing
-`bricks.cnf`, signing on through CSSN, the CEMT master terminal, the
-`bricksload` stress tester, and the `/metrics` endpoint — are documented in
-the companion [README.md](README.md).
+## About this publication
 
-### Who should read this manual
+This reference describes the application-programming interface of the **Bricks Transaction Server**: the COBOL and REXX languages it accepts, the `EXEC CICS` command set those programs may issue, the `EXEC SQL` embedded database surface, the `EXEC CICS WEB` command family for HTTP service, the BMS-flavoured map DSL used to build 3270 panels, the VSAM and temporary-storage queue surfaces, and the catalogue of sample programs shipped under `runtime/`.
 
-This manual is for application programmmers who write transactions that run
-under Bricks. Familiarity with the IBM CICS programming model
-(pseudo-conversational dispatch, EIB, COMMAREA, BMS maps, KSDS files,
-temporary storage queues) is assumed; where bricks deviates from the IBM
-behaviour the difference is documnted  explicitly.
+Operational and installation topics — running `bricks`, editing `bricks.cnf`, signing on through CSSN, the CEMT master terminal, the `bricksload` stress tester, and the `/metrics` endpoint — are documented in the companion **README.md**.
 
-### Conventions used
+### Who should read this publication
 
-* **`UPPERCASE`** in syntax — keywords; coded literally.
-* **`lowercase`** in syntax — supplied by the programmer (a name or
-  expression).
-* **`[ ]`** — optional clauses.
-* **`{ a | b }`** — choose one of teh alternatives.
-* **`...`** — the preceding clause may repeat.
-* Command syntax is shown in `EXEC CICS … END-EXEC` form. The bare-string
-  form (`"VERB OPTIONS"` under `ADDRESS CICS`, REXX only) is described in
-  [Chapter 2](#chapter-2-the-exec-cics-command-environment); both forms
-  dispatch identically.
+This manual is for application programmers who write transactions that run under Bricks. Familiarity with the IBM CICS programming model (pseudo-conversational dispatch, the **EIB**, **COMMAREA**, BMS maps, KSDS files, temporary-storage queues, the SQLCA, and embedded SQL) is assumed. Where Bricks deviates from the IBM behaviour the difference is documented explicitly.
 
-### Notation in this manual
+### Conventions used in this publication
 
-Each `EXEC CICS` command in [Part 2](#part-2-exec-cics-command-reference)
-is documented with the same five sections, in this order:
+The following notational conventions appear throughout the manual.
+
+| Symbol | Meaning |
+|---|---|
+| `UPPERCASE` | A keyword. Coded literally. |
+| `lowercase` | A value supplied by the programmer (a name or expression). |
+| `[ ]` | An optional clause. |
+| `{ a | b }` | A required choice between alternatives. |
+| `...` | The preceding clause may repeat. |
+
+Command syntax is shown in the `EXEC CICS … END-EXEC` form. The bare-string form (`"VERB OPTIONS"` under `ADDRESS CICS`, REXX only) is described in *Chapter 2. The EXEC CICS command environment*; both forms dispatch identically.
+
+### Reference layout
+
+Each command described in this manual follows the same five-section layout, in this order:
 
 1. **Format** — the command syntax as a code block.
-2. **Description** — what the command does and any important runtime
-   behaviour.
-3. **Options** — every keyword that follows the verb, with its meaning
-   and any value constraints.
-4. **Conditions** — the `EIBRESP` values the command may return,
-   together with the cause of each.
-5. **Example** — a short, runnable code fragment illustrating typical
-   use.
+2. **Description** — what the command does and any important runtime behaviour.
+3. **Options** — every keyword that follows the verb, with its meaning and any value constraints.
+4. **Conditions** — the `EIBRESP` values (or `SQLCODE` values, for `EXEC SQL`) the command may return, together with the cause of each.
+5. **Example** — a short, runnable fragment illustrating typical use.
+
+> **Programming Note.** Where the same verb behaves differently in COBOL and in REXX, the difference is called out in a *Programming Note* like this one. Where both languages share identical behaviour, the example uses whichever form reads most clearly.
 
 ---
 
 ## Contents
 
-**Part 1. The bricks programming model**
+This publication is organised into nine parts, an appendix series, and a quick-reference card. Read **Part&nbsp;1** first; the remaining parts are reference material consulted as needed.
+
+### <span style="color:#0a1f44;">Part 1. Bricks programming principles</span>
 
 * [Chapter 1. Overview](#chapter-1-overview)
 * [Chapter 2. The EXEC CICS command environment](#chapter-2-the-exec-cics-command-environment)
 * [Chapter 3. The map DSL](#chapter-3-the-map-dsl)
 
-**Part 2. EXEC CICS command reference**
+### <span style="color:#0a1f44;">Part 2. The COBOL language</span>
 
-* [Chapter 4. Terminal I/O commands](#chapter-4-terminal-io-commands)
-  — [SEND MAP](#send-map) - [RECEIVE MAP](#receive-map) -
-  [SEND TEXT](#send-text) - [RECEIVE](#receive)
-* [Chapter 5. Program control commands](#chapter-5-program-control-commands)
-  — [RETURN](#return) - [XCTL](#xctl) - [LINK](#link) - [ABEND](#abend)
-* [Chapter 6. System services](#chapter-6-system-services)
-  — [ASSIGN](#assign) - [ASKTIME](#asktime) - [FORMATTIME](#formattime)
-* [Chapter 7. KSDS file commands](#chapter-7-ksds-file-commands)
-  — [READ](#read) - [WRITE](#write) - [REWRITE](#rewrite) -
-  [DELETE](#delete)
-* [Chapter 8. KSDS browse commands](#chapter-8-ksds-browse-commands)
-  — [STARTBR](#startbr) - [READNEXT](#readnext) -
-  [READPREV](#readprev) - [RESETBR](#resetbr) - [ENDBR](#endbr)
-* [Chapter 9. Temporary storage and transient data commands](#chapter-9-temporary-storage-and-transient-data-commands)
-  — [READQ TS](#readq-ts) - [WRITEQ TS](#writeq-ts) -
-  [DELETEQ TS](#deleteq-ts) -
-  [READQ TD](#readq-td) - [WRITEQ TD](#writeq-td) -
-  [DELETEQ TD](#deleteq-td) - [The `tmp_dir` sandbox](#the-tmp_dir-sandbox)
-* [Chapter 10. Recovery and condition handling](#chapter-10-recovery-and-condition-handling)
-  — [SYNCPOINT](#syncpoint) - [SYNCPOINT ROLLBACK](#syncpoint-rollback) -
-  [HANDLE CONDITION](#handle-condition) - [IGNORE CONDITION](#ignore-condition) -
-  [HANDLE AID](#handle-aid) - [HANDLE ABEND](#handle-abend)
-* [Chapter 11. The Execute Interface Block (EIB)](#chapter-11-the-execute-interface-block-eib)
-* [Chapter 12. Response codes](#chapter-12-response-codes)
-* [Chapter 13. Commands not implemented](#chapter-13-commands-not-implemented)
+* [Chapter 20. COBOL source format](#chapter-20-cobol-source-format)
+* [Chapter 21. DATA DIVISION](#chapter-21-data-division)
+* [Chapter 22. PROCEDURE DIVISION](#chapter-22-procedure-division)
+* [Chapter 23. The EIB block in COBOL](#chapter-23-the-eib-block-in-cobol)
+* [Chapter 24. EXEC CICS in COBOL](#chapter-24-exec-cics-in-cobol)
+* [Chapter 25. Copybooks](#chapter-25-copybooks)
+* [Chapter 27. Restrictions and deferred features](#chapter-27-restrictions-and-deferred-features)
 
-**Part 3. The REXX language**
+### <span style="color:#0a1f44;">Part 3. The REXX language</span>
 
 * [Chapter 14. REXX program structure](#chapter-14-rexx-program-structure)
 * [Chapter 15. Variables and stems](#chapter-15-variables-and-stems)
@@ -104,25 +89,47 @@ is documented with the same five sections, in this order:
 * [Chapter 18. Conditions and SIGNAL ON](#chapter-18-conditions-and-signal-on)
 * [Chapter 19. Built-in functions](#chapter-19-built-in-functions)
 
-**Part 4. The COBOL language**
+### <span style="color:#0a1f44;">Part 4. EXEC CICS command reference</span>
 
-* [Chapter 20. COBOL source format](#chapter-20-cobol-source-format)
-* [Chapter 21. DATA DIVISION](#chapter-21-data-division)
-* [Chapter 22. PROCEDURE DIVISION](#chapter-22-procedure-division)
-* [Chapter 23. The EIB block in COBOL](#chapter-23-the-eib-block-in-cobol)
-* [Chapter 24. EXEC CICS in COBOL](#chapter-24-exec-cics-in-cobol)
-* [Chapter 25. Copybooks](#chapter-25-copybooks)
-* [Chapter 26. Restrictions and deferred features](#chapter-26-restrictions-and-deferred-features)
+* [Chapter 4. Terminal I/O commands](#chapter-4-terminal-io-commands) — `SEND MAP`, `RECEIVE MAP`, `CONVERSE`, `SEND TEXT`, `RECEIVE`
+* [Chapter 5. Program control commands](#chapter-5-program-control-commands) — `RETURN`, `XCTL`, `LINK`, `ABEND`, `START`, `RETRIEVE`
+* [Chapter 6. System services](#chapter-6-system-services) — `ASSIGN`, `ASKTIME`, `FORMATTIME`
+* [Chapter 10. Recovery and condition handling](#chapter-10-recovery-and-condition-handling) — `SYNCPOINT`, `SYNCPOINT ROLLBACK`, `HANDLE CONDITION`, `IGNORE CONDITION`, `HANDLE AID`, `HANDLE ABEND`
+* [Chapter 11. The Execute Interface Block (EIB)](#chapter-11-the-execute-interface-block-eib)
+* [Chapter 12. Response codes](#chapter-12-response-codes)
+* [Chapter 13. Commands not implemented](#chapter-13-commands-not-implemented)
 
-**Part 5. Sample programs**
+### <span style="color:#0a1f44;">Part 5. EXEC CICS file and queue commands</span>
 
-* [Chapter 27. Pre-installed sample transactions](#chapter-27-pre-installed-sample-transactions)
-* [Chapter 28. Worked examples](#chapter-28-worked-examples)
+VSAM-style KSDS files and temporary-storage / transient-data queues.
 
-**Appendixes**
+* [Chapter 7. KSDS file commands](#chapter-7-ksds-file-commands) — `READ`, `WRITE`, `REWRITE`, `DELETE`
+* [Chapter 8. KSDS browse commands](#chapter-8-ksds-browse-commands) — `STARTBR`, `READNEXT`, `READPREV`, `RESETBR`, `ENDBR`
+* [Chapter 9. Temporary storage and transient data commands](#chapter-9-temporary-storage-and-transient-data-commands) — `READQ TS`/`TD`, `WRITEQ TS`/`TD`, `DELETEQ TS`/`TD`, the `tmp_dir` sandbox
+
+### <span style="color:#0a1f44;">Part 6. EXEC SQL command reference</span>
+
+* [Chapter 26. Embedded SQL (COBOL and REXX)](#chapter-26-embedded-sql-cobol) — `SELECT INTO`, `INSERT`, `UPDATE`, `DELETE`, `COMMIT`, `ROLLBACK`, `CONNECT TO`, cursors (`DECLARE` / `OPEN` / `FETCH` / `CLOSE`), `WHENEVER`, null indicators, the SQLCA, the SQLCODE catalogue, SYNCPOINT integration.
+
+### <span style="color:#0a1f44;">Part 7. EXEC CICS WEB command reference</span>
+
+* [EXEC CICS WEB — server side](#exec-cics-web--server-side-phase-1)
+* [EXEC CICS WEB — client side](#exec-cics-web--client-side-phase-2a)
+* [EXEC CICS DOCUMENT — chunked body builder](#exec-cics-document--chunked-body-builder)
+* [EXEC CICS WEB — Phase 3b additions](#exec-cics-web--phase-3b-additions)
+
+### <span style="color:#0a1f44;">Part 8. Sample programs</span>
+
+* [Chapter 28. Pre-installed sample transactions](#chapter-28-pre-installed-sample-transactions)
+* [Chapter 29. Worked examples](#chapter-29-worked-examples)
+
+### <span style="color:#0a1f44;">Appendixes</span>
 
 * [Appendix A. Adapting to terminal size (mod 2 vs mod 4)](#appendix-a-adapting-to-terminal-size-mod-2-vs-mod-4)
 * [Appendix B. Pitfalls and idioms](#appendix-b-pitfalls-and-idioms)
+* [Appendix C. Quick command reference card](#appendix-c-quick-command-reference-card)
+
+> **Note on physical order.** The chapter numbers in this contents list are the canonical numbers used throughout the publication. Because some parts have been re-ordered into the logical grouping above, a chapter you find on Part 4 of the contents may sit physically later in the file than a chapter listed in Part 5. Cross-references everywhere in the manual use the chapter number, not the file position.
 
 ---
 
@@ -143,9 +150,53 @@ HELC:cobol:hello.cob:public
 GUST:cobol:gust.cob:public
 ```
 
+### Organising programs into sub-directories
+
+Once a deployment grows past a handful of programs, the flat
+`runtime/rexx/` / `runtime/cobol/` layout becomes hard to scan. You
+can group programs into sub-directories at any depth and reference
+them with a relative path from the language root:
+
+```
+runtime/cobol/billing/invoice.cob
+runtime/cobol/billing/statement.cob
+runtime/cobol/cards/visa/authz.cob
+runtime/rexx/admin/userprov.rexx
+```
+
+```
+INVC:cobol:billing/invoice.cob:public
+STMT:cobol:billing/statement.cob:public
+AUTH:cobol:cards/visa/authz.cob:admin
+USRP:rexx:admin/userprov.rexx:admin
+```
+
+Forward slashes work on both POSIX and Windows. `CEDA PROGRAM` walks
+the language roots recursively and shows each file with its
+relative path (so `billing/invoice.cob` appears in the **FILE**
+column, matching what you write in `transactions.conf`). `CEMT
+INQUIRE TRANSACTION` shows the same form in the **PROGRAM** column,
+eliding a long middle (`billing/.../authz.cob`) so the leading
+application and the file basename always stay visible. Hidden
+entries (dotfile-prefixed, e.g. `.git/`, `.swp` files) are skipped
+during the catalogue walk; recursion is capped at 8 levels.
+
+`CEDA TRANSACTION` accepts a relative subdirectory path in the
+**PROGRAM** form field. `..` traversal is rejected; so are empty
+path segments (`a//b.rexx`). Absolute paths are accepted unchanged
+for the rare case of running one-off programs from outside the
+runtime tree.
+
+`brickscompile` accepts either a single file or a directory. In
+directory mode it walks recursively (same depth cap + hidden-skip
+rules as `CEDA PROGRAM`) and reports per-file pass/fail; exit code
+is `0` only if every file parses cleanly.
+
+### Program caching
+
 The first time a TRANSID is dispatched, its program is parsed and the
 AST is cached (see *Parsed-program cache* in the README); subsequent
-dispatches skip teh  parse. Each running task has its own heap and
+dispatches skip the parse. Each running task has its own heap and
 stack — there is no shared mutable state between concurrently running
 tasks of the same TRANSID.
 
@@ -343,7 +394,12 @@ ENDMAP
 
 ---
 
-# Part 2. EXEC CICS command reference
+# Part 4. EXEC CICS command reference
+
+> **Part&nbsp;4 begins here.** This part documents the core
+> non-file, non-SQL, non-WEB `EXEC CICS` verbs. File and queue
+> commands are in **Part&nbsp;5**; `EXEC SQL` is in **Part&nbsp;6**;
+> `EXEC CICS WEB` is in **Part&nbsp;7**.
 
 This part documents every `EXEC CICS` command bricks implements. Each
 command page follows the same layout: **Format**, **Description**,
@@ -588,7 +644,7 @@ Works identically from REXX and COBOL.
 
 #### Example
 
-See [Chapter 28. Worked examples](#chapter-28-worked-examples), the
+See [Chapter 29. Worked examples](#chapter-29-worked-examples), the
 `GETC` program, for the canonical multi-row `SEND TEXT` pattern.
 
 ---
@@ -1180,7 +1236,28 @@ END-EXEC.
 
 ---
 
+---
+
+# Part 5. EXEC CICS file and queue commands
+
+> **Part&nbsp;5 begins here.** This part covers the persistent and
+> ephemeral data services — VSAM-style KSDS files and the temporary-
+> storage / transient-data queue families. Both surfaces are
+> per-task and bound by the same SYNCPOINT mechanism described in
+> [Chapter 10](#chapter-10-recovery-and-condition-handling).
+
 ## Chapter 7. KSDS file commands
+
+> **VSAM in Bricks.** Bricks's KSDS file surface is the application-
+> programmer's view of the persistent record store. Each FILE name
+> in `EXEC CICS READ FILE(name)` corresponds to a B+tree bucket in
+> the embedded `data/files.boltdb` database — there is no separate
+> KSDS dataset definition step, no `DEFINE CLUSTER`. The first
+> `EXEC CICS WRITE` creates the bucket; subsequent `READ` / `REWRITE`
+> / `DELETE` / `STARTBR` / `READNEXT` / `READPREV` / `RESETBR` /
+> `ENDBR` see it. Records are opaque byte payloads; the application
+> chooses the layout (typically a pipe-delimited group of fields,
+> the convention every sample uses).
 
 These commands operate on a **single record**, identified by a key,
 in a CICS FILE. Each FILE is a bbolt bucket inside
@@ -2569,10 +2646,533 @@ recognize them at all:
   scheduling with payload pass-through. Cross-terminal and
   no-`TERMID` (headless) STARTs are still deferred; the v1
   surface rejects them with `RESP-INVREQ` and a clear message.
+* **`WEB *`** (server-side, Phase 1) — see "EXEC CICS WEB" below.
+  The client-side surface (`WEB OPEN / SEND / RECEIVE / CONVERSE
+  / CLOSE`) and the DOCUMENT API land in Phase 2; URIMAP / TLS
+  / mTLS in Phase 3.
+
+---
+
+---
+
+# Part 7. EXEC CICS WEB command reference
+
+> **Part&nbsp;7 begins here.** Bricks ships a complete `EXEC CICS WEB`
+> family — both the **inbound** (server-side, the WAPI listener) and
+> the **outbound** (client-side, programs calling external HTTP
+> services). The `DOCUMENT` API for assembling response bodies from
+> many fragments is documented here too, alongside the URIMAP
+> catalogue, inbound mTLS, the `CONVERSE WEB` alias, and the
+> dedicated copybooks.
+
+## EXEC CICS WEB — server side (Phase 1)
+
+bricks ships an inbound HTTP listener that turns each matched
+request into a transaction dispatch via the `EXEC CICS WEB *`
+verbs. Enable it in `bricks.cnf` with `enable_wapi=yes`. Define
+routes in `runtime/web_routes.conf` — the URIMAP layer; the
+matched TRANSID is looked up in `transactions.conf` exactly as a
+3270 operator's typed dispatch would. Both files reload on
+mtime change, so adding a new route requires no restart.
+
+```
+# method  path-pattern         transid  [groups]   [response_timeout]
+GET       /api/customer/{id}   WAPI     public
+POST      /api/customer        WAPC     admin
+GET       /api/orders/{id}     OAPI     users
+DELETE    /admin/cache/{key}   CACR     admin                 5s
+```
+
+The matching `transactions.conf` rows route TRANSID → program
+(REXX or COBOL) — same format used by 3270 dispatch:
+
+```
+WAPI:rexx:wapi.rexx:public,users,admin
+WAPC:cobol:wapic.cob:admin
+OAPI:rexx:orders.rexx:users,admin
+CACR:cobol:cacheclr.cob:admin
+```
+
+A single program is therefore reachable from **both** the
+3270 prompt (the operator types its TRANSID) and the HTTP
+endpoint (a client hits the matching URL). The transaction
+distinguishes the front door by which family of verbs it
+calls — `EXEC CICS WEB *` returns INVREQ on a 3270 task, and
+`EXEC CICS SEND MAP` is meaningless on a web task — but most
+programs naturally use one set or the other.
+
+A `{name}` placeholder in the path is exposed to the
+transaction via `WEB READ QUERYPARM('name')`, sharing one
+namespace with the inbound `?name=…` query string (path
+captures win on conflict).
+
+### Authentication — the same `users.conf` that CSSN uses
+
+A web client identifies itself using **HTTP Basic
+authentication**, and bricks verifies the credentials against the
+exact same `users.conf` and bcrypt hash that the `CSSN` sign-on
+transaction uses on the 3270. The credential carrier is different
+(an HTTP header instead of a 3270 password field); everything
+downstream is identical.
+
+| Layer | 3270 / `CSSN` | WAPI / HTTP |
+|---|---|---|
+| Credential store | `runtime/users.conf` | `runtime/users.conf` (same file) |
+| Hashing | bcrypt | bcrypt |
+| Verification call | `auth.FileStore.Authenticate(user, pass)` | `auth.FileStore.Authenticate(user, pass)` (same call) |
+| Credential carrier | Hidden `PASSWORD` field on the CSSN map, posted by SEND→RECEIVE | `Authorization: Basic base64(user:pass)` header |
+| Operator-visible state | `sess.Authenticated=true`; `UCB` attached for the whole 3270 session until `CSSF LOGOFF` | One-shot per request — `sess.Authenticated=true` for the dispatch only |
+| What the transaction sees | `EXEC CICS ASSIGN USERID(...)` returns the operator | Same — `EXEC CICS ASSIGN USERID(...)` returns the bcrypt-verified user |
+
+The dispatch flow per request:
+
+1. **No `Authorization` header** — if the route's `groups` column
+   contains the literal token `public`, the request is accepted
+   as anonymous (`UserID=""`, `Authenticated=false`); otherwise
+   the response is **401 Unauthorized** with
+   `WWW-Authenticate: Basic realm="bricks"` so a browser shows
+   the standard credential prompt.
+2. **`Authorization: Basic base64(user:pass)`** — the credential
+   is base64-decoded, split on `:`, then `auth.FileStore.Authenticate`
+   runs (same path CSSN uses). On success the user's
+   `users.conf` groups are intersected with the route's groups.
+3. **Authenticated AND a group matches** — dispatch proceeds with
+   `sess.Authenticated=true`, `sess.UserID=<username>`,
+   `sess.Groups=<users.conf groups>`. The dispatcher's
+   `IsAllowed` gate runs again against the TRANSID's
+   `transactions.conf` groups, so **both** layers must permit the
+   caller before the program runs.
+4. **Authenticated but no group match** — **403 Forbidden**.
+5. **Authentication fails** (wrong password, unknown user,
+   malformed header) — **401 Unauthorized**.
+
+ACL policy is **opt-in**: a `web_routes.conf` row with no
+`groups` column denies every request, log warning at boot. Add
+the literal `public` to permit anonymous access; add specific
+group names (`users`, `admin`, etc.) to require Basic-Auth
+against `users.conf` for a user belonging to that group.
+
+A user `alice` listed in `users.conf` as
+`alice:<bcrypt-hash>:users,admin` can run the **same** TRANSID
+from both front doors with the same credential:
+
+```bash
+curl -u alice:alice-password http://localhost:8080/api/orders/42
+# → 200 + JSON body, sess.UserID=alice
+
+curl -u alice:wrong-password http://localhost:8080/api/orders/42
+# → 401 Unauthorized
+
+curl http://localhost:8080/api/orders/42
+# → 401 Unauthorized (no Authorization header)
+```
+
+…and at a 3270 emulator she signs on with `CSSN` →
+`alice` / `alice-password` and types the same TRANSID. The
+program sees the same `EIBTRMID / USERID / EIBCALEN` set and
+serves both callers identically. Most programs don't even need
+to know which front door they came from.
+
+**What's intentionally NOT yet supported:**
+
+- **Bearer tokens / cookies / sessions** — every request is
+  stateless and re-authenticates against `users.conf`. There is
+  no equivalent of the 3270 "stay signed on until CSSF LOGOFF"
+  state across HTTP requests. The token-mint endpoint and
+  `Authorization: Bearer …` flow land in Phase 3.
+- **OAuth / JWT / OIDC** — Phase 3+ work.
+- **Per-request authentication via the `CSSN` transaction
+  itself** — `CSSN` is a 3270-only screen artefact; pointing a
+  route at it doesn't produce the browser UX a credential
+  prompt should have. The Phase 3 token endpoint will be the
+  right shape for that.
+
+### Server-side verb set
+
+The Phase 1 verb set:
+
+| Verb | Use |
+|---|---|
+| `WEB EXTRACT METHOD(var) PATH(var) …` | Request metadata: METHOD / SCHEME / HOST / PORT / PATH / QUERYSTRING / HTTPVERSION / CLIENTADDR / SERVERADDR. Each option is the name of a target variable. |
+| `WEB READ HTTPHEADER(name) VALUE(var) [LENGTH(var)]` | Read one inbound header. `NOTFND` when absent. |
+| `WEB STARTBROWSE HTTPHEADER` / `WEB READNEXT HTTPHEADER NAME(var) VALUE(var) [NAMELENGTH(var)] [VALUELENGTH(var)]` / `WEB ENDBROWSE HTTPHEADER` | Walk every inbound header in sorted order. `ENDFILE` when exhausted. |
+| `WEB READ QUERYPARM(name) VALUE(var)` | Read query parameter OR routing-table `{name}` capture. `NOTFND` when absent. |
+| `WEB STARTBROWSE QUERYPARM` / `WEB READNEXT QUERYPARM …` / `WEB ENDBROWSE QUERYPARM` | Iterate every parameter / capture. |
+| `WEB READ FORMFIELD(name) VALUE(var)` | Read one `application/x-www-form-urlencoded` field. Body parsed lazily on first call. |
+| `WEB STARTBROWSE FORMFIELD` / `WEB READNEXT FORMFIELD …` / `WEB ENDBROWSE FORMFIELD` | Iterate form fields. |
+| `WEB RECEIVE INTO(var) [MAXLENGTH(n)] [LENGTH(var)] [TYPE(var)] [MEDIATYPE(var)]` | Read the raw request body. `LENGERR` when over MAXLENGTH. |
+| `WEB WRITE HTTPHEADER(name) VALUE(value)` | Set / append an outbound response header. |
+| `WEB SEND FROM(buf) [MEDIATYPE(s)] [STATUSCODE(n)]` | Emit response status + body. First `SEND` wins for status/MEDIATYPE; subsequent `SEND` calls in the same task append to the body (matches CICS). |
+| `WEB PARSE URL URL(s) SCHEMENAME(var) HOST(var) PORT(var) PATH(var) QUERYSTRING(var) [HOSTLENGTH(var)] …` | Direction-agnostic URL splitter. |
+| `WEB CONVERTTIME DATESTRING(s) ABSTIME(var)` | RFC 1123 / 850 / asctime → milliseconds since 1970-01-01 UTC. |
+
+The full REXX sample is `runtime/rexx/wapi.rexx`; in COBOL the
+helpful copybooks are `DFHWBSC` (status-code constants),
+`DFHWBUH` (common header-name literals), `DFHWBMT` (MIME-type
+literals), and `DFHWBMETH` (HTTP method literals).
+
+## EXEC CICS WEB — client side (Phase 2a)
+
+The same `WEB` verb family also drives **outbound** HTTP — a
+bricks transaction calling a remote HTTP service. No
+`bricks.cnf` toggle is required; bricks builds one shared
+`*http.Client` at startup (tuned by `web_client_timeout` /
+`web_client_max_idle_conns` / `web_client_tls_skip_verify`) and
+every task reuses it. The host's CA bundle validates outbound
+HTTPS certificates by default — point at any normal public
+HTTPS endpoint and it just works.
+
+The client uses a per-task **session token**: `WEB OPEN`
+returns a 32-character hex token; subsequent `WEB SEND` /
+`WEB RECEIVE` / `WEB CONVERSE` / `WEB CLOSE` all thread that
+token via `SESSTOKEN(...)`. A token still open at task end is
+auto-closed (dispatcher defer, mirrors `CloseBrowses` /
+`CloseAllTD`).
+
+The Phase 2a verb set:
+
+| Verb | Use |
+|---|---|
+| `WEB OPEN HOST(s) [PORT(n)] [SCHEME(s)] SESSTOKEN(var)` | Open a logical client session. PORT defaults to 80 (HTTP) / 443 (HTTPS). SCHEME defaults to `http`. The token is written into the variable named by SESSTOKEN. |
+| `WEB CONVERSE SESSTOKEN(t) METHOD(s) PATH(s) [FROM(buf)] [LENGTH(n)] [QUERYSTRING(s)] [MEDIATYPE(s)] INTO(var) [STATUSCODE(var)] [STATUSTEXT(var)] [MEDIATYPE(var)] [TYPE(var)] [MAXLENGTH(n)] [LENGTH(var)]` | One-shot send + receive. Builds the request, fires it through the shared client, writes the response body into INTO; LENGERR when the body exceeds MAXLENGTH (default 1 MiB). |
+| `WEB SEND SESSTOKEN(t) METHOD(s) PATH(s) [FROM(buf)] [QUERYSTRING(s)] [MEDIATYPE(s)]` | Stage a request on the session (no round-trip yet). |
+| `WEB RECEIVE SESSTOKEN(t) INTO(var) [STATUSCODE(var)] [STATUSTEXT(var)] [MEDIATYPE(var)] [MAXLENGTH(n)]` | Fire the staged request; populate the named output variables from the response. |
+| `WEB CLOSE SESSTOKEN(t)` | Release the session and the underlying response body. |
+| `WEB WRITE HTTPHEADER(name) VALUE(v) SESSTOKEN(t)` | Set an outbound *request* header on the session. Repeated WRITE calls for the same name produce multi-valued headers (matches `http.Header.Add`). Must precede the next SEND / CONVERSE -- headers committed at request build time. |
+| `WEB READ HTTPHEADER(name) VALUE(var) [LENGTH(var)] SESSTOKEN(t)` | Read one response header by name from the most-recent SEND/CONVERSE/RECEIVE on the session. Case-insensitive name match. `NOTFND` when absent; `INVREQ` when no response has landed yet. |
+| `WEB STARTBROWSE HTTPHEADER SESSTOKEN(t)` / `WEB READNEXT HTTPHEADER NAME(var) VALUE(var) [NAMELENGTH(var)] [VALUELENGTH(var)] SESSTOKEN(t)` / `WEB ENDBROWSE HTTPHEADER SESSTOKEN(t)` | Iterate every response header in sorted order. `ENDFILE` when exhausted; `INVREQ` when no STARTBROWSE has run on the session. |
+| `WEB EXTRACT SESSTOKEN(t) [SCHEME(var)] [HOST(var)] [PORT(var)] [PATH(var)] [HOSTLENGTH(var)] [PORTNUMBER(var)]` | Inspect the session's resolved endpoint *after* OPEN. Distinct from `WEB EXTRACT URIMAP(name)` (no token) and from the server-side request-meta form (no token, different option set). |
+
+Bricks issues `Accept: */*` and `User-Agent: bricks-cics/1.0`
+on every outbound request by default; both can be overridden
+with `WEB WRITE HTTPHEADER('User-Agent') VALUE(...) SESSTOKEN(t)`
+before the next SEND / CONVERSE on that session. The
+`runtime/cobol/whdr.cob` sample (TRANSID `WHDR`) walks through
+the WRITE-then-READ flow end-to-end.
+
+RESP codes: `NORMAL`, `NOTFND` (unknown SESSTOKEN), `INVREQ`
+(missing required option, web client not configured), `IOERR`
+(network / TLS / timeout), `LENGERR` (body over MAXLENGTH).
+
+### COBOL copybook for the client surface
+
+`runtime/cobolcopy/DFHWBSI.cpy` carries the standard
+session-token + body buffer templates:
+
+```cobol
+       01 DFH-WB-SESS     PIC X(36).
+       01 DFH-WB-BODY     PIC X(8192).
+       01 DFH-WB-URL      PIC X(2048).
+```
+
+Pair it with the existing `DFHWBSC` (status codes) and
+`DFHWBMETH` (HTTP method literals) so a CICS-style program
+reads idiomatically:
+
+```cobol
+       COPY DFHRESP.
+       COPY DFHWBSC.
+       COPY DFHWBMETH.
+       COPY DFHWBSI.
+
+       EXEC CICS WEB OPEN HOST('api.github.com') PORT(443)
+                          SCHEME('HTTPS')
+                          SESSTOKEN(DFH-WB-SESS) END-EXEC.
+
+       EXEC CICS WEB CONVERSE SESSTOKEN(DFH-WB-SESS)
+                              METHOD(WB-GET)
+                              PATH('/zen')
+                              INTO(DFH-WB-BODY)
+                              STATUSCODE(STAT) END-EXEC.
+
+       EXEC CICS WEB CLOSE SESSTOKEN(DFH-WB-SESS) END-EXEC.
+
+       IF STAT = DFHRESP-WB-OK ...
+```
+
+### URIMAP — symbolic outbound endpoints (Phase 3a)
+
+A URIMAP entry in `runtime/web_routes.conf` defines a named
+upstream service that outbound transactions reference by symbol.
+Both layers of `web_routes.conf` (routes for inbound, URIMAPs
+for outbound) live in the same file and hot-reload together.
+
+```
+# Format: URIMAP NAME scheme://host[:port][/path-prefix]
+URIMAP   GITHUB    https://api.github.com
+URIMAP   WEATHER   https://api.openweathermap.org/data/2.5
+URIMAP   INTRANET  https://api.internal:8443/v1
+```
+
+Names are 1..8 uppercase characters (CICS resource-name limit).
+The path-prefix is optional; when set, it becomes the leading
+segment of every PATH the program later supplies on `WEB SEND`
+/ `WEB CONVERSE`. So `URIMAP WEATHER ...data/2.5` paired with
+`WEB CONVERSE PATH('/weather?city=NYC')` issues against
+`https://api.openweathermap.org/data/2.5/weather?city=NYC`.
+
+The URIMAP-aware verb shapes:
+
+| Verb | Use |
+|---|---|
+| `WEB OPEN URIMAP(name) SESSTOKEN(var)` | Open a client session against the named endpoint. SCHEME / HOST / PORT come from the URIMAP row; explicit `HOST(...)` / `PORT(...)` / `SCHEME(...)` on the same command override per-field (matches IBM CICS). `NOTFND` when the name is unknown. |
+| `WEB SEND URIMAP(name) METHOD(s) PATH(s) [FROM(buf)] [QUERYSTRING(s)] [MEDIATYPE(s)] INTO(var) [STATUSCODE(var)] [STATUSTEXT(var)] [LENGTH(var)] [MAXLENGTH(n)]` | One-shot OPEN + CONVERSE + CLOSE: no `SESSTOKEN` required. Resolves the URIMAP, opens a fresh session, sends the request, populates INTO and the named output variables from the response, and releases the session. Use for fire-and-forget outbound calls where session-token plumbing has no value. (Phase 3b.) |
+| `WEB EXTRACT URIMAP(name) [SCHEME(var)] [HOST(var)] [PORT(var)] [PATH(var)] [HOSTLENGTH(var)] [PORTNUMBER(var)]` | Inspect a URIMAP definition without opening a session. Used by programs that branch on the resolved endpoint or need to display it to an operator. `NOTFND` when the name is unknown. |
+
+URIMAP rows load even when `enable_wapi=no` — outbound-only
+deployments are supported without exposing any inbound listener.
+
+The `runtime/cobolcopy/DFHWBUM.cpy` copybook ships the
+conventional WORKING-STORAGE variables:
+
+```cobol
+       01 DFH-WB-UM-NAME    PIC X(8).
+       01 DFH-WB-UM-SCHEME  PIC X(8).
+       01 DFH-WB-UM-HOST    PIC X(64).
+       01 DFH-WB-UM-PORT    PIC X(5).
+       01 DFH-WB-UM-PATH    PIC X(128).
+```
+
+### Outbound TLS verification (Phase 3a)
+
+By default the outbound HTTPS client verifies upstream
+certificates against the host system's trust store — the OS's
+`/etc/ssl/certs/...` bundle on Linux, the Keychain on macOS,
+Windows trust store on Windows. Three `bricks.cnf` knobs adjust:
+
+| Knob | Use |
+|---|---|
+| `web_client_ca_bundle` | Path to a PEM file of trusted CAs. When set, bricks uses ONLY these for verification — the system trust store is ignored. Useful for internal CAs that aren't installed system-wide. |
+| `web_client_cert` + `web_client_key` | PEM client-cert and key for outbound mTLS. Presented to upstream services that require the caller to authenticate with a certificate. Both must be set together; one without the other is a startup error. |
+| `web_client_tls_skip_verify` | `yes` accepts ANY upstream certificate — test-only escape hatch for self-signed endpoints. Logs a loud startup `WARNING`; never use in production. |
+
+### Operator visibility (Phase 3a)
+
+- **`CEMT INQUIRE URIMAP`** — pages the URIMAP rows loaded
+  from `web_routes.conf` (NAME / SCHEME / HOST / PORT /
+  PATH-PREFIX).
+- **`CEMT INQUIRE WEB`** — pages the inbound HTTP requests
+  currently in dispatch (METHOD / URI / TERM / TRANSID / USER /
+  AGE). When no requests are in flight, the screen still shows
+  a one-row summary with the lifetime request / error totals.
+
+### Phase 2a sample — `wzen.cob`
+
+`runtime/cobol/wzen.cob` (TRANSID `WZEN`) is the shipped
+end-to-end demonstration. It fetches GitHub's `/zen` endpoint
+over HTTPS — a single-line plain-text response, no JSON parsing
+needed — and renders the result on the `WZEN1` 3270 map. The
+program demonstrates the full client lifecycle, branches
+cleanly on each `EIBRESP`, and surfaces network / HTTP failures
+with a distinct error path so the operator sees what went wrong
+on the 3270 screen rather than getting an opaque abend.
+
+Drive it from a 3270 emulator: sign on (`CSSN` → `admin`),
+type `WZEN`, press ENTER. The first line under the header
+shows the actual URL fetched (`GET https://api.github.com/zen`)
+so the demo is self-documenting; the body appears on row 8.
+
+### Phase 2b sample — `whdr.cob` (custom request + response headers)
+
+`runtime/cobol/whdr.cob` (TRANSID `WHDR`) is the canonical
+end-to-end demonstration of `WEB WRITE HTTPHEADER` and
+`WEB READ HTTPHEADER` on a client session. It opens the
+`GITHUB` URIMAP, sets two outbound headers
+(`User-Agent: bricks-whdr/1.0`, `Accept: text/plain`), issues
+`GET /zen`, then reads three response headers — two that
+always land on a GitHub response (`Content-Type`, `Server`)
+and one deliberately-absent header to exercise the `NOTFND`
+branch. The 3270 screen shows the request headers sent, the
+response headers received, and the body excerpt.
+
+Drive it the same way as `WZEN`: sign on with `CSSN`, type
+`WHDR`, press ENTER. Pair the screen with `CEMT INQUIRE WEB`
+in a second 3270 session to watch the per-route counters move
+each time you rerun the transaction.
+
+## EXEC CICS DOCUMENT — chunked body builder
+
+The `DOCUMENT` API is the buffer-builder that pairs with
+`WEB SEND DOCTOKEN(t)` for programs assembling large responses
+from many small fragments. Classic CICS pattern for emitting
+HTML / XML / JSON in pieces; the bricks implementation also
+serves as the chunk store for `WEB RETRIEVE DOCTOKEN(var)`
+when programs want the inbound body as a document handle
+instead of a flat `INTO(buf)`.
+
+| Verb | Use |
+|---|---|
+| `DOCUMENT CREATE DOCTOKEN(var) [SYMBOLLIST(s)] [LISTLENGTH(n)] [DELIMITER(s)]` | Allocate a fresh empty document; return its token in the named variable. Optional `SYMBOLLIST` seeds a `name=value&...` symbol table that subsequent INSERT SYMBOL(...) substitutes from. |
+| `DOCUMENT INSERT DOCTOKEN(t) [FROM(buf) [LENGTH(n)] \| TEXT(buf) \| BINARY(buf) \| SYMBOL(name) \| DOCUMENT(other-token)] [AT(position)]` | Append (or splice with `AT(position)`) one chunk to the document. `SYMBOL(name)` substitutes from the bound symbol list (`NOTFND` when unknown); `DOCUMENT(other-token)` splices another document verbatim (`NOTFND` when unknown); `TEXT` and `BINARY` are codepage-aware in real CICS but collapse to `FROM` in bricks (single-codepage). `LENGERR` when the resulting buffer would exceed 4 MiB. |
+| `DOCUMENT SET DOCTOKEN(t) SYMBOLLIST(s) [LISTLENGTH(n)] [DELIMITER(d)] [UNESCAPED]` | (Re-)bind the symbol list a subsequent INSERT SYMBOL substitutes from. Pass an empty `SYMBOLLIST` to clear. |
+| `DOCUMENT RETRIEVE DOCTOKEN(t) INTO(buf) LENGTH(var) [CHARACTERSET(s)] [DATAONLY \| HOSTCODEPAGE]` | Read the assembled body back into `INTO`; `LENGTH` receives the byte count. `CHARACTERSET / DATAONLY / HOSTCODEPAGE` are accepted but ignored (bricks is single-codepage ASCII). |
+| `DOCUMENT DELETE DOCTOKEN(t)` | Release the document. `NOTFND` when the token isn't known. Forgotten documents are released at task end automatically. |
+| `WEB SEND DOCTOKEN(t) [STATUSCODE(n)] [MEDIATYPE(s)]` | Emit the named document as the outbound response body. The DOCUMENT INSERT chain has already built it; SEND just splices the bytes onto BodyOut. `NOTFND` when the token isn't known. |
+| `WEB RETRIEVE DOCTOKEN(var)` | Inbound-body-as-document. Allocates a fresh document, copies the request body into it, and returns the token. Alternative to `WEB RECEIVE INTO(buf)` for programs that prefer the document API. |
+
+The standard COBOL declaration:
+
+```cobol
+       COPY DFHDCDOC.   *> DFH-DOC-TOK (PIC X(36)) + delimiter constants
+
+       EXEC CICS DOCUMENT CREATE DOCTOKEN(DFH-DOC-TOK) END-EXEC.
+       EXEC CICS DOCUMENT INSERT DOCTOKEN(DFH-DOC-TOK)
+                                 FROM('<html><body>') END-EXEC.
+       EXEC CICS DOCUMENT INSERT DOCTOKEN(DFH-DOC-TOK)
+                                 FROM(BODY-CHUNK) END-EXEC.
+       EXEC CICS DOCUMENT INSERT DOCTOKEN(DFH-DOC-TOK)
+                                 FROM('</body></html>') END-EXEC.
+       EXEC CICS WEB SEND DOCTOKEN(DFH-DOC-TOK)
+                          MEDIATYPE('text/html')
+                          STATUSCODE(200) END-EXEC.
+```
+
+RESP codes: `NORMAL`, `NOTFND` (unknown DOCTOKEN, unknown
+SYMBOL, unknown spliced DOCUMENT), `INVREQ` (missing required
+option), `LENGERR` (INSERT would exceed 4 MiB), `IOERR` (token
+generation failed).
+
+## EXEC CICS WEB — Phase 3b additions
+
+Phase 3b closes out the master Phase-3 surface. Each addition
+slots onto the foundations laid by 3a (URIMAP catalogue, active-
+request tracking, outbound TLS extras) without breaking existing
+verb shapes.
+
+### `CONVERSE WEB` — alias for `WEB CONVERSE`
+
+Some shops write the keywords in either order; bricks normalises
+both at the parser, so the two forms below dispatch identical:
+
+```cobol
+       EXEC CICS WEB CONVERSE SESSTOKEN(T) METHOD('GET')
+                              PATH('/x') INTO(B) END-EXEC.
+       EXEC CICS CONVERSE WEB SESSTOKEN(T) METHOD('GET')
+                              PATH('/x') INTO(B) END-EXEC.
+```
+
+### `WEB EXTRACT TCPIPSERVICE` — inspect the receiving listener
+
+When `WEB EXTRACT` carries the `TCPIPSERVICE` keyword (or the
+legacy `EXTRACT TCPIP` form without `WEB`), the verb reports
+the listener that received the inbound request:
+
+| Output | Source |
+|---|---|
+| `TCPIPSERVICE(var)` | Symbolic listener name — `WAPI` for the plain port, `WAPITLS` for the TLS port. |
+| `PORTNUMBER(var)` | Numeric port the listener is bound to. |
+| `IPADDRESS(var)` | The server's bind address (mirrors `bricks.cnf::dns_name`). |
+| `CLIENT(var)` | Caller's IP address (mirrors `WEB EXTRACT CLIENTADDR`). |
+| `AUTHENTICATE(var)` | `BASIC` when the request carried `Authorization: Basic …`, blank otherwise. |
+
+The legacy form drops the `WEB` keyword entirely — the parser
+recognises `EXTRACT TCPIP CLIENT(…) AUTHENTICATE(…)` and routes
+it through the same handler. Useful for programs ported from
+pre-CICS-TS web-services code.
+
+### Inbound mTLS + `WEB EXTRACT CERTIFICATE`
+
+Set `web_inbound_client_ca=ca.pem` to require every TLS client
+to present a certificate signed by `ca.pem`. The TLS handshake
+rejects unauthorised clients before any verb runs — no transaction
+is dispatched at all. Inside the dispatched program, `WEB EXTRACT
+CERTIFICATE` reads the verified peer cert:
+
+| Output | Source on the peer cert |
+|---|---|
+| `COMMONNAME(var)` | Subject CN. |
+| `ORGANISATION(var)` | Subject O. |
+| `COUNTRY(var)` | Subject C. |
+| `SERIALNUM(var)` | Hex serial number. |
+| `ISSUER(var)` | Issuer CN. |
+| `ISSUERORG(var)` | Issuer O. |
+
+`EIBRESP = NOTFND` on plain (non-TLS) requests and on TLS
+requests that carried no client cert — so one TRANSID can serve
+both authenticated and anonymous callers and branch on the resp.
+
+```cobol
+       COPY DFHRESP.
+       COPY DFHWBCC.   *> CN / ORG / CO / SERIAL / ISSUER buffers
+       EXEC CICS WEB EXTRACT CERTIFICATE
+                       COMMONNAME(DFH-WB-CN)
+                       ORGANISATION(DFH-WB-ORG)
+                       COUNTRY(DFH-WB-CO)
+                       SERIALNUM(DFH-WB-SERIAL)
+                       ISSUER(DFH-WB-ISSUER)
+       END-EXEC.
+       EVALUATE EIBRESP
+           WHEN DFHRESP(NORMAL)
+              *> Verified cert -- use the fields.
+           WHEN DFHRESP(NOTFND)
+              *> Plain HTTP or TLS without a client cert.
+       END-EVALUATE.
+```
+
+### HTTP/2 on the inbound TLS listener
+
+Go's `net/http` server auto-negotiates HTTP/2 over the TLS
+listener via ALPN whenever `tls.Config.NextProtos` is left
+unset — which bricks does on the WAPI TLS port. No knob is
+required; clients that advertise `h2` in their ALPN list get
+HTTP/2, clients that don't fall back to HTTP/1.1. Verify with
+`curl --http2 -v https://localhost:443/...` and look for
+`ALPN, server accepted to use h2` in the trace output.
+Cleartext HTTP/2 (`h2c`) is not enabled — the plain port stays
+on HTTP/1.1 to avoid a transitive dependency on
+`golang.org/x/net/http2/h2c`.
+
+### `CEDA URIMAP` — live edit the URIMAP catalogue
+
+The Phase 3a `CEMT INQUIRE URIMAP` browser becomes
+operator-editable in 3b. Type `CEDA URIMAP` (or `CEDA M`) from
+the 3270 prompt for the list view:
+
+```
+S  NAME       SCHEME    HOST                              PORT   PATH
+_  GITHUB     https     api.github.com                    443    -
+_  WEATHER    https     api.openweathermap.org            443    /data/2.5
+_  INTRANET   https     api.internal                      8443   /v1
+```
+
+- Type `A` in the selector column for **Alter** — opens a form
+  pre-loaded with the row's endpoint URL so a one-character edit
+  is enough to repoint the URIMAP.
+- Type `D` in the selector column for **Delete** — a Y/N
+  confirmation overlay opens; the row is removed only when the
+  operator types `Y`.
+- Press **PF6** for **Define new** — opens an empty form for
+  the NAME (1..8 chars) and ENDPOINT URL
+  (`scheme://host[:port][/path-prefix]`).
+
+Every committed change is written atomically through a temp +
+rename to `web_routes.conf`, with an mtime guard that refuses
+the write if the file was modified externally between when the
+screen loaded and when the operator pressed PF5. Each successful
+mutation logs an audit line in the bricks log:
+
+```
+ceda=URIMAP op=DEFINE user=ADMIN term=T0001 target=NEWAPI detail=https://internal.svc:8443/v2
+```
+
+so the audit trail of who changed which row when is greppable.
+
+The new in-process surface that backs the screen lives on
+`*web.Table`: `AddURIMap`, `AlterURIMap`, `DeleteURIMap`, and
+`Mtime()` for the optimistic-concurrency guard. Programs in REXX
+or COBOL **do not call these directly** — they're the CEDA
+implementation, not part of the EXEC CICS surface.
 
 ---
 
 # Part 3. The REXX language
+
+> **Part&nbsp;3 begins here.** This part describes the REXX dialect
+> bricks accepts and the small preprocessor that rewrites
+> `EXEC CICS` blocks into the same parsed command shape COBOL
+> produces. Every command in **Part&nbsp;4** (`EXEC CICS`),
+> **Part&nbsp;6** (`EXEC SQL`) and **Part&nbsp;7** (`EXEC CICS WEB`)
+> is available verbatim from REXX with identical semantics.
 
 ## Chapter 14. REXX program structure
 
@@ -2800,7 +3400,17 @@ numbers, trimmed-string otherwise), `||` and juxtaposition concat,
 
 ---
 
-# Part 4. The COBOL language
+# Part 2. The COBOL language
+
+> **Part&nbsp;2 begins here.** Bricks ships a free-form COBOL
+> interpreter (`cobol/`) that sits beside REXX as a second front
+> end on the same `EXEC CICS` / `EXEC SQL` / `EXEC CICS WEB`
+> surface. The chapters that follow describe COBOL source format,
+> the DATA DIVISION, PROCEDURE DIVISION, the EIB binding, the
+> `COPY` directive (including the standard `DFHAID`, `DFHRESP`,
+> `SQLCA`, and `DFHWB*` copybooks), and the restrictions.
+> Command-level behaviour is identical between COBOL and REXX —
+> see **Parts&nbsp;4**, **6**, and **7** for the verbs.
 
 ## Chapter 20. COBOL source format
 
@@ -3277,6 +3887,76 @@ The full list (every code bricks emits) is in
 not summarised above (`RESP-ILLOGIC`, `RESP-SIGNAL`, `RESP-QBUSY`,
 the various `RESP-INV...` codes, `RESP-SYSIDERR`, etc.).
 
+### Delivered copybook: SQLCA
+
+`COPY SQLCA.` brings in named constants for `SQLCODE` and the
+most common `SQLSTATE` values, so embedded-SQL programs can
+write:
+
+```cobol
+       COPY SQLCA.
+       ...
+       EXEC SQL SELECT name INTO :NM
+                FROM customers WHERE id = :CUSTID END-EXEC.
+       EVALUATE SQLCODE
+           WHEN SQL-OK             PERFORM SHOW-ROW
+           WHEN SQL-NODATA         PERFORM SHOW-NOT-FOUND
+           WHEN SQL-MULTIPLEROWS   PERFORM SHOW-AMBIGUOUS
+           WHEN OTHER              PERFORM SHOW-SQL-ERROR
+       END-EVALUATE.
+```
+
+The SQLCA fields themselves (`SQLCODE`, `SQLSTATE`, `SQLERRMC`)
+are auto-injected by the bricks COBOL parser — no `COPY` needed
+for the data items. SQLCA only adds the constants programs
+compare against.
+
+| bricks mnemonic | IBM alias | SQLCODE | Meaning |
+|---|---|---:|---|
+| `SQL-OK`            | `DB2-SUCCESS`   | 0     | success |
+| `SQL-NODATA`        | `DB2-NOTFOUND`  | +100  | no row / end-of-cursor |
+| `SQL-NOTFND`        | `DB2-NOTFOUND`  | +100  | alias |
+| `SQL-NOCONFIG`      | —               | -1    | SQL not configured in bricks.cnf |
+| `SQL-DDLREJECTED`   | —               | -2    | DDL rejected (CEDA-only) |
+| `SQL-GENERIC`       | —               | -100  | generic PG error (see SQLERRMC + log) |
+| `SQL-MULTIPLEROWS`  | `DB2-DUPLICATE` | -811  | SELECT INTO returned >1 row |
+
+SQLSTATE constants are PIC X(5) and compare directly:
+
+```cobol
+       IF SQLSTATE = SQLSTATE-DUP-KEY THEN
+           MOVE 'Already exists.' TO MSG
+       END-IF.
+```
+
+| Constant | SQLSTATE | Class |
+|---|---|---|
+| `SQLSTATE-OK`        | `00000` | success |
+| `SQLSTATE-NODATA`    | `02000` | no-data |
+| `SQLSTATE-WARNING`   | `01000` | warning |
+| `SQLSTATE-NOT-NULL`  | `23502` | NOT NULL constraint violated |
+| `SQLSTATE-FK-VIOL`   | `23503` | foreign-key constraint violated |
+| `SQLSTATE-UQ-VIOL`   | `23505` | UNIQUE constraint violated |
+| `SQLSTATE-DUP-KEY`   | `23505` | alias |
+| `SQLSTATE-CHK-VIOL`  | `23514` | CHECK constraint violated |
+| `SQLSTATE-CONN-FAIL` | `08001` | unable to connect to PG |
+| `SQLSTATE-CONN-LOST` | `08006` | connection dropped mid-flight |
+| `SQLSTATE-INV-AUTH`  | `28000` | PG authentication failed |
+| `SQLSTATE-INV-PWD`   | `28P01` | wrong password |
+| `SQLSTATE-SYNTAX`    | `42601` | SQL syntax error |
+| `SQLSTATE-UNDEF-TBL` | `42P01` | table doesn't exist |
+| `SQLSTATE-UNDEF-COL` | `42703` | column doesn't exist |
+| `SQLSTATE-UNDEF-FN`  | `42883` | function doesn't exist |
+| `SQLSTATE-AMBIG-COL` | `42702` | ambiguous column reference |
+| `SQLSTATE-INSUF-PRIV`| `42501` | permission denied |
+
+The bricks SQL executor also logs every non-zero `SQLCODE`'s full
+PG error text via `brickslog.Sys` (one line on the operator
+console + the per-run log file). Programs render only the short
+mnemonic-driven message on the 3270 screen; the diagnostic detail
+lives in the log so PG hostnames / port numbers / wrapper text
+don't leak to terminal users.
+
 ### Idiom: replacing raw literals
 
 Before — opaque hex and bare integers, easy to mis-key:
@@ -3348,7 +4028,406 @@ program cache.
 
 ---
 
-## Chapter 26. Restrictions and deferred features
+---
+
+# Part 6. EXEC SQL command reference
+
+> **Part&nbsp;6 begins here.** The chapter that follows is the
+> complete `EXEC SQL` surface — identical for COBOL and REXX. It
+> covers every embedded-SQL verb Bricks supports, the SQLCA layout
+> and SQLCODE catalogue, the `WHENEVER` declarative error handler,
+> cursor lifecycle, per-task `CONNECT TO`, null indicators, and
+> SYNCPOINT integration with the bricks unit of work.
+
+## Chapter 26. Embedded SQL (COBOL and REXX)
+
+> **Programming Note.** Although this chapter was originally written
+> against COBOL, every `EXEC SQL` shape and behaviour described
+> here applies identically to REXX. The REXX-specific notes appear
+> later in the chapter under *REXX equivalent*. Programs in either
+> language read and write the SQLCA fields (`SQLCODE`, `SQLSTATE`,
+> `SQLERRMC`) the same way the COBOL samples do.
+
+bricks accepts the classic IBM-style `EXEC SQL … END-EXEC`
+embedded-SQL surface and runs it against the Postgres connection
+configured via `db_*` in `bricks.cnf` (see
+[SQL support — Phase 1](README.md#sql-support--phase-1-connectivity--ceda-viewer)).
+Programs read and write rows through prepared statements; the
+SQLCA fields `SQLCODE`, `SQLSTATE`, `SQLERRMC` are auto-injected
+into every program's DATA DIVISION so the program can test them
+without declaring them.
+
+Scope: single-row CRUD (`SELECT INTO`, `INSERT`, `UPDATE`,
+`DELETE`, `COMMIT`, `ROLLBACK`), the four-verb cursor lifecycle
+(`DECLARE` / `OPEN` / `FETCH` / `CLOSE`), per-task
+`CONNECT TO 'name'` database switching, null indicators
+(`:hostvar :indicator`), and the `WHENEVER` declarative
+error-handling directive. The same surface works identically in
+COBOL and REXX.
+
+### Format
+
+```cobol
+       EXEC SQL <statement> END-EXEC.
+```
+
+Where `<statement>` is any of the supported verbs (below). Host
+variables are written with a leading colon: `:CUSTID`, `:NM`,
+`:BALANCE`. The variable name must already exist in DATA DIVISION
+— the SQL executor reads its current value (for INPUT bindings)
+and writes back (for SELECT INTO targets).
+
+### Supported verbs
+
+| Verb | Notes |
+|---|---|
+| `SELECT cols INTO :v, :v FROM …` | Single-row read. Returns +100 (no-data) when 0 rows, -811 when >1 row. |
+| `INSERT INTO t (…) VALUES (…)` | Host-variable references bound as $N placeholders. |
+| `UPDATE t SET … WHERE …` | Returns RESP-NORMAL even when 0 rows match (matches DB2). |
+| `DELETE FROM t WHERE …` | Same row-count semantics as UPDATE. |
+| `COMMIT WORK` | Commits the per-task PG transaction. Also fired by `EXEC CICS SYNCPOINT`. |
+| `ROLLBACK WORK` | Rolls back. Also fired by `EXEC CICS SYNCPOINT ROLLBACK`. |
+
+DDL (`CREATE DATABASE`, `DROP DATABASE`, `CREATE USER`,
+`DROP USER`, `ALTER ROLE`, `CREATE TABLESPACE`, …) is **rejected**
+with `SQLCODE = -2` and `SQLSTATE = 42501`. CEDA DATABASE owns
+those operations and audits each one through `brickslog.Audit`.
+`CREATE TABLE` / `ALTER TABLE` / similar non-privileged DDL is
+not blocked but is also unsupported in the executor's
+statement classification — porters should run schema migrations
+with `psql`.
+
+### SQLCODE catalog
+
+bricks adopts the IBM DB2 convention adapted to Postgres. The
+catalog below covers what programs typically test:
+
+| SQLCODE | SQLSTATE | Meaning |
+|---:|---|---|
+| `0`    | `00000` | Success. |
+| `+100` | `02000` | No data: SELECT INTO returned 0 rows, or an update/delete affected 0 rows. |
+| `-1`   | empty   | No database configured (no `db_*` lines in `bricks.cnf`). |
+| `-2`   | `42501` | DDL rejected (CEDA owns CREATE/DROP DATABASE | USER). |
+| `-100` | varies  | Generic SQL failure — PG returned an error not specifically mapped. |
+| `-811` | `21000` | SELECT INTO returned more than one row. |
+
+`SQLERRMC` always carries the human-readable message from
+Postgres (truncated to 70 chars to match the PIC X(70) auto-
+injection). When the error path includes a specific SQLSTATE,
+that 5-char code lands in `SQLSTATE`; otherwise `SQLSTATE` is
+the relevant standard code (`00000` on success, `02000` on
+no-data, `HV000` when the failure didn't carry a state).
+
+### SYNCPOINT integration
+
+Each task lazily begins a Postgres transaction on its first
+`EXEC SQL` that touches data. The transaction commits when:
+
+* `EXEC CICS SYNCPOINT` runs.
+* `EXEC SQL COMMIT WORK` runs.
+* The task ends cleanly (RETURN, GOBACK, STOP RUN).
+
+And rolls back when:
+
+* `EXEC CICS SYNCPOINT ROLLBACK` runs.
+* `EXEC SQL ROLLBACK WORK` runs.
+* The task abends via `EXEC CICS ABEND`.
+
+Postgres-side commit fires *before* the bricks-side bbolt
+journal commit. That ordering avoids a hung PG commit leaving
+the bricks journal already finalised; failures during the SQL
+commit surface as `ROLLEDBACK` from SYNCPOINT, and the bricks
+journal then rolls back too.
+
+### Idiomatic test
+
+```cobol
+       EXEC SQL
+           SELECT name INTO :NM
+           FROM customers_sql
+           WHERE id = :CUSTID
+       END-EXEC.
+
+       EVALUATE SQLCODE
+           WHEN RESP-NORMAL   PERFORM SHOW-NAME       *> +0
+           WHEN RESP-NOTFND   PERFORM SHOW-NOTFOUND   *> wait -- that's an EIBRESP code; SQLCODE uses RESP-NORMAL/+100/etc.
+           WHEN OTHER         PERFORM SHOW-SQL-ERR
+       END-EVALUATE.
+```
+
+The `RESP-NORMAL` constant (from `COPY DFHRESP`) is value `0`,
+the same as the SQLCODE-OK value, so it conveniently doubles as
+the success test for both EIBRESP (EXEC CICS) and SQLCODE (EXEC
+SQL). For the no-data case, test `SQLCODE = +100` directly —
+there's no DFHSQLCODE copybook yet.
+
+### Worked example: SQLD
+
+`runtime/cobol/sqld.cob` (TRANSID `SQLD`) is the bundled
+demonstration. It reads a single `customers_sql` row by id and
+renders the name + SQLCA verdict on screen `SQLD1`. The
+expected schema is documented in the program header. The
+operator runs psql once to seed the table:
+
+```sql
+CREATE TABLE customers_sql (
+    id   text PRIMARY KEY,
+    name text NOT NULL
+);
+INSERT INTO customers_sql VALUES
+    ('K001', 'Alice'),
+    ('K002', 'Bob'),
+    ('K003', 'Carol');
+```
+
+Then `bricks` → sign on → `SQLD` → type `K001` → ENTER. The
+operator sees `Alice` in the NM cell with SQLCODE = 0 and
+SQLSTATE = 00000.
+
+### REXX equivalent
+
+REXX programs use the same `EXEC SQL` shape as COBOL, with `:name`
+binding REXX variables. There's no DATA DIVISION analog -- REXX
+is dynamically typed -- so SQLCODE, SQLSTATE, SQLERRMC arrive as
+ordinary REXX variables the program reads after each statement:
+
+```rexx
+ADDRESS CICS
+
+CUSTID = 'K001'
+EXEC SQL
+    SELECT name INTO :NM
+    FROM customers_sql
+    WHERE id = :CUSTID
+END-EXEC
+
+IF SQLCODE = 0 THEN
+    SAY 'Customer:' NM
+ELSE IF SQLCODE = 100 THEN
+    SAY 'Not found'
+ELSE
+    SAY 'SQL error' SQLCODE ':' SQLERRMC
+```
+
+Behind the scenes the REXX preprocessor (`rexx.PreprocessExecCICS`)
+rewrites the EXEC SQL block into a sentinel bare-string that
+`runCommand` recognises and routes to the same per-task SQL
+executor COBOL uses. The two language surfaces are parity-clean:
+the executor doesn't know or care which language drove it. Live
+sample: `runtime/rexx/sqlr.rexx`, TRANSID `SQLR`.
+
+**REXX stem-tail gotcha.** Classic REXX resolves `STEM.NAME` by
+looking up the simple symbol `NAME` and using its value as the
+tail. If a program does `EXEC SQL ... INTO :NM` then writes
+`SCR.NM = NM`, the LHS resolves to `SCR.<value-of-NM>` =
+`SCR.Alice` — the value lands in the wrong slot. Workaround:
+pick a host-var name that is NOT also a stem tail. The bundled
+SQLR uses `CUSTNM` instead of `NM` for exactly this reason.
+
+### WHENEVER (declarative error handling)
+
+Instead of testing `SQLCODE` after every statement, a program can
+declare a standing rule with `EXEC SQL WHENEVER`:
+
+```cobol
+EXEC SQL WHENEVER SQLERROR  GO TO SQL-ERROR-EXIT END-EXEC.
+EXEC SQL WHENEVER NOT FOUND GO TO NO-MORE-ROWS  END-EXEC.
+
+EXEC SQL SELECT name INTO :NM FROM customers_sql
+         WHERE id = :CUSTID END-EXEC.
+*> no SQLCODE test here -- WHENEVER handles it
+```
+
+Three conditions, checked after every subsequent `EXEC SQL`:
+
+| Condition | Fires when |
+|---|---|
+| `SQLERROR` | `SQLCODE` is negative |
+| `NOT FOUND` | `SQLCODE` = +100 |
+| `SQLWARNING` | `SQLWARN0` = `'W'` (bricks rarely sets this — PG errors rather than warns) |
+
+Each condition takes one of two actions:
+
+* `CONTINUE` — ignore the condition, fall through (the default for
+  any condition never declared).
+* `GO TO label` / `GOTO label` — branch to the paragraph (COBOL) or
+  label (REXX). The branch unwinds any enclosing `PERFORM` exactly
+  as an explicit `GO TO` would.
+
+A later `WHENEVER` for the same condition replaces the earlier one
+(e.g. declare `GO TO` for a block of statements, then `CONTINUE`
+to resume manual handling).
+
+REXX uses the identical syntax; the branch is a `SIGNAL` to the
+named label:
+
+```rexx
+EXEC SQL WHENEVER SQLERROR GOTO SQLERR END-EXEC
+EXEC SQL SELECT name INTO :CUSTNM FROM customers_sql
+         WHERE id = :CUSTID END-EXEC
+SAY 'customer:' CUSTNM
+EXIT
+SQLERR:
+SAY 'SQL failed, SQLCODE' SQLCODE
+EXIT
+```
+
+**Scoping caveat.** bricks's `WHENEVER` is *execution-order*
+scoped: the directive set by the most recently **executed**
+`EXEC SQL WHENEVER` governs later statements. Real DB2 scopes
+*lexically* (by source position) because its precompiler inlines
+a `SQLCODE` test after every statement. For the dominant pattern
+— one `WHENEVER` near the top of the program — the two are
+identical. Programs that re-declare `WHENEVER` inside conditional
+branches see execution-order semantics; keep WHENEVER declarations
+at the top of a paragraph to avoid surprises.
+
+### Cursors (DECLARE / OPEN / FETCH / CLOSE)
+
+Multi-row result sets use the four-verb cursor lifecycle. The
+executor parks one `*sql.Rows` per cursor per task; cursors are
+closed automatically on `COMMIT`, `ROLLBACK`, or task end so a
+program that forgets `CLOSE` doesn't pin Postgres MVCC.
+
+```cobol
+EXEC SQL DECLARE C1 CURSOR FOR
+    SELECT id, name FROM customers_sql ORDER BY id
+END-EXEC.
+
+EXEC SQL OPEN C1 END-EXEC.
+
+PERFORM UNTIL SQLCODE = 100
+    EXEC SQL FETCH C1 INTO :ID, :NM END-EXEC
+    IF SQLCODE = 0 THEN
+        DISPLAY 'row: ' ID ' ' NM
+    END-IF
+END-PERFORM.
+
+EXEC SQL CLOSE C1 END-EXEC.
+```
+
+REXX uses the same four verbs (the preprocessor routes them all
+through the same executor):
+
+```rexx
+EXEC SQL DECLARE C1 CURSOR FOR SELECT id, name FROM customers_sql END-EXEC
+EXEC SQL OPEN C1 END-EXEC
+DO FOREVER
+    EXEC SQL FETCH C1 INTO :ID, :CUSTNM END-EXEC
+    IF SQLCODE = 100 THEN LEAVE
+    SAY 'row:' ID CUSTNM
+END
+EXEC SQL CLOSE C1 END-EXEC
+```
+
+End-of-data is `SQLCODE = +100`. A closed cursor stays in the
+registry, so `OPEN c1` can rewind it without re-`DECLARE`.
+
+### CONNECT TO 'name' (per-task database switch)
+
+A program that needs to touch a second database during a task
+issues `EXEC SQL CONNECT TO 'name'`. The named database must
+exist in `databases.conf` (the CEDA DATABASE catalogue); an
+unknown name returns `SQLCODE = -1`. An in-flight PG transaction
+on the previous database is committed implicitly (matches DB2's
+behaviour) -- programs that want to discard the previous work
+should `EXEC SQL ROLLBACK` before connecting.
+
+```cobol
+EXEC SQL CONNECT TO 'orders' END-EXEC.
+EXEC SQL INSERT INTO order_lines VALUES (:ID, :QTY) END-EXEC.
+EXEC SQL COMMIT END-EXEC.
+EXEC SQL CONNECT TO 'customers' END-EXEC.
+EXEC SQL SELECT email INTO :EM FROM customers WHERE id = :CID END-EXEC.
+```
+
+Implicit binding still applies to the first statement of every
+task -- the transaction's `Database` column in `transactions.conf`
+picks the starting pool. `CONNECT TO` is only needed when the
+program needs to move between databases inside a single task.
+
+### Null indicators (`:hostvar :indicator`)
+
+DB2 programs use a second host var beside the value to signal
+NULL. Bricks supports the same pair syntax in both COBOL and
+REXX:
+
+```cobol
+EXEC SQL
+    SELECT name INTO :NM :NIND
+    FROM customers_sql WHERE id = :CUSTID
+END-EXEC.
+
+EVALUATE NIND
+    WHEN 0   DISPLAY 'Name: ' NM
+    WHEN -1  DISPLAY 'Name is NULL'
+END-EVALUATE.
+```
+
+Output side (SELECT INTO / FETCH INTO):
+
+* Column was non-NULL → indicator = `0`, value holds the result.
+* Column was NULL → indicator = `-1`, value is cleared to the empty
+  string so a program that ignored its indicator can't read a
+  stale value from a previous statement.
+
+Input side (WHERE / VALUES / SET clauses):
+
+```cobol
+MOVE -1 TO NIND.
+EXEC SQL
+    INSERT INTO customers_sql (id, name) VALUES (:K, :NM :NIND)
+END-EXEC.
+```
+
+* Indicator = `-1` at bind time → bricks passes NULL to PG,
+  regardless of what `NM` currently holds.
+* Indicator = `0` (or unset) → the value var's frame contents
+  bind normally.
+
+Pair detection: a value/indicator pair is two `:name` tokens
+separated only by whitespace. `:NM, :NIND` (with a comma) means
+two independent host vars, not a pair. The `INDICATOR` keyword
+form (`:NM INDICATOR :NIND`) is not currently supported -- use the
+juxtaposed form.
+
+### Column-value coercion
+
+PG's wire format doesn't always match what COBOL or REXX want to
+read. Bricks normalises three cases before the value reaches the
+program's host variable:
+
+* **`bool` columns** -- PG returns `"t"` / `"f"` (or `"true"` /
+  `"false"`). Bricks converts to `"1"` / `"0"` so COBOL PIC X(1)
+  flags and REXX `IF VAR = 1` idioms work the way they do in DB2.
+* **`NUMERIC(p, s)` columns** -- PG drops trailing fractional
+  zeros for computed expressions (`SELECT 1.5` returns `"1.5"`
+  even though the result type has scale 2). Bricks pads the
+  value to the column's declared scale, so a COBOL `PIC 9(3)V99`
+  target receives `"1.50"` → digits `"150"` → stored as `001.50`,
+  not `000.15`.
+* **`CHAR(N)` columns** -- PG returns space-padded values. Bricks
+  trims trailing spaces so a REXX literal compare (`IF VAR = 'X'`)
+  doesn't fail because the CHAR(5) value was `"X    "`. VARCHAR
+  is left alone (PG never pads it; its trailing spaces are real).
+
+Other types (INT, BIGINT, TEXT, DATE, TIMESTAMP, JSON, …) flow
+through verbatim. COBOL's MOVE semantics handle integer sign and
+zero-pad automatically; REXX is dynamically typed so the string
+form works for both display and arithmetic.
+
+### Restrictions
+
+| Out of scope | Why |
+|---|---|
+| Stored procedure calls (`EXEC SQL CALL`) | Out of scope — porters use plain SELECT-from-function. |
+| Multi-row INSERT VALUES (…), (…) | Out of scope; rewrite as one statement per row. |
+| `CREATE` / `DROP DATABASE | USER` | CEDA DATABASE only (C / X actions, audit-logged). |
+| Long-running cursors across `EXEC CICS RETURN` chains | Out of scope; each task gets a fresh PG connection. |
+
+---
+
+## Chapter 27. Restrictions and deferred features
 
 ### Disallowed
 
@@ -3372,9 +4451,16 @@ program cache.
 
 ---
 
-# Part 5. Sample programs
+# Part 8. Sample programs
 
-## Chapter 27. Pre-installed sample transactions
+> **Part&nbsp;8 begins here.** Bricks ships a curated set of REXX
+> and COBOL programs that exercise every command family in the
+> earlier parts. Each transaction has been built to be operator-
+> reachable from the blank prompt and self-explaining when run —
+> reading the source is the fastest way to internalise the bricks
+> programming model.
+
+## Chapter 28. Pre-installed sample transactions
 
 ### COBOL
 
@@ -3388,6 +4474,8 @@ program cache.
 | `EXAM` | `runtime/cobol/exam.cob` | Worked example of reading the operator's command-line arguments. Type `EXAM 1 2 3` at the blank prompt. |
 | `ORDR` | `runtime/cobol/ordr.cob` | Conversational import: reads `runtime/tmp/orders.sample.txt` via `READQ TD`, parses pipe-delimited rows, and `WRITE FILE('ORDERS')` keyed on customer-id. Tolerates duplicates (`EIBRESP = RESP-DUPREC`). Summary screen shows counts. See [worked example E](#e-sequential-import-via-readq-td--write-file). |
 | `TIMC` | `runtime/cobol/timc.cob` | Timed-reminder demo: exercises `CONVERSE`, `START` (with `INTERVAL` + `FROM`), and `RETRIEVE` end-to-end. Shares `tim1.map` + `tim2.map` with `TIMR`. |
+| `SQLD` | `runtime/cobol/sqld.cob` | Embedded-SQL demo: `EXEC SQL SELECT name INTO :NM FROM customers_sql WHERE id = :CUSTID`. Renders the row + SQLCODE / SQLSTATE / SQLERRMC. Requires Postgres seeded with the schema shown in [Chapter 26](#chapter-26-embedded-sql-cobol). |
+| `SQLR` | `runtime/rexx/sqlr.rexx` | REXX twin of `SQLD`. Shares the `customers_sql` table; demonstrates how REXX accesses the same EXEC SQL surface (SQLCODE / SQLSTATE / SQLERRMC arrive as plain REXX variables). |
 
 All five non-trivial COBOL samples (`QAGC`, `GUST`, `GUSL`,
 `ORDR`, `EXAM`) `COPY DFHAID` and/or `COPY DFHRESP` instead of
@@ -3429,7 +4517,7 @@ entry in the table.
 
 ---
 
-## Chapter 28. Worked examples
+## Chapter 29. Worked examples
 
 ### A. Producer / consumer over a TS queue
 
@@ -3715,3 +4803,186 @@ the trailing dot) at the top of each pagination loop.
 In REXX, compare `C2X(EIBAID)` to a hex string: `IF C2X(EIBAID) = 'F3'
 THEN ...` (PF3). In COBOL, compare `EIBAID` directly to a hex
 literal: `IF EIBAID = X'F3' ...`.
+
+---
+
+# Appendix C. Quick command reference card
+
+> A one-page cheat-sheet of every command family. Use the chapter
+> reference for full syntax, options, and condition codes.
+
+## EXEC CICS — terminal I/O (Chapter 4)
+
+| Command | Purpose |
+|---|---|
+| `SEND MAP(name) [FROM(stem.)] [ERASE] [CURSOR(p)]` | Paint a BMS map; wait for an AID. |
+| `RECEIVE MAP(name) [INTO(stem.)]` | Pull the operator's response. |
+| `CONVERSE MAP(name) FROM(s) INTO(s) [ERASE]` | Fused `SEND MAP`+`RECEIVE MAP`. |
+| `SEND TEXT FROM(buf) [LENGTH(n)] [ERASE]` | Free-form row-major output. |
+| `RECEIVE INTO(buf) [LENGTH(v)]` | Read the operator's command-line tail. |
+
+## EXEC CICS — program control (Chapter 5)
+
+| Command | Purpose |
+|---|---|
+| `RETURN [TRANSID(id)] [COMMAREA(d)]` | End task; optional chain. |
+| `XCTL PROGRAM(name) [COMMAREA(d)]` | Transfer control. |
+| `LINK PROGRAM(name) [COMMAREA(v)]` | Synchronous sub-program call. |
+| `ABEND [ABCODE(c)]` | Abnormal task termination. |
+| `START TRANSID(id) [INTERVAL/TIME] [FROM(d)] [TERMID(t)]` | Schedule a deferred fire. |
+| `RETRIEVE INTO(v) [LENGTH(v)]` | Pull the `START` payload. |
+
+## EXEC CICS — system services (Chapter 6)
+
+| Command | Purpose |
+|---|---|
+| `ASSIGN <FIELD>(v) ...` | Read EIB / environment fields. |
+| `ASKTIME [ABSTIME(v)]` | Refresh `EIBDATE` / `EIBTIME` (+ optional ABSTIME). |
+| `FORMATTIME ABSTIME(s) [DATE / TIME / YYYY... / DAYOFWEEK ...]` | Decode an ABSTIME. |
+
+## EXEC CICS — KSDS files (Chapter 7-8)
+
+| Command | Purpose |
+|---|---|
+| `READ FILE(f) INTO(v) RIDFLD(k) [UPDATE]` | Exact-key lookup. |
+| `WRITE FILE(f) FROM(d) RIDFLD(k)` | Insert record. |
+| `REWRITE FILE(f) FROM(d)` | Replace the `READ … UPDATE` record. |
+| `DELETE FILE(f) [RIDFLD(k)]` | Drop record. |
+| `STARTBR FILE(f) [RIDFLD(k)] [GTEQ/EQUAL] [GENERIC KEYLENGTH(n)]` | Open browse. |
+| `READNEXT FILE(f) INTO(v) [RIDFLD(v)]` | Forward one record. |
+| `READPREV FILE(f) INTO(v) [RIDFLD(v)]` | Backward one record. |
+| `RESETBR FILE(f) RIDFLD(k)` | Re-position within an open browse. |
+| `ENDBR FILE(f)` | Close browse. |
+
+## EXEC CICS — temporary storage / transient data (Chapter 9)
+
+| Command | Purpose |
+|---|---|
+| `READQ TS QUEUE(q) INTO(v) [ITEM(n) | NEXT]` | Read one TS item. |
+| `WRITEQ TS QUEUE(q) FROM(d) [ITEM(n) REWRITE]` | Append or rewrite TS item. |
+| `DELETEQ TS QUEUE(q)` | Drop a TS queue. |
+| `READQ TD QUEUE(q) INTO(v)` | Read next line from `tmp_dir/q`. |
+| `WRITEQ TD QUEUE(q) FROM(d)` | Append line to `tmp_dir/q`. |
+| `DELETEQ TD QUEUE(q)` | Delete a TD file. |
+
+## EXEC CICS — recovery + condition (Chapter 10)
+
+| Command | Purpose |
+|---|---|
+| `SYNCPOINT` | Commit pending unit of work. |
+| `SYNCPOINT ROLLBACK` | Undo pending unit of work. |
+| `HANDLE CONDITION cond(label) ...` | Arm condition trap. |
+| `IGNORE CONDITION cond ...` | Suppress condition trap. |
+| `HANDLE AID key(label) ...` | Arm AID-key trap. |
+| `HANDLE ABEND LABEL(l) | PROGRAM(p) | CANCEL | RESET` | Arm abend exit. |
+
+## EXEC SQL (Chapter 26)
+
+| Command | Purpose |
+|---|---|
+| `EXEC SQL SELECT cols INTO :v, :v FROM ... END-EXEC` | Single-row read; `+100` = no-data, `-811` = >1 row. |
+| `EXEC SQL INSERT INTO t (...) VALUES (...) END-EXEC` | Insert. |
+| `EXEC SQL UPDATE t SET ... WHERE ... END-EXEC` | Update; 0 rows is still NORMAL. |
+| `EXEC SQL DELETE FROM t WHERE ... END-EXEC` | Delete. |
+| `EXEC SQL DECLARE c CURSOR FOR <select> END-EXEC` | Declare cursor. |
+| `EXEC SQL OPEN c END-EXEC` | Open cursor. |
+| `EXEC SQL FETCH c INTO :v, :v END-EXEC` | Next row; `+100` at end. |
+| `EXEC SQL CLOSE c END-EXEC` | Close cursor. |
+| `EXEC SQL COMMIT WORK END-EXEC` / `ROLLBACK WORK` | Transaction control. |
+| `EXEC SQL CONNECT TO 'db' END-EXEC` | Per-task database switch. |
+| `EXEC SQL WHENEVER {SQLERROR | NOT FOUND | SQLWARNING} {CONTINUE | GO TO label} END-EXEC` | Declarative error handler. |
+
+## EXEC CICS WEB — server side (Phase 1)
+
+| Command | Purpose |
+|---|---|
+| `WEB EXTRACT METHOD(v) PATH(v) HOST(v) PORT(v) SCHEME(v) QUERYSTRING(v) ...` | Inbound request meta. |
+| `WEB EXTRACT CERTIFICATE COMMONNAME(v) ORGANISATION(v) COUNTRY(v) SERIALNUM(v) ISSUER(v)` | mTLS peer-cert fields. |
+| `WEB EXTRACT TCPIPSERVICE(v) PORTNUMBER(v) IPADDRESS(v) CLIENT(v) AUTHENTICATE(v)` | Listener inspection. |
+| `WEB READ HTTPHEADER(name) VALUE(v) [LENGTH(v)]` | Inbound header by name. |
+| `WEB STARTBROWSE / READNEXT / ENDBROWSE HTTPHEADER` | Walk inbound headers. |
+| `WEB READ QUERYPARM(name) VALUE(v)` | Query parameter / path capture. |
+| `WEB STARTBROWSE / READNEXT / ENDBROWSE QUERYPARM` | Walk parameters. |
+| `WEB READ FORMFIELD(name) VALUE(v)` | Form-encoded field. |
+| `WEB STARTBROWSE / READNEXT / ENDBROWSE FORMFIELD` | Walk form fields. |
+| `WEB RECEIVE INTO(v) [MAXLENGTH(n)] [LENGTH(v)] [MEDIATYPE(v)] [TYPE(v)]` | Read raw request body. |
+| `WEB WRITE HTTPHEADER(name) VALUE(v)` | Set outbound response header. |
+| `WEB SEND FROM(buf) [MEDIATYPE(s)] [STATUSCODE(n)]` | Emit response. |
+| `WEB PARSE URL URL(s) SCHEMENAME(v) HOST(v) PORT(v) PATH(v) QUERYSTRING(v)` | URL splitter. |
+| `WEB CONVERTTIME DATESTRING(s) ABSTIME(v)` | RFC 1123 / 850 / asctime → ABSTIME. |
+| `WEB RETRIEVE DOCTOKEN(v)` | Inbound body as DOCUMENT. |
+
+## EXEC CICS WEB — client side (Phase 2)
+
+| Command | Purpose |
+|---|---|
+| `WEB OPEN HOST(s) [PORT(n)] [SCHEME(s)] SESSTOKEN(v)` | Open client session. |
+| `WEB OPEN URIMAP(name) SESSTOKEN(v)` | Open via URIMAP. |
+| `WEB CONVERSE SESSTOKEN(t) METHOD(m) PATH(p) [FROM(b)] INTO(v) [STATUSCODE(v)]` | One-shot send + receive. |
+| `CONVERSE WEB ...` | Alias for `WEB CONVERSE`. |
+| `WEB SEND SESSTOKEN(t) METHOD(m) PATH(p) [FROM(b)] [QUERYSTRING(s)] [MEDIATYPE(s)]` | Stage request. |
+| `WEB SEND URIMAP(name) METHOD(m) PATH(p) ... INTO(v)` | One-shot via URIMAP. |
+| `WEB RECEIVE SESSTOKEN(t) INTO(v) [STATUSCODE(v)] [MEDIATYPE(v)] [MAXLENGTH(n)]` | Fire staged request. |
+| `WEB CLOSE SESSTOKEN(t)` | Release session. |
+| `WEB WRITE HTTPHEADER(name) VALUE(v) SESSTOKEN(t)` | Set outbound *request* header. |
+| `WEB READ HTTPHEADER(name) VALUE(v) [LENGTH(v)] SESSTOKEN(t)` | Read response header. |
+| `WEB STARTBROWSE / READNEXT / ENDBROWSE HTTPHEADER SESSTOKEN(t)` | Walk response headers. |
+| `WEB EXTRACT SESSTOKEN(t) [SCHEME(v)] [HOST(v)] [PORT(v)] [PATH(v)]` | Inspect session endpoint. |
+| `WEB EXTRACT URIMAP(name) [SCHEME(v)] [HOST(v)] [PORT(v)] [PATH(v)]` | Inspect URIMAP entry. |
+
+## EXEC CICS DOCUMENT
+
+| Command | Purpose |
+|---|---|
+| `DOCUMENT CREATE DOCTOKEN(v) [SYMBOLLIST(s) [LISTLENGTH(n)]] [DELIMITER(s)]` | New empty document. |
+| `DOCUMENT INSERT DOCTOKEN(t) FROM(b) [LENGTH(n)] [AT(pos)]` | Append / splice bytes. |
+| `DOCUMENT INSERT DOCTOKEN(t) SYMBOL(name)` | Substitute from symbol list. |
+| `DOCUMENT INSERT DOCTOKEN(t) DOCUMENT(other-tok) [AT(pos)]` | Splice another document. |
+| `DOCUMENT SET DOCTOKEN(t) SYMBOLLIST(s) [DELIMITER(d)]` | Re-bind symbol list. |
+| `DOCUMENT RETRIEVE DOCTOKEN(t) INTO(b) LENGTH(v)` | Read assembled body. |
+| `DOCUMENT DELETE DOCTOKEN(t)` | Release document. |
+| `WEB SEND DOCTOKEN(t) [STATUSCODE(n)] [MEDIATYPE(s)]` | Emit document as response. |
+
+## Standard copybooks
+
+| Copybook | Brings in |
+|---|---|
+| `DFHAID` | AID byte constants (`ENTER`, `PF03`, `PA1`, …) and their `DFH...` aliases. |
+| `DFHRESP` | `EIBRESP` condition constants (`RESP-NORMAL` / `DFHRESP-NORMAL`, etc.). |
+| `SQLCA` | SQLCODE + SQLSTATE constants (`SQL-OK`, `SQLSTATE-DUP-KEY`, …). |
+| `DFHWBSC` | HTTP status codes (`DFHRESP-WB-OK`, …). |
+| `DFHWBUH` | Common header-name literals (`WB-CONTENT-TYPE`, …). |
+| `DFHWBMT` | MIME-type literals (`WB-MT-JSON`, …). |
+| `DFHWBMETH` | HTTP method literals (`WB-GET`, `WB-POST`, …). |
+| `DFHWBSI` | Session-token + body buffer templates. |
+| `DFHWBUM` | URIMAP record fields. |
+| `DFHWBHB` | Header-browse helpers (`DFH-WB-HDR-NAME`, …). |
+| `DFHWBCC` | TLS / mTLS cert-extract pack. |
+| `DFHDCDOC` | DOCUMENT token + delimiter constants. |
+
+## EIB fields (Chapter 11)
+
+| Field | Set by | Meaning |
+|---|---|---|
+| `EIBAID` | `SEND MAP` / `RECEIVE MAP` | AID byte. |
+| `EIBCPOSN` | `SEND MAP` / `RECEIVE MAP` | 1-based cursor position. |
+| `EIBCALEN` | dispatcher entry | DFHCOMMAREA length. |
+| `EIBTRMID` | dispatcher | Terminal ID. |
+| `EIBRESP` / `EIBRESP2` | every `EXEC CICS` | Response code + secondary. |
+| `EIBDATE` / `EIBTIME` | `ASKTIME` | 0CYYDDD / HHMMSS. |
+| `EIBABCODE` | abend trap | 4-char abend code. |
+| `RC` | every `EXEC CICS` | Mirror of `EIBRESP`. |
+
+## SQLCA fields (Chapter 26)
+
+| Field | Type | Meaning |
+|---|---|---|
+| `SQLCODE` | `PIC S9(9)` | 0 = OK, +100 = no-data, -N = error. |
+| `SQLSTATE` | `PIC X(5)` | 5-character ISO state code. |
+| `SQLERRMC` | `PIC X(70)` | Human-readable PG error text. |
+| `SQLERRD3` | `PIC S9(9)` | Rows-affected count after `INSERT` / `UPDATE` / `DELETE`. |
+| `SQLWARN0` | `PIC X(1)` | `'W'` if any warning fired (Bricks rarely sets). |
+
+---
+
+*End of publication.*
