@@ -135,7 +135,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `dns_name`                   | (none)                        | **Bind address.** Every bricks listener — the plain-TCP and TLS 3270 listeners, and the web3270 / `/metrics` HTTP services — binds **only** to the single IP this name resolves to (a literal IP is used as-is; a hostname resolves to one address, IPv4 preferred). A `dns_name` that is set but unresolvable is a fatal startup error. When `dns_name` is **empty**, listeners fall back to binding *all* interfaces (`0.0.0.0`) and bricks logs a `WARNING` — set `dns_name` to confine the server to one interface. |
 | `start_web3270`              | `no`                          | `yes` enables the in-process browser-based 3270 emulator. |
 | `web3270_port`               | `9000`                        | HTTP port for the web3270 frontend (only used when `start_web3270=yes`). |
-| `start_metrics`              | `yes`                         | `yes` exposes a JSON `/metrics` endpoint with runtime + counter snapshots. Independent of `start_web3270`. |
+| `start_metrics`              | `yes`                         | `yes` exposes a JSON `/metrics` endpoint with runtime + counter snapshots. Independent of `start_web3270`. Admin operators can flip the endpoint on/off at runtime via `CEMT PERFORM METRICS` without rewriting `bricks.cnf`. |
 | `metrics_port`               | `9100`                        | HTTP port for the dedicated `/metrics` listener. The same route is also mounted on the web3270 listener when both are on. |
 | `enable_wapi`                | `no`                          | `yes` enables the WAPI listener — the inbound-HTTP server that turns each matched request into a transaction dispatch via the `EXEC CICS WEB *` verbs (Phase 1 — server side). On startup bricks logs `WAPI listening on http://<host>:<port>/ (routes_file=…, N route(s) loaded)` (and a second `https://…` line when TLS opens). Off by default — no HTTP listener opens unless the operator opts in. Port defaults below apply unless overridden. |
 | `enforce_wapi_tls`           | `no`                          | `yes` suppresses the plain HTTP listener — only the HTTPS port opens. Requires `tlscert` and `tlskey` to be set (rejected at startup otherwise). Use this for any deployment where the API is reachable from outside `localhost` so credentials and payloads aren't sniffable. |
@@ -1280,6 +1280,7 @@ R  RESCAN    trans / maps / programs              -- on-disk diagnostic scans
    ├── M  MAP       (N maps, M syntax errors)     -- parse every *.map in MapsDir
    └── P  PROGRAMS  (N programs, M orphans)       -- walk rexx_dir + cobol_dir
 C  PROGRAMCACHE   (L1 N/M, L2 N MB)               -- resize / inspect the program cache
+E  METRICS        (enabled|disabled, N scrapes)   -- toggle /metrics endpoint
 ```
 
 (TS-queue purge moved to `CEDA QUEUES` — purges live alongside the
@@ -1315,6 +1316,23 @@ other CEDA mutations.)
 * **PROGRAMCACHE** (`CEMT P C`) is the parallel screen for the
   REXX/COBOL program cache — see the dedicated section under
   "Performance and security hardening" for the L1/L2 details.
+* **METRICS** (`CEMT P E`) is the admin runtime toggle for the
+  `/metrics` JSON endpoint. The top half of the screen shows live
+  state (ENABLED / DISABLED, the endpoint URL, process uptime); a
+  two-column counter grid lists SCRAPES, ERRORS, BYTES SERVED,
+  IN FLIGHT, LAST STATUS, LAST SCRAPE, LAST BYTES, LAST DURATION,
+  RATE per-second, and AVG bytes / scrape. The one writable cell
+  accepts `Y` (enable) or `N` (disable); PF5 applies and is
+  highlighted red on the footer to mark it as the commit key.
+  When disabled, every scrape returns `503 Service
+  Unavailable` immediately and the handler skips the
+  `runtime.ReadMemStats` probe — that probe is a stop-the-world
+  GC sample, so a deployment with no scraper attached can park
+  the endpoint and save real CPU without restarting bricks.
+  Counters keep advancing while disabled, so an operator can see
+  whether a stale scraper is still trying to reach the endpoint.
+  Toggling is admin-only and survives until the next process
+  restart (it does NOT rewrite `start_metrics` in `bricks.cnf`).
 
 ---
 
@@ -1478,6 +1496,7 @@ any signed-on operator.
 |-----------------------------------|---------|
 | `./bricks --conf=bricks.cnf`      | Run the server. |
 | `./bricksload --help`             | Stress-test bricks; live dashboard + final report. See [Stress testing](#stress-testing--bricksload). |
+| `./bricksconvert -h`              | Convert an IBM CICS BMS map source (`DFHMSD` / `DFHMDI` / `DFHMDF`) to the bricks map DSL. See [BMS conversion](#bms-conversion--bricksconvert). |
 | `go run ./cmd/seed-customers`     | Idempotently load 250 sample customer records into the CUSTOMERS KSDS. |
 | `go run ./cmd/brickspw <pw>`      | Print a bcrypt hash for a password. |
 | `./add_brick_user.bash <u> <p> [groups]` | Add a user (refuses duplicates without `--update`). |
@@ -1750,6 +1769,125 @@ object — see `cmd/bricksload/report.go::Report` for the schema.
   start before the iteration loop.
 * The dashboard uses ANSI escape codes; `-no-dashboard` is required
   when redirecting stdout to a file or pipe (`-out=json` implies it).
+
+---
+
+## BMS conversion — `bricksconvert`
+
+`cmd/bricksconvert` is a one-way converter from IBM CICS **BMS map
+source** (the `DFHMSD` / `DFHMDI` / `DFHMDF` assembler macros) to
+the bricks map DSL (the `MAP ... ENDMAP` format parsed by
+`mapdsl/`). It is the recommended path for porting an existing
+CICS application's screens onto bricks without rewriting every
+panel by hand.
+
+### Quick start
+
+```bash
+go build -o bricksconvert ./cmd/bricksconvert    # one-time build
+
+# Mode 1 -- convert and write the result to a file.
+./bricksconvert -o runtime/map/cust1.map  legacy/cust1.bms
+
+# Mode 2 -- "check-only" -- parse + verify with no output written.
+#          Useful in CI: exits 0 iff every file converts cleanly.
+./bricksconvert -check legacy/cust1.bms
+```
+
+The tool reads one BMS source file on the command line. Exactly
+one of `-o <path>` or `-check` is required -- the converter
+refuses to run without a declared destination so a misinvocation
+can't dump the DSL onto stdout by accident.
+
+### Help, exit codes, colour
+
+```
+bricksconvert -h | -help
+```
+
+prints the concise usage block. Exit codes are operator-friendly:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Conversion (or `-check`) succeeded. |
+| `1` | BMS syntax / semantic error in the source. The first offending line is shown with a dim source-line context row, file:line prefix, and the diagnostic in red. |
+| `2` | Usage error (missing arguments, both `-o` and `-check` given), I/O failure, or an internal converter bug. |
+
+Colour is on by default when stderr is a terminal; pipe through
+`less` or set `--color=never` to suppress. Set `--color=always`
+to force ANSI escapes on (useful when piping through colour-aware
+viewers).
+
+### Successful output
+
+```
+sample_bms.map: OK
+  ─── BMS vs bricks ───────────────────────
+                       BMS    bricks
+  statements           34        34
+  mapsets               1         -
+  maps                  1         1
+  size              24x80     24x80
+  fields (display)     24        24
+  inputs                7         7
+  stops                 0         0
+  cursor target    CUSTID    CUSTID
+  warnings              0         -
+  elapsed          0s.0ms
+
+  Wrote runtime/map/cust1.map.
+  runtime/map/cust1.map passes bricks parser.
+```
+
+The grid shows side-by-side counts so an operator can confirm
+the conversion preserved every logical element of the source.
+Rows that match are green; mismatches are red. The
+`bricks parser` line is the **verification step**: bricksconvert
+re-reads the just-written file from disk and runs it through
+`mapdsl.ParseReader` (the same parser the bricks runtime uses on
+every map at load time). A "passes" confirmation in green tells
+you the file is immediately deployable.
+
+### Coverage: 100% of BMS, lossy where bricks doesn't model
+
+The parser accepts every documented BMS macro and every
+attribute. Where bricks's map DSL can't represent a BMS feature
+exactly, the converter emits a `* WARNING: ...` comment line into
+the output AND bumps the `warnings` counter in the summary so
+the operator can hand-finish the result. The current warning-
+producing features are `PICIN=`, `PICOUT=` (picture-editing
+clauses), `OCCURS=` (array fields), `GRPNAME=` (field groups),
+`OUTLINE=` (box / underline / overline), `ATTRB=DET`
+(light-pen detection), and any unrecognised `ATTRB=` token.
+
+### Strict BMS column rules
+
+The lexer enforces IBM's canonical column rules: the
+continuation marker `X` must sit at exactly column 72. Lines
+where the operator placed `X` at the end of the operand list
+(say col 65 or 66) are rejected with a precise diagnostic:
+
+```
+sample.bms:1: BMS parse error: continuation marker `X` at col 66; BMS requires col 72 (pad the body to 71 chars).
+  source line 1: ORDMAPS  DFHMSD TYPE=MAP,MODE=INOUT,LANG=COBOL,                  X
+```
+
+The other "wire format" subtleties (continuation lines resume
+at col 16; cols 73-80 are sequence numbers when the line is
+exactly 80 chars; comment lines start with `*` in col 1; the
+`'don''t'` doubled-quote convention; adjacent string literal
+concatenation for long `INITIAL=` values broken across multiple
+continuation lines) are all handled automatically. See
+`cmd/bricksconvert/bms_lex.go` and `bms_parse.go` for the full
+grammar.
+
+### One BMS file → one or more bricks DSL maps
+
+A BMS mapset can hold multiple `DFHMDI`-bounded maps; the
+converter emits one `MAP ... ENDMAP` block per map, in source
+order, into a single output file. The bricks map catalogue
+(`runtime/map/*.map`) accepts that shape natively -- no need
+to split the output into one file per map.
 
 ---
 

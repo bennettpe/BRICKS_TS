@@ -362,6 +362,16 @@ ENDMAP
 **`ENDMAP`**
    Terminates the map.
 
+### Converting legacy BMS sources
+
+The `bricksconvert` CLI utility (under `cmd/bricksconvert`)
+converts IBM CICS **BMS map source** (`DFHMSD` / `DFHMDI` /
+`DFHMDF` macros) into this DSL — the recommended path for
+porting an existing CICS application's screens onto bricks
+without rewriting every panel by hand. See the
+[BMS conversion section in the README](README.md#bms-conversion--bricksconvert)
+for usage details.
+
 ### Attributes
 
 `PROT`, `UNPROT`, `BRIGHT`, `DIM`, `UNDERSCORE`, `HIDDEN`, `NUMERIC`,
