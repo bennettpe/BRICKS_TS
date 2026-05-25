@@ -2007,3 +2007,13 @@ implemented as a bounded forward loop over the snapshot
 amount of in-flight deletes can blow the goroutine stack.
 
 ![BRICKS](bricks.png)
+<table>
+  <tr>
+    <td><img src="Screenshot%202026-05-25%20at%2008.46.04.png" width="45%"></td>
+    <td><img src="Screenshot%202026-05-25%20at%2008.46.48.png" width="45%"></td>
+  </tr>
+  <tr>
+    <td><img src="Screenshot%202026-05-25%20at%2008.46.26.png" width="45%"></td>
+    <td><img src="Screenshot%202026-05-25%20at%2008.47.12.png" width="45%"></td>
+  </tr>
+</table>
