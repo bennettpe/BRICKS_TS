@@ -2009,11 +2009,11 @@ amount of in-flight deletes can blow the goroutine stack.
 ![BRICKS](bricks.png)
 <table>
   <tr>
-    <td><img src="screen1.png" width="45%"></td>
-    <td><img src="screen2.png" width="45%"></td>
+    <td><img src="screen1.png" width="75%"></td>
+    <td><img src="screen2.png" width="75%"></td>
   </tr>
   <tr>
-    <td><img src="screen3.png" width="45%"></td>
-    <td><img src="screen4.png" width="45%"></td>
+    <td><img src="screen3.png" width="75%"></td>
+    <td><img src="screen4.png" width="75%"></td>
   </tr>
 </table>
