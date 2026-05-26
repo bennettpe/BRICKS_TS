@@ -1240,26 +1240,26 @@ first column (TRANSID, TERMID, FILE, USERID, …) so a long list reads
 in operator-friendly order. PF3 exits the screen, ENTER refreshes
 counters in place.
 
-`CEMT INQUIRE USER` further colour-codes its rows so the three
-categories of "user" jump out at a glance, and shows one row per
-connection (authenticated or not):
+`CEMT INQUIRE USER` further colour-codes its rows so the four
+categories of "user" jump out at a glance:
 
-* **Red** — actively signed-on right now (a UCB exists for the userid).
+* **Red** — connected AND signed-on (a UCB exists for the userid).
   The `TERMS` column lists every TermID this user is on, so one user
   with two open sessions collapses into one row (`T0001,T0002`).
-* **Pink** — every other live connection plus every idle defined user:
-  an unauthenticated TCB is rendered with USERID `(none)` and its
-  TermID in `TERMS`, so two anonymous connections produce two pink
-  rows; `users.conf` records whose owner isn't currently signed on
-  follow, with `LASTLOGIN` / `LOGINS` / `TXNRUN` back-filled from the
-  in-memory gone-cache when the operator signed off earlier this same
-  bricks process.
-* **Turquoise** — gone-cache entries whose userid is no longer in
-  `users.conf` (deleted via CEDA, or never persisted in the first
-  place). Sorted newest-first by `LASTLOGIN` so the most-recently-seen
-  stranger is at the top of the turquoise block.
+* **Pink** — connected but NOT signed-on. One pink row per
+  unauthenticated TCB, USERID `(none)`, with the TermID in `TERMS`.
+  Two anonymous connections produce two pink rows.
+* **Turquoise** — previously signed-on this process but now
+  disconnected. Pulled from an in-memory gone-cache that snapshots
+  every UCB the registry drops; sorted newest-first by `LASTLOGIN`.
+  Re-signing-on the same userid removes the entry so nothing is shown
+  twice.
+* **Yellow** — defined in `users.conf` but not seen this process.
+  Rendered at the bottom so admins have the full catalogue in front of
+  them when switching to `CEDA USER` to alter or define entries.
 
-The `TERMS` column sits at the right end of the row and absorbs
+Each userid appears at most once across the four tiers. The
+`TERMS` column sits at the right end of the row and absorbs
 whatever screen width is left after the fixed columns; TermIDs are
 appended comma-separated until adding the next one would push past
 the right margin, at which point the list simply stops.
@@ -2035,5 +2035,14 @@ transaction between the `STARTBR` snapshot and the read. The skip is
 implemented as a bounded forward loop over the snapshot
 (`cics/files.go::readNextFile`), replacing an unbounded recursion, so no
 amount of in-flight deletes can blow the goroutine stack.
+
+## Independent Bricks Apps
+
+Third-party applications and projects built on top of bricks. Send a
+PR to add yours.
+
+| Project | Description | Author |
+|---|---|---|
+| [Minette-Codes/Bricks](https://github.com/Minette-Codes/Bricks) | App built on the bricks transaction server. | [Minette-Codes](https://github.com/Minette-Codes) |
 
 ![BRICKS](bricks.png)
