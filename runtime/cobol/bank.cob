@@ -53,15 +53,29 @@
       *> as a cold start.
        01 STATE.
           05 ST-MAGIC  PIC X(4)  VALUE 'BANK'.
+             88 MAGIC-MATCHES VALUE 'BANK'.
           05 ST-SCREEN PIC X(1)  VALUE 'S'.
+             88 ON-SEARCH-SCREEN  VALUE 'S'.
+             88 ON-DETAIL-SCREEN  VALUE 'D'.
+             88 ON-ADDRESS-SCREEN VALUE 'A'.
+             88 ON-OPEN-SCREEN    VALUE 'O'.
+             88 ON-CLOSE-SCREEN   VALUE 'K'.
+             88 ON-EXIT-SCREEN    VALUE 'X'.
           05 ST-ACCT   PIC X(23) VALUE SPACES.
           05 ST-OFF    PIC X(6)  VALUE '000000'.
           05 ST-MSG    PIC X(60) VALUE SPACES.
           05 ST-LAST   PIC X(40) VALUE SPACES.
           05 ST-FIRST  PIC X(40) VALUE SPACES.
           05 ST-ADDR   PIC X(40) VALUE SPACES.
-          05 ST-FILL   PIC X(46) VALUE SPACES.
+      *> Trailing pad slots split into two FILLERs (anonymous storage).
+      *> Total stays 46 bytes so the COMMAREA layout is unchanged across
+      *> invocations -- bricks rejects same-named non-FILLER siblings,
+      *> but multiple FILLERs at the same level are legal and unrelated.
+          05 FILLER    PIC X(20) VALUE SPACES.
+          05 FILLER    PIC X(26) VALUE SPACES.
        01 WARM-FLAG    PIC X(1)  VALUE 'N'.
+          88 WARM-START VALUE 'Y'.
+          88 COLD-START VALUE 'N'.
 
       *> ---- numeric scratch ------------------------------------------
        01 N-OFF       PIC 9(6)    VALUE 0.
@@ -159,6 +173,8 @@
        01 DB-PHONE     PIC X(15).
        01 DB-BAL-TXT   PIC X(20).
        01 DB-STATUS    PIC X(1).
+          88 ACCOUNT-IS-OPEN   VALUE 'O'.
+          88 ACCOUNT-IS-CLOSED VALUE 'C'.
        01 DB-OPENED    PIC X(10).
 
       *> Per-row host vars are sizd to the EXACT column widths the
@@ -212,9 +228,9 @@
       *>      time to chain another BANK task on the next ENTER.
        MAIN.
            MOVE 'N' TO WARM-FLAG.
-           IF EIBCALEN > 0 THEN
+           IF EIBCALEN IS POSITIVE THEN
                MOVE DFHCOMMAREA TO STATE
-               IF ST-MAGIC = 'BANK' THEN
+               IF MAGIC-MATCHES THEN
                    MOVE 'Y' TO WARM-FLAG
                END-IF
            END-IF.
@@ -222,7 +238,7 @@
       *> Cold-start (or stale COMMAREA from another transaction) ->
       *> reinitialise STATE so the rest of the program sees a clean,
       *> magic-tagged snapshot.
-           IF WARM-FLAG = 'N' THEN
+           IF COLD-START THEN
                MOVE 'BANK'   TO ST-MAGIC
                MOVE 'S'      TO ST-SCREEN
                MOVE SPACES   TO ST-ACCT
@@ -235,11 +251,11 @@
 
            EXEC SQL WHENEVER SQLERROR CONTINUE END-EXEC.
 
-      *> Phase 1: handle the prior screen's input. Only valid when
-      *> WARM-FLAG = 'Y' -- otherwise the previous SEND was either
-      *> never made or was made by some other transaction's map, and
+      *> Phase 1: handle the prior screen's input. Only valid on a
+      *> warm start -- otherwise the previous SEND was either never
+      *> made or was made by some other transaction's map, and
       *> RECEIVE MAP('BANKx') would MAPFAIL.
-           IF WARM-FLAG = 'Y' THEN
+           IF WARM-START THEN
                EVALUATE ST-SCREEN
                    WHEN 'S' PERFORM HANDLE-SEARCH
                    WHEN 'D' PERFORM HANDLE-DETAIL
@@ -280,11 +296,11 @@
        HANDLE-SEARCH.
            EXEC CICS RECEIVE MAP('BANK1') INTO(SCR1) END-EXEC.
 
-           IF EIBAID = PF03 THEN
+           IF EIBAID EQUAL PF03 THEN
                MOVE 'X' TO ST-SCREEN
            END-IF.
 
-           IF ST-SCREEN = 'S' THEN
+           IF ON-SEARCH-SCREEN THEN
                PERFORM PROCESS-SEARCH-INPUT
            END-IF.
 
@@ -294,44 +310,45 @@
       *> Account number always wins -- and short-circuits everything.
       *> The lpad in the WHERE clause lets the operator type a short
       *> number too (e.g. "61") and still match the zero-padded row.
-           IF S1ACCT NOT = SPACES THEN
+           IF S1ACCT NOT EQUAL SPACES THEN
                PERFORM DO-LOOKUP-ACCT
                MOVE SPACES TO ST-LAST
                MOVE SPACES TO ST-FIRST
                MOVE SPACES TO ST-ADDR
            ELSE
-               IF S1LAST NOT = SPACES THEN
+               IF S1LAST NOT EQUAL SPACES THEN
                    MOVE S1LAST TO ST-LAST
                    MOVE SPACES TO ST-FIRST
                    MOVE SPACES TO ST-ADDR
                END-IF
-               IF S1LAST = SPACES AND S1FIRST NOT = SPACES THEN
+               IF S1LAST EQUAL SPACES AND S1FIRST NOT EQUAL SPACES THEN
                    MOVE SPACES TO ST-LAST
                    MOVE S1FIRST TO ST-FIRST
                    MOVE SPACES TO ST-ADDR
                END-IF
-               IF S1LAST = SPACES AND S1FIRST = SPACES
-                  AND S1ADDR NOT = SPACES THEN
+               IF S1LAST EQUAL SPACES AND S1FIRST EQUAL SPACES
+                  AND S1ADDR NOT EQUAL SPACES THEN
                    MOVE SPACES TO ST-LAST
                    MOVE SPACES TO ST-FIRST
                    MOVE S1ADDR TO ST-ADDR
                END-IF
       *> Re-run whichever search is active so RESOLVE-SEL has fresh
-      *> HIT-ACCT to index into.
+      *> HIT-ACCT to index into. N-HITS is unsigned PIC 9 -- the
+      *> IS POSITIVE test is equivalent to N-HITS > 0.
                PERFORM REBUILD-HITS
-               IF N-HITS > 0 AND S1SEL NOT = SPACES THEN
+               IF N-HITS IS POSITIVE AND S1SEL NOT EQUAL SPACES THEN
                    PERFORM RESOLVE-SEL
                END-IF
       *> One "No matches." check per active criterion -- parens
       *> around a sub-OR aren't allowed by the bricks parser, so a
       *> trio of IFs replaces the single grouped form.
-               IF N-HITS = 0 AND ST-LAST NOT = SPACES THEN
+               IF N-HITS IS ZERO AND ST-LAST NOT EQUAL SPACES THEN
                    MOVE 'No matches.' TO ST-MSG
                END-IF
-               IF N-HITS = 0 AND ST-FIRST NOT = SPACES THEN
+               IF N-HITS IS ZERO AND ST-FIRST NOT EQUAL SPACES THEN
                    MOVE 'No matches.' TO ST-MSG
                END-IF
-               IF N-HITS = 0 AND ST-ADDR NOT = SPACES THEN
+               IF N-HITS IS ZERO AND ST-ADDR NOT EQUAL SPACES THEN
                    MOVE 'No matches.' TO ST-MSG
                END-IF
            END-IF.
@@ -363,14 +380,14 @@
 
        REBUILD-HITS.
            MOVE 0 TO N-HITS.
-           IF ST-LAST NOT = SPACES THEN
+           IF ST-LAST NOT EQUAL SPACES THEN
                PERFORM DO-SEARCH-LAST
            END-IF.
-           IF ST-LAST = SPACES AND ST-FIRST NOT = SPACES THEN
+           IF ST-LAST EQUAL SPACES AND ST-FIRST NOT EQUAL SPACES THEN
                PERFORM DO-SEARCH-FIRST
            END-IF.
-           IF ST-LAST = SPACES AND ST-FIRST = SPACES
-              AND ST-ADDR NOT = SPACES THEN
+           IF ST-LAST EQUAL SPACES AND ST-FIRST EQUAL SPACES
+              AND ST-ADDR NOT EQUAL SPACES THEN
                PERFORM DO-SEARCH-ADDR
            END-IF.
 
@@ -392,13 +409,21 @@
                 LIMIT 8
            END-EXEC.
            EXEC SQL OPEN C1L END-EXEC.
-           PERFORM FETCH-LAST UNTIL SQLCODE = 100 OR N-HITS >= 8.
+      *> Break on ANY non-zero SQLCODE: +100 (end-of-data),
+      *> negatives (errors), or anything else. The original
+      *> "= 100" guard only matched clean end-of-data and let
+      *> per-FETCH failures spin indefinitely under WHENEVER
+      *> SQLERROR CONTINUE. PERFORM UNTIL evaluates BEFORE the
+      *> first iteration, so a failed OPEN (negative SQLCODE)
+      *> also skips the loop entirely.
+           PERFORM FETCH-LAST UNTIL SQLCODE NOT EQUAL 0
+               OR N-HITS GREATER THAN OR EQUAL TO 8.
            EXEC SQL CLOSE C1L END-EXEC.
 
        FETCH-LAST.
            EXEC SQL FETCH C1L INTO :DB-ACCT, :DB-FIRST,
                                    :DB-LAST, :DB-CITY END-EXEC.
-           IF SQLCODE = 0 THEN PERFORM ADD-HIT-ROW END-IF.
+           IF SQLCODE EQUAL 0 THEN PERFORM ADD-HIT-ROW END-IF.
 
        DO-SEARCH-FIRST.
            MOVE SPACES TO PAT-FIRST.
@@ -414,13 +439,14 @@
                 LIMIT 8
            END-EXEC.
            EXEC SQL OPEN C1F END-EXEC.
-           PERFORM FETCH-FIRST UNTIL SQLCODE = 100 OR N-HITS >= 8.
+           PERFORM FETCH-FIRST UNTIL SQLCODE NOT EQUAL 0
+               OR N-HITS GREATER THAN OR EQUAL TO 8.
            EXEC SQL CLOSE C1F END-EXEC.
 
        FETCH-FIRST.
            EXEC SQL FETCH C1F INTO :DB-ACCT, :DB-FIRST,
                                    :DB-LAST, :DB-CITY END-EXEC.
-           IF SQLCODE = 0 THEN PERFORM ADD-HIT-ROW END-IF.
+           IF SQLCODE EQUAL 0 THEN PERFORM ADD-HIT-ROW END-IF.
 
        DO-SEARCH-ADDR.
            MOVE SPACES TO PAT-ADDR.
@@ -438,13 +464,14 @@
                 LIMIT 8
            END-EXEC.
            EXEC SQL OPEN C1A END-EXEC.
-           PERFORM FETCH-ADDR UNTIL SQLCODE = 100 OR N-HITS >= 8.
+           PERFORM FETCH-ADDR UNTIL SQLCODE NOT EQUAL 0
+               OR N-HITS GREATER THAN OR EQUAL TO 8.
            EXEC SQL CLOSE C1A END-EXEC.
 
        FETCH-ADDR.
            EXEC SQL FETCH C1A INTO :DB-ACCT, :DB-FIRST,
                                    :DB-LAST, :DB-CITY END-EXEC.
-           IF SQLCODE = 0 THEN PERFORM ADD-HIT-ROW END-IF.
+           IF SQLCODE EQUAL 0 THEN PERFORM ADD-HIT-ROW END-IF.
 
        ADD-HIT-ROW.
            ADD 1 TO N-HITS.
@@ -467,8 +494,18 @@
            MOVE LINE-OUT TO HIT-LINE(N-HITS).
 
        RESOLVE-SEL.
-           MOVE FUNCTION NUMVAL(S1SEL) TO N-PICK.
-           IF N-PICK >= 1 AND N-PICK <= N-HITS THEN
+      *> Guard NUMVAL with IS NUMERIC so non-numeric input routes to
+      *> N-PICK = 0 (out-of-range branch) without depending on NUMVAL's
+      *> behaviour on non-digit text. Behaviour-preserving: if NUMVAL
+      *> on garbage was already returning 0, the explicit zero here
+      *> reaches the same downstream branch.
+           IF S1SEL IS NUMERIC THEN
+               MOVE FUNCTION NUMVAL(S1SEL) TO N-PICK
+           ELSE
+               MOVE 0 TO N-PICK
+           END-IF.
+           IF N-PICK GREATER THAN OR EQUAL TO 1
+              AND N-PICK LESS THAN OR EQUAL TO N-HITS THEN
                MOVE HIT-ACCT(N-PICK) TO ST-ACCT
                MOVE '000000' TO ST-OFF
                MOVE SPACES TO ST-LAST
@@ -489,13 +526,13 @@
       *> Repopulate the hit list from the persistent search context
       *> so the operator sees the same rows they were picking from.
            MOVE 0 TO N-HITS.
-           IF ST-LAST NOT = SPACES OR ST-FIRST NOT = SPACES
-              OR ST-ADDR NOT = SPACES THEN
+           IF ST-LAST NOT EQUAL SPACES OR ST-FIRST NOT EQUAL SPACES
+              OR ST-ADDR NOT EQUAL SPACES THEN
                PERFORM REBUILD-HITS
            END-IF.
            PERFORM PAINT-HITLIST.
 
-           IF ST-MSG = SPACES AND N-HITS > 0 THEN
+           IF ST-MSG EQUAL SPACES AND N-HITS IS POSITIVE THEN
                STRING 'Found '              DELIMITED BY SIZE
                       N-HITS                DELIMITED BY SIZE
                       ' matches. Type row number then ENTER.'
@@ -510,14 +547,22 @@
        PAINT-HITLIST.
            MOVE SPACES TO S1ROW1 S1ROW2 S1ROW3 S1ROW4.
            MOVE SPACES TO S1ROW5 S1ROW6 S1ROW7 S1ROW8.
-           IF N-HITS >= 1 MOVE HIT-LINE(1) TO S1ROW1 END-IF.
-           IF N-HITS >= 2 MOVE HIT-LINE(2) TO S1ROW2 END-IF.
-           IF N-HITS >= 3 MOVE HIT-LINE(3) TO S1ROW3 END-IF.
-           IF N-HITS >= 4 MOVE HIT-LINE(4) TO S1ROW4 END-IF.
-           IF N-HITS >= 5 MOVE HIT-LINE(5) TO S1ROW5 END-IF.
-           IF N-HITS >= 6 MOVE HIT-LINE(6) TO S1ROW6 END-IF.
-           IF N-HITS >= 7 MOVE HIT-LINE(7) TO S1ROW7 END-IF.
-           IF N-HITS >= 8 MOVE HIT-LINE(8) TO S1ROW8 END-IF.
+           IF N-HITS GREATER THAN OR EQUAL TO 1
+              MOVE HIT-LINE(1) TO S1ROW1 END-IF.
+           IF N-HITS GREATER THAN OR EQUAL TO 2
+              MOVE HIT-LINE(2) TO S1ROW2 END-IF.
+           IF N-HITS GREATER THAN OR EQUAL TO 3
+              MOVE HIT-LINE(3) TO S1ROW3 END-IF.
+           IF N-HITS GREATER THAN OR EQUAL TO 4
+              MOVE HIT-LINE(4) TO S1ROW4 END-IF.
+           IF N-HITS GREATER THAN OR EQUAL TO 5
+              MOVE HIT-LINE(5) TO S1ROW5 END-IF.
+           IF N-HITS GREATER THAN OR EQUAL TO 6
+              MOVE HIT-LINE(6) TO S1ROW6 END-IF.
+           IF N-HITS GREATER THAN OR EQUAL TO 7
+              MOVE HIT-LINE(7) TO S1ROW7 END-IF.
+           IF N-HITS GREATER THAN OR EQUAL TO 8
+              MOVE HIT-LINE(8) TO S1ROW8 END-IF.
 
       *> ===============================================================
       *> Detail screen (BANK2)
@@ -526,13 +571,13 @@
        HANDLE-DETAIL.
            EXEC CICS RECEIVE MAP('BANK2') INTO(SCR2) END-EXEC.
            MOVE SPACES TO ST-MSG.
-           IF EIBAID = PF03 THEN MOVE 'S' TO ST-SCREEN END-IF.
-           IF EIBAID = PF04 THEN MOVE 'A' TO ST-SCREEN END-IF.
-           IF EIBAID = PF05 THEN MOVE 'K' TO ST-SCREEN END-IF.
-           IF EIBAID = PF06 THEN MOVE 'O' TO ST-SCREEN END-IF.
-           IF EIBAID = PF07 THEN
+           IF EIBAID EQUAL PF03 THEN MOVE 'S' TO ST-SCREEN END-IF.
+           IF EIBAID EQUAL PF04 THEN MOVE 'A' TO ST-SCREEN END-IF.
+           IF EIBAID EQUAL PF05 THEN MOVE 'K' TO ST-SCREEN END-IF.
+           IF EIBAID EQUAL PF06 THEN MOVE 'O' TO ST-SCREEN END-IF.
+           IF EIBAID EQUAL PF07 THEN
                MOVE FUNCTION NUMVAL(ST-OFF) TO N-OFF
-               IF N-OFF >= 13 THEN
+               IF N-OFF GREATER THAN OR EQUAL TO 13 THEN
                    SUBTRACT 13 FROM N-OFF
                ELSE
                    MOVE 0 TO N-OFF
@@ -540,7 +585,7 @@
                MOVE N-OFF TO N-NEXT
                MOVE N-NEXT TO ST-OFF
            END-IF.
-           IF EIBAID = PF08 THEN
+           IF EIBAID EQUAL PF08 THEN
                MOVE FUNCTION NUMVAL(ST-OFF) TO N-OFF
                ADD 13 TO N-OFF
                MOVE N-OFF TO N-NEXT
@@ -550,7 +595,7 @@
        PAINT-DETAIL.
            MOVE SPACES TO SCR2.
            PERFORM LOAD-ACCOUNT.
-           IF ST-SCREEN = 'D' THEN
+           IF ON-DETAIL-SCREEN THEN
                PERFORM LOAD-TRANSACTIONS
                MOVE ST-MSG TO S2MSG
                EXEC CICS SEND MAP('BANK2') FROM(SCR2) ERASE END-EXEC
@@ -595,7 +640,7 @@
                    MOVE DB-PHONE TO S2PHONE
                    MOVE DB-EMAIL TO S2EMAIL
                    MOVE DB-BAL-TXT TO S2BALANCE
-                   IF DB-STATUS = 'O' THEN
+                   IF ACCOUNT-IS-OPEN THEN
                        MOVE 'OPEN'   TO S2STATUS
                    ELSE
                        MOVE 'CLOSED' TO S2STATUS
@@ -653,10 +698,16 @@
            END-EXEC.
 
            EXEC SQL OPEN C2T END-EXEC.
-           PERFORM FETCH-TX UNTIL SQLCODE = 100 OR N-COUNT >= 13.
+      *> Break on ANY non-zero SQLCODE: +100 (end-of-data),
+      *> negatives (errors). With the original "= 100" guard a
+      *> per-FETCH failure (or a failed OPEN above) would spin
+      *> the loop indefinitely, since WHENEVER SQLERROR CONTINUE
+      *> is in effect.
+           PERFORM FETCH-TX UNTIL SQLCODE NOT EQUAL 0
+               OR N-COUNT GREATER THAN OR EQUAL TO 13.
            EXEC SQL CLOSE C2T END-EXEC.
 
-           IF N-COUNT = 0 AND N-OFF > 0 THEN
+           IF N-COUNT IS ZERO AND N-OFF IS POSITIVE THEN
                MOVE 'No more transactions in that direction.'
                    TO ST-MSG
            END-IF.
@@ -666,7 +717,7 @@
       *>   ts, type, amount, description, balance.
            EXEC SQL FETCH C2T INTO :TX-TS, :TX-TYPE, :TX-AMT-TXT,
                                    :TX-DESC, :TX-BAL-TXT END-EXEC.
-           IF SQLCODE = 0 THEN
+           IF SQLCODE EQUAL 0 THEN
                ADD 1 TO N-COUNT
       *> Row layout: timestamp | TYPE | AMOUNT | NEW BALANCE |
       *> description.  AMOUNT is unsigned -- TYPE already says
@@ -713,7 +764,7 @@
        HANDLE-ADDRESS.
            EXEC CICS RECEIVE MAP('BANK3') INTO(SCR3) END-EXEC.
            MOVE SPACES TO ST-MSG.
-           IF EIBAID = PF03 THEN
+           IF EIBAID EQUAL PF03 THEN
                MOVE 'D' TO ST-SCREEN
            ELSE
                EXEC SQL
@@ -724,7 +775,7 @@
                           zip    = :S3ZIP
                     WHERE account_number = :ST-ACCT
                END-EXEC
-               IF SQLCODE = 0 THEN
+               IF SQLCODE EQUAL 0 THEN
                    EXEC SQL COMMIT END-EXEC
                    MOVE 'Address updated.' TO ST-MSG
                    MOVE 'D' TO ST-SCREEN
@@ -743,7 +794,7 @@
                  FROM accounts
                 WHERE account_number = :ST-ACCT
            END-EXEC.
-           IF SQLCODE NOT = 0 THEN
+           IF SQLCODE NOT EQUAL 0 THEN
                MOVE 'Account vanished.' TO ST-MSG
                MOVE 'S' TO ST-SCREEN
                PERFORM PAINT-SEARCH
@@ -771,16 +822,16 @@
        HANDLE-OPEN.
            EXEC CICS RECEIVE MAP('BANK4') INTO(SCR4) END-EXEC.
            MOVE SPACES TO ST-MSG.
-           IF EIBAID = PF03 THEN
+           IF EIBAID EQUAL PF03 THEN
                MOVE 'S' TO ST-SCREEN
            ELSE
                PERFORM DO-CREATE-ACCOUNT
            END-IF.
 
        DO-CREATE-ACCOUNT.
-           IF S4FIRST = SPACES OR S4LAST = SPACES
-              OR S4STREET = SPACES OR S4CITY = SPACES
-              OR S4STATE = SPACES OR S4ZIP = SPACES THEN
+           IF S4FIRST EQUAL SPACES OR S4LAST EQUAL SPACES
+              OR S4STREET EQUAL SPACES OR S4CITY EQUAL SPACES
+              OR S4STATE EQUAL SPACES OR S4ZIP EQUAL SPACES THEN
                MOVE 'First, Last, Street, City, State, ZIP required.'
                    TO ST-MSG
            ELSE
@@ -794,15 +845,29 @@
                               'FM00000000000000000000000')
                  INTO :NEW-ACCT
            END-EXEC.
-           IF SQLCODE NOT = 0 THEN
-               MOVE 'Could not allocate account number.' TO ST-MSG
-           ELSE
-               PERFORM DO-INSERT-ACCOUNT
-           END-IF.
+      *> EVALUATE so a missing schema (the most common cause of this
+      *> failing) tells the operator exactly which script to run, and
+      *> a lost Postgres connection / unconfigured SQL surface their
+      *> own messages instead of all collapsing into the generic
+      *> "could not allocate" line.
+           EVALUATE SQLCODE
+               WHEN SQL-OK
+                   PERFORM DO-INSERT-ACCOUNT
+               WHEN SQL-UNDEF-TBL
+                   MOVE 'BANK schema missing -- run scripts/bank_schema.bash.'
+                       TO ST-MSG
+               WHEN SQL-NOCONFIG
+                   MOVE 'SQL not configured -- check bricks.cnf.'
+                       TO ST-MSG
+               WHEN SQL-CONNLOST
+                   MOVE 'Lost the Postgres connection.' TO ST-MSG
+               WHEN OTHER
+                   MOVE 'Could not allocate account number.' TO ST-MSG
+           END-EVALUATE.
 
        DO-INSERT-ACCOUNT.
            MOVE S4DEPOSIT TO DEP-TXT.
-           IF FUNCTION TRIM(DEP-TXT) = SPACES THEN
+           IF FUNCTION TRIM(DEP-TXT) EQUAL SPACES THEN
                MOVE '0' TO DEP-TXT
            END-IF.
 
@@ -816,7 +881,7 @@
                        :S4EMAIL, :S4PHONE,
                        CAST(:DEP-TXT AS numeric), 'O')
            END-EXEC.
-           IF SQLCODE NOT = 0 THEN
+           IF SQLCODE NOT EQUAL 0 THEN
                EXEC SQL ROLLBACK END-EXEC
                MOVE 'INSERT failed -- check fields.' TO ST-MSG
            ELSE
@@ -824,7 +889,7 @@
            END-IF.
 
        DO-OPENING-DEPOSIT.
-           IF FUNCTION TRIM(DEP-TXT) NOT = '0' THEN
+           IF FUNCTION TRIM(DEP-TXT) NOT EQUAL '0' THEN
                EXEC SQL
                    INSERT INTO transactions
                        (account_number, tx_type, amount,
@@ -835,7 +900,7 @@
                            'Branch counter',
                            CAST(:DEP-TXT AS numeric))
                END-EXEC
-               IF SQLCODE NOT = 0 THEN
+               IF SQLCODE NOT EQUAL 0 THEN
                    EXEC SQL ROLLBACK END-EXEC
                    MOVE 'Deposit record failed.' TO ST-MSG
                    MOVE STATE TO DFHCOMMAREA
@@ -864,14 +929,14 @@
        HANDLE-CLOSE.
            EXEC CICS RECEIVE MAP('BANK5') INTO(SCR5) END-EXEC.
            MOVE SPACES TO ST-MSG.
-           IF EIBAID = PF03 THEN
+           IF EIBAID EQUAL PF03 THEN
                MOVE 'D' TO ST-SCREEN
            ELSE
                PERFORM DO-CONFIRM-CLOSE
            END-IF.
 
        DO-CONFIRM-CLOSE.
-           IF FUNCTION UPPER-CASE(S5CONFIRM) NOT = 'CLOSE   ' THEN
+           IF FUNCTION UPPER-CASE(S5CONFIRM) NOT EQUAL 'CLOSE   ' THEN
                MOVE 'Type CLOSE exactly to confirm.' TO ST-MSG
            ELSE
                PERFORM DO-EXECUTE-CLOSE
@@ -888,7 +953,7 @@
                  FROM accounts
                 WHERE account_number = :ST-ACCT
            END-EXEC.
-           IF SQLCODE NOT = 0 THEN
+           IF SQLCODE NOT EQUAL 0 THEN
                EXEC SQL ROLLBACK END-EXEC
                MOVE 'Closing transaction failed.' TO ST-MSG
            ELSE
@@ -903,7 +968,7 @@
                       closed_date = CURRENT_DATE
                 WHERE account_number = :ST-ACCT
            END-EXEC.
-           IF SQLCODE NOT = 0 THEN
+           IF SQLCODE NOT EQUAL 0 THEN
                EXEC SQL ROLLBACK END-EXEC
                MOVE 'Close failed -- rolled back.' TO ST-MSG
            ELSE
@@ -921,7 +986,7 @@
                  FROM accounts
                 WHERE account_number = :ST-ACCT
            END-EXEC.
-           IF SQLCODE NOT = 0 THEN
+           IF SQLCODE NOT EQUAL 0 THEN
                MOVE 'Account vanished.' TO ST-MSG
                MOVE 'S' TO ST-SCREEN
                PERFORM PAINT-SEARCH

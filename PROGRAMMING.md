@@ -3483,6 +3483,13 @@ buffer round-trips cleanly across an inter-language `EXEC CICS LINK`.
 * **`VALUE`:** `VALUE 'literal'`, `VALUE 42`, `VALUE SPACES`,
   `VALUE ZEROS`, `VALUE HIGH-VALUES`, `VALUE LOW-VALUES`,
   `VALUE QUOTES`.
+* **Level 88 condition-names:** `88 NAME VALUE 'X'.`,
+  `VALUES 'A', 'B', 'C'.`, or `VALUE 'A' THRU 'Z'.` The 88-level
+  attaches to the immediately preceding non-88 data item and
+  declares a boolean condition that is true when that item's
+  current value matches one of the listed values (or falls inside
+  a `THRU` range). Reference as a bare name from PROCEDURE
+  DIVISION — see Chapter 22 "88-level condition names".
 * **Group items:**
 
   ```cobol
@@ -3617,6 +3624,127 @@ at the paragraph level does.
 
 IBM-style postfix NOT (`X NOT = Y`, `X NOT > Y`) is supported in
 `IF` / `EVALUATE` / `PERFORM UNTIL` conditions.
+
+### Relational operators
+
+Both symbolic and English-spelled relational operators are accepted
+in `IF`, `EVALUATE WHEN`, and `PERFORM UNTIL` conditions. The two
+styles are interchangeable; legacy CICS applications typically use
+the English spelling.
+
+The optional words `IS`, `THAN`, and `TO` are noise — present or
+omitted without changing meaning. `NOT` may prefix any operator and
+appears before or after `IS` (`IF X IS NOT EQUAL TO Y`).
+
+| Meaning              | Symbolic        | English-spelled forms (noise words bracketed) |
+|---|---|---|
+| equal                | `=`             | `[IS] EQUAL [TO]`                              |
+| not equal            | `<>`, `NOT =`   | `[IS] NOT EQUAL [TO]`                          |
+| greater              | `>`             | `[IS] GREATER [THAN]`                          |
+| not greater (≤)      | `NOT >`         | `[IS] NOT GREATER [THAN]`                      |
+| less                 | `<`             | `[IS] LESS [THAN]`                             |
+| not less (≥)         | `NOT <`         | `[IS] NOT LESS [THAN]`                         |
+| greater or equal     | `>=`            | `[IS] GREATER [THAN] OR EQUAL [TO]`            |
+| less or equal        | `<=`            | `[IS] LESS [THAN] OR EQUAL [TO]`               |
+
+The four lines below are equivalent — all four compile to the same
+comparison and run identically:
+
+```cobol
+IF WK-MTH = 7         DISPLAY 'JULY'.
+IF WK-MTH EQUAL 7     DISPLAY 'JULY'.
+IF WK-MTH EQUAL TO 7  DISPLAY 'JULY'.
+IF WK-MTH IS EQUAL TO 7  DISPLAY 'JULY'.
+```
+
+### Class condition tests
+
+`X IS [NOT] {NUMERIC | ALPHABETIC | ALPHABETIC-UPPER | ALPHABETIC-LOWER}`
+tests the current **byte contents** of a data item against a
+character class — not its static `PIC` class. A `PIC 9(4)` field
+holding `0000` is NUMERIC; the same field after a partial move
+that injects letters is not.
+
+`IS` is optional noise; `NOT` negates as in any other condition.
+
+```cobol
+IF WS-INPUT IS NUMERIC
+   PERFORM CALC
+ELSE
+   DISPLAY 'NON-NUMERIC INPUT'.
+IF WS-NAME IS ALPHABETIC
+   PERFORM ACCEPT-NAME.
+```
+
+`ALPHABETIC` accepts uppercase letters, lowercase letters, and
+space. `ALPHABETIC-UPPER` and `ALPHABETIC-LOWER` restrict to
+their case (plus space). For `PIC S9` signed numerics the byte 0
+sign position is allowed to hold `' '`, `'+'`, or `'-'`.
+
+### Sign condition tests
+
+`X IS [NOT] {POSITIVE | NEGATIVE | ZERO}` tests the numeric sign
+of a numeric expression. The operand must be a numeric data
+item (`PIC 9...` or `PIC S9...`) or a numeric expression; a
+sign test on a non-numeric operand is a runtime error rather
+than a silent false.
+
+```cobol
+IF WS-BALANCE IS NEGATIVE
+   DISPLAY 'OVERDRAWN'.
+IF AMOUNT IS ZERO
+   PERFORM SKIP-ENTRY.
+```
+
+Signed zero is neither POSITIVE nor NEGATIVE; an unsigned PIC
+(`PIC 9...` without `S`) can never be NEGATIVE — that short-
+circuits to false without inspecting the value.
+
+### 88-level condition names
+
+A level-88 line in DATA DIVISION declares a boolean condition
+tied to the **preceding non-88 data item**. The condition is
+true when the parent's current value matches one of the listed
+values or falls within a `THRU` range. Reference as a bare name
+in any PROCEDURE DIVISION condition.
+
+```cobol
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  RESP-CODE  PIC 9(3).
+           88 RESP-OK        VALUE 0.
+           88 RESP-MISSING   VALUE 13.
+           88 RESP-RECOVER   VALUES 12, 26, 80.
+           88 RESP-FATAL     VALUE 100 THRU 999.
+       PROCEDURE DIVISION.
+       MAIN.
+           EXEC CICS READ FILE('CUSTOMER')
+                          INTO(REC) RIDFLD(KEY)
+                          RESP(RESP-CODE) END-EXEC.
+           IF RESP-OK
+              CONTINUE
+           ELSE IF RESP-RECOVER
+              PERFORM RETRY
+           ELSE IF RESP-FATAL
+              PERFORM ABEND.
+```
+
+`VALUES` (plural) and `VALUE` (singular) are interchangeable.
+Multiple values may be separated by commas or by spaces. `THRU`
+(synonym `THROUGH`) declares an inclusive range; ranges and
+single values can be mixed in one declaration:
+`88 OK VALUES 0, 1 THRU 5, 9.`
+
+Comparison style follows the parent's PIC class — numeric
+parents compare numerically, alphanumeric parents compare
+byte-by-byte (after rstripping trailing spaces). `NOT` and the
+AND/OR connectives compose normally:
+`IF NOT RESP-OK OR RESP-FATAL`.
+
+A condition-name lives in its own namespace, separate from data
+items — `01 STATUS PIC X.` and `88 STATUS-OK VALUE 'Y'.` are
+two different lookups. Declaring an 88 whose name collides with
+an existing data item is rejected at parse time.
 
 ### Intrinsic functions
 
