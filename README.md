@@ -1819,6 +1819,10 @@ go build -o bricksconvert ./cmd/bricksconvert    # one-time build
 # Mode 1 -- convert and write the result to a file.
 ./bricksconvert -o runtime/map/cust1.map  legacy/cust1.bms
 
+# Mode 1b -- also emit a COBOL copybook alongside the .map.
+./bricksconvert -o runtime/map/cust1.map -copy runtime/cobolcopy/cust1.cpy \
+                legacy/cust1.bms
+
 # Mode 2 -- "check-only" -- parse + verify with no output written.
 #          Useful in CI: exits 0 iff every file converts cleanly.
 ./bricksconvert -check legacy/cust1.bms
@@ -1828,6 +1832,30 @@ The tool reads one BMS source file on the command line. Exactly
 one of `-o <path>` or `-check` is required -- the converter
 refuses to run without a declared destination so a misinvocation
 can't dump the DSL onto stdout by accident.
+
+### `-copy` — generate a matching COBOL copybook
+
+Pair `-copy <path>` with `-o` to also write a COBOL copybook (`.cpy`)
+mirroring the converted map's named fields. Each BMS map becomes a
+`01 <mapname>.` group with one `05 <field> PIC X(N).` entry per
+named field (or `PIC 9(N).` when the BMS source set `ATTRB=NUM`).
+Unnamed fields (chrome / literals) are skipped; fields without a
+`LENGTH=` are skipped with a `*> WARNING:` line in the header so the
+operator notices.
+
+The COBOL program then pulls the storage in with one line:
+
+```cobol
+       WORKING-STORAGE SECTION.
+       COPY CUST1.
+       ...
+       EXEC CICS SEND MAP('CUST1') FROM(CUST1) END-EXEC.
+```
+
+`-copy` requires `-o` and refuses to combine with `-check` — the
+copybook is a by-product of a real conversion, not a check-mode
+emission. Misinvocations exit 2 with a specific message
+(`bricksconvert: -copy requires -o`).
 
 ### Help, exit codes, colour
 
