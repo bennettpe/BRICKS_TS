@@ -1235,7 +1235,37 @@ C  CONTROLBLOCKS   TCBs / UCBs / TXCBs / FCBs (admin)
 
 Each detail screen renders a fixed-width table. Columns are auto-sized
 to the widest value, with a fallback to ellipsis when the row would
-overflow. PF3 exits the screen, ENTER refreshes counters in place.
+overflow. Every INQUIRE screen sorts rows alphabetically by the
+first column (TRANSID, TERMID, FILE, USERID, …) so a long list reads
+in operator-friendly order. PF3 exits the screen, ENTER refreshes
+counters in place.
+
+`CEMT INQUIRE USER` further colour-codes its rows so the three
+categories of "user" jump out at a glance, and shows one row per
+connection (authenticated or not):
+
+* **Red** — actively signed-on right now (a UCB exists for the userid).
+  The `TERMS` column lists every TermID this user is on, so one user
+  with two open sessions collapses into one row (`T0001,T0002`).
+* **Pink** — every other live connection plus every idle defined user:
+  an unauthenticated TCB is rendered with USERID `(none)` and its
+  TermID in `TERMS`, so two anonymous connections produce two pink
+  rows; `users.conf` records whose owner isn't currently signed on
+  follow, with `LASTLOGIN` / `LOGINS` / `TXNRUN` back-filled from the
+  in-memory gone-cache when the operator signed off earlier this same
+  bricks process.
+* **Turquoise** — gone-cache entries whose userid is no longer in
+  `users.conf` (deleted via CEDA, or never persisted in the first
+  place). Sorted newest-first by `LASTLOGIN` so the most-recently-seen
+  stranger is at the top of the turquoise block.
+
+The `TERMS` column sits at the right end of the row and absorbs
+whatever screen width is left after the fixed columns; TermIDs are
+appended comma-separated until adding the next one would push past
+the right margin, at which point the list simply stops.
+
+The gone-cache is purely in-memory — bricks restart clears it and no
+login is ever written to disk by this screen.
 
 ### CEMT MONITOR
 
@@ -2007,13 +2037,3 @@ implemented as a bounded forward loop over the snapshot
 amount of in-flight deletes can blow the goroutine stack.
 
 ![BRICKS](bricks.png)
-<table>
-  <tr>
-    <td><img src="screen1.png" width="75%"></td>
-    <td><img src="screen2.png" width="75%"></td>
-  </tr>
-  <tr>
-    <td><img src="screen3.png" width="75%"></td>
-    <td><img src="screen4.png" width="75%"></td>
-  </tr>
-</table>
