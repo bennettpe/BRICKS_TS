@@ -136,8 +136,7 @@ EXIT
 
 /* ------------------------------------------------------------------
  * Helpers (PROCEDURE EXPOSE because bricks REXX CALL only resolves
- * named PROCEDURE labels -- bare labels error out with "unknown
- * function").
+ * named PROCEDURE labels
  * ------------------------------------------------------------------ */
 
 LOAD_HISTORY: PROCEDURE EXPOSE NLINES HIST.
@@ -182,8 +181,8 @@ POPULATE_ROWS: PROCEDURE EXPOSE NLINES HIST. SCR.
       REC = HIST.HISTIDX
       USER = LEFT(SUBSTR(REC, 1, 8), 8)
       MSG  = STRIP(SUBSTR(REC, 9, 72), 'T')
-      LINE = LEFT(USER, 8) ' ' MSG
-      CALL VALUE ROWNAME, LEFT(LINE, 76)
+      LINE = LEFT(USER, 8) || '  ' || MSG
+      CALL VALUE ROWNAME, LEFT(LINE, 78)
     END
     ELSE CALL VALUE ROWNAME, ''
   END
