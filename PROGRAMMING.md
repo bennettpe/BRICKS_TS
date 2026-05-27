@@ -445,7 +445,7 @@ to press an AID key.
 ```
 EXEC CICS SEND MAP(name)
               [FROM(stem.)]
-              [ERASE]
+              [ERASE | DATAONLY]
               [CURSOR(position)]
 END-EXEC
 ```
@@ -464,8 +464,71 @@ If `FROM` is omitted, the map renders using its `INPUT DEFAULT`
 values. If `FROM` is a literal string, every named field on the map
 is filled with that literal (rare; supported for parity with BMS).
 
-`ERASE` clears the screen first; without `ERASE` existing fields stay
-behind underneath the new map (3270 `NoClear`).
+##### Three paint modes
+
+| Flag | Field set | Blocking? | When to use |
+|---|---|---|---|
+| `ERASE` | Every field in the map | Yes — waits for AID | Initial paint, full refresh. |
+| (neither) | Only fields the program populated in `FROM(stem)` | Yes — waits for AID | In-place update inside a conversational loop (rare; usually `ERASE` is fine). |
+| `DATAONLY` | Only fields the program populated in `FROM(stem)` | **No — returns immediately** | Background refresh while a different task is mid-input. |
+
+`ERASE` clears the screen first and emits **every** field in the
+map (with either the program's `FROM` value or the map default).
+Without `ERASE`, bricks does a **partial repaint**: only fields the
+program explicitly populated in `FROM(stem)` are sent; fields the
+program didn't touch stay on the terminal exactly as the operator
+left them. Use `ERASE` for the initial paint of a screen or a full
+refresh; omit it for in-place partial updates.
+
+##### `DATAONLY` — background partial paint
+
+`DATAONLY` is the bricks idiom for **background, fire-and-forget
+partial paint**, used to refresh part of the screen — typically a
+clock or other status fields — while a different task on the same
+terminal is blocking inside `SEND MAP` waiting for the operator's
+next keystroke. It layers two things on top of the plain no-`ERASE`
+partial-paint behaviour:
+
+1. **No-block:** `DATAONLY` makes `SEND MAP` return immediately
+   after writing the screen, without entering the AID-wait. The
+   call is fire-and-forget — the operator's next AID is captured
+   by whatever other `SEND MAP` or `RECEIVE MAP` happens to be
+   blocking for it.
+2. **Scheduler-safe:** when an `EXEC CICS START INTERVAL(...)`
+   timer fires on a terminal whose current task is in input-wait,
+   the bricks scheduler dispatches the queued task **inline** in
+   the timer goroutine instead of poisoning the conn read deadline
+   (which would abend the in-flight task with an `i/o timeout`).
+   The inline-dispatched task is restricted to write-only verbs:
+   `SEND MAP DATAONLY`, file I/O, TS queue, ASSIGN, START. Any
+   blocking verb (`RECEIVE MAP`, `SEND MAP` without DATAONLY,
+   `CONVERSE`) returns `INVREQ` in that context — the scheduler
+   goroutine must not block on conn.Read.
+
+This together lets a transaction self-schedule a periodic refresh
+via:
+
+```rexx
+EXEC CICS START TRANSID('CHAT') INTERVAL(000002) FROM('TICK') END-EXEC
+EXEC CICS RETURN END-EXEC
+```
+
+When the START fires, the same transaction is dispatched a second
+time. The dispatched copy detects "I am a tick" by checking the
+`RETRIEVE` payload, paints only the fields it wants to refresh
+(`SEND MAP ... DATAONLY` — the operator's input field is not in
+the populated set, so it's never repainted), schedules the next
+tick, and returns. The main task on the same terminal stays
+blocked in its outer `SEND MAP` throughout. See
+`runtime/rexx/chat.rexx` for the worked example.
+
+`DATAONLY` and `ERASE` are mutually exclusive — the runtime
+rejects the combination at parse time. Note: bricks does not
+implement the real-CICS `DATAONLY` attribute-byte semantics
+(application-supplied attribute bytes via `X'00'` sentinels);
+programs that need a synchronous partial repaint use the plain
+no-`ERASE` form, and programs that need a background refresh
+use `DATAONLY` with the START-INTERVAL pattern above.
 
 #### Options
 
@@ -479,7 +542,15 @@ behind underneath the new map (3270 `NoClear`).
    equivalent.
 
 **ERASE**
-   Clears the screen before painting.
+   Clears the screen before painting AND emits every field in the
+   map. Without this flag, only fields the program populated in
+   `FROM(stem)` are sent — fields the program didn't touch stay
+   on the terminal unchanged (partial repaint).
+
+**DATAONLY**
+   Fire-and-forget partial paint: SEND returns immediately without
+   waiting for an AID. Implies no-ERASE partial-repaint semantics.
+   Mutually exclusive with `ERASE`.
 
 **CURSOR(position)**
    1-based cursor position. Overrides the map's `CURSOR AT` clause.
@@ -3477,9 +3548,32 @@ buffer round-trips cleanly across an inter-language `EXEC CICS LINK`.
 
 ## Chapter 21. DATA DIVISION
 
-* **PIC clauses:** `X(n)` alphanumeric, `9(n)` integer, `S9(n)`
-  signed, `9(n)V99` decimal (the `V` is positional, no real binary
-  scaling yet — arithmetic is float64 internally).
+* **PIC clauses (unedited):** `X(n)` alphanumeric, `9(n)` integer,
+  `S9(n)` signed, `9(n)V99` decimal (the `V` is positional;
+  arithmetic uses the fixed-point `decimal` type internally so
+  scale survives MOVE / COMPUTE / DISPLAY).
+* **PIC clauses (edited numeric):** five edit characters are
+  recognised:
+  * `Z` — replace a leading zero with a space.
+  * `.` — insert an actual decimal point at that column.
+  * `,` — insert a thousands separator at that column.
+  * `$` — insert a `$`. A single `$` is *fixed* (always emitted
+    at that column, e.g. `$9999` value `42` → `"$0042"`). Two
+    or more in a row *float*: only the rightmost one remains and
+    slides to the position just before the first significant
+    digit (e.g. `$$,$$9.99` value `1234.56` → `"$1,234.56"`).
+  * `*` — check protection. Replaces a leading zero with `*`
+    instead of a space (e.g. `**,**9.99` value `12.34` →
+    `"****12.34"`).
+
+  At most one suppression family per PIC: `Z`, floating `$`, and
+  `*` are mutually exclusive (a single fixed `$` is fine with
+  `Z` or with `*`). MOVEing a scaled numeric source through an
+  edited receiver honours the source's V-scale: `MOVE N TO N-Z`
+  where `N` is `PIC 9(5)V99 VALUE 12345.67` and `N-Z` is
+  `PIC ZZ,ZZ9.99` stores `"12,345.67"`. The other ANSI edit
+  characters (`+ - CR DB B 0 / BLANK WHEN ZERO`) are not yet
+  supported.
 * **`VALUE`:** `VALUE 'literal'`, `VALUE 42`, `VALUE SPACES`,
   `VALUE ZEROS`, `VALUE HIGH-VALUES`, `VALUE LOW-VALUES`,
   `VALUE QUOTES`.
@@ -4634,6 +4728,7 @@ of them as living examples of the named-constant idiom from
 | `PROD` / `CONS` | `runtime/rexx/prod.rexx` / `cons.rexx` | TS queue producer / consumer pair. Conversational; PF3 to exit. |
 | `GETC` | `runtime/rexx/getc.rexx` | `RECEIVE` of command-line + `READ FILE` + `SEND TEXT` (no map). |
 | `TIMR` | `runtime/rexx/timr.rexx` | REXX twin of `TIMC`: `START` schedules a reminder; `RETRIEVE` discriminates cold vs scheduled entry. Shares `tim1.map` + `tim2.map` with `TIMC`. |
+| `CHAT` | `runtime/rexx/chat.rexx` | Real-time multi-user chat. Self-refreshes every 2 seconds via `EXEC CICS START TRANSID('CHAT') INTERVAL(000002)`; the tick handler does `SEND MAP ... DATAONLY` so the operator's in-progress typing at the bottom of the screen is **not** clobbered by the refresh. Messages persist in the auto-created KSDS file `CHATLOG` (one record per message, key shape `YYYYMMDDHHMMSS-NNNN-TTTT` for lexicographic / chronological sort). Adapts between Model 2 (16 history rows, `chatm2.map`) and Model 4 (35 history rows, `chatm4.map`) via `EXEC CICS ASSIGN SCREENHT`. F3 exits cleanly — no further tick is scheduled, the self-refresh chain dies on its own. Colours mirror the original `tsu/chat.go` palette: BLUE/BRIGHT title, TURQUOISE clock + footer, YELLOW topic, RED status line, GREEN history rows + prompt, WHITE underscored input. |
 
 Run any TRANSID by typing it at the blank prompt after CSSN sign-on.
 Refer to `runtime/transactions.conf` for the full list and ACL
