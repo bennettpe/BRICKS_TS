@@ -3259,7 +3259,10 @@ implementation, not part of the EXEC CICS surface.
 
 A bricks REXX program is a flat sequence of statements with optional
 labels and procedures. Execution begins at the first statement; the
-program ends when execution falls off the bottom, or hits `EXIT`.
+program ends when execution falls off the bottom, or hits `EXIT`. A
+program file is plain UTF-8 (ASCII printable + tabs + LF only is
+recommended for terminal output). There is no fixed column
+discipline — newlines and whitespace are token separators.
 
 ```rexx
 /* HELO — minimum REXX program */
@@ -3268,11 +3271,27 @@ EXEC CICS SEND MAP('HELO1') ERASE END-EXEC
 EXEC CICS RETURN END-EXEC
 ```
 
+### Comments
+
+Block comments `/* ... */` may span multiple lines; nesting is not
+supported. A REXX program traditionally opens with a one-line
+header comment so the operator gets a description in CEDA / CEMT
+when applicable.
+
+### Statements
+
+Statements are separated by newlines or `;`. The parser does not
+require a terminator after the last statement of a block. Labels
+have the form `NAME:` and may appear at any statement position.
+
 ### Procedures
 
 A label followed by `PROCEDURE [EXPOSE list]` defines a procedure
 with its own variable scope. `EXPOSE` re-routes named variables to
-the caller's frame recursively.
+the caller's frame recursively. Both simple names and stem roots
+(trailing dot) are accepted in the EXPOSE list. CALL by name
+dispatches to the matching `PROCEDURE` body; the same name as a
+built-in function shadows the built-in.
 
 ```rexx
 CALL GREET 'Alice'
@@ -3284,11 +3303,279 @@ GREET: PROCEDURE EXPOSE LANG.
    RETURN
 ```
 
+A procedure returns to its caller on `RETURN [expr]` or by falling
+off the bottom. The optional `expr` is assigned to the caller's
+special variable `RESULT`; a bare `RETURN` or a fall-off-end
+drops `RESULT` so the caller's existing value is not silently
+masked. Recursion is permitted (the only ceiling is the
+interpreter's `MaxSteps` runaway guard).
+
 ### `ADDRESS`
 
 `ADDRESS <env>` switches the active command handler. Bare strings
 inside an `ADDRESS` scope are commands routed to that handler;
-bricks ships a `CICS` handler.
+bricks ships a `CICS` handler. `ADDRESS` with no argument clears
+the active environment, after which a bare string is a syntax
+error.
+
+```rexx
+ADDRESS CICS
+"SEND MAP('CUST1') FROM(SCR.) ERASE"
+"RETURN"
+```
+
+A command's return code is assigned to the special variable `RC`.
+A non-zero `RC` fires `SIGNAL ON ERROR` (if armed) — see
+[Chapter 18](#chapter-18-conditions-and-signal-on).
+
+### Special variables
+
+| Name | Set by | Cleared by |
+|---|---|---|
+| `RC` | Every command (bare string) executed under an `ADDRESS` env, every `EXEC CICS` / `EXEC SQL`. | Survives until the next command updates it. |
+| `RESULT` | `CALL fn …` when the called procedure does `RETURN expr`. | A bare `RETURN`, a fall-off-end, or `DROP RESULT`. |
+| `SIGL` | Any direct `SIGNAL` and every condition trap (set to the source line of the failing statement). | Survives the trap; persists across normal flow. |
+| `SQLCODE` / `SQLSTATE` / `SQLERRMC` | Every `EXEC SQL` verb. | Next `EXEC SQL`. |
+
+These names are otherwise ordinary writable variables; nothing
+stops a program from assigning them, though doing so is bad
+hygiene.
+
+### The `EXEC CICS` / `EXEC SQL` preprocessor
+
+Bricks parses `EXEC CICS verb operand-list END-EXEC` (and the
+`EXEC SQL` form) as a single command at the same statement
+position a bare string would occupy under `ADDRESS CICS`. The two
+forms compile to the same dispatch path, so
+
+```rexx
+EXEC CICS SEND MAP('HELO1') ERASE END-EXEC
+```
+
+and
+
+```rexx
+ADDRESS CICS
+"SEND MAP('HELO1') ERASE"
+```
+
+are equivalent. The `EXEC` form is preferred in shipped programs
+because it doesn't depend on the current `ADDRESS` environment
+and survives an explicit `ADDRESS` switch.
+
+---
+
+## Chapter 15. Variables and stems
+
+### Naming rules
+
+* Names are case-insensitive; internally everything is uppercased
+  before lookup.
+* A name begins with a letter or `_` and may continue with
+  letters, digits, `_`, or `!`, `?`, `#`, `@`, `$`. Stem-tail
+  segments are separated by `.`.
+* The literal `RC`, `SIGL`, `RESULT`, `SQLCODE`, `SQLSTATE`,
+  `SQLERRMC` are reserved for runtime-managed values (see
+  [Chapter 14 — Special variables](#chapter-14-rexx-program-structure)).
+
+### Simple variables and NOVALUE
+
+An unset simple variable resolves to its own uppercased name —
+the classic REXX `NOVALUE` convention. `SAY X` when `X` has never
+been assigned prints `X`. If `SIGNAL ON NOVALUE` is armed (see
+[Chapter 18](#chapter-18-conditions-and-signal-on)) the reference
+traps instead of resolving to the name.
+
+Assignment is `var = expr`; the right-hand side is evaluated once
+and stored verbatim (as a string — REXX has only one runtime
+type).
+
+### Stems
+
+A stem is a variable name that ends in `.`. A bare assignment to
+the stem (`STEM. = value`) installs a default that any tail
+inherits when it has no explicit value. Per-tail values override
+the default:
+
+```rexx
+STEM. = 'unset'
+STEM.42 = 'forty-two'
+SAY STEM.1    /* "unset"     -- default       */
+SAY STEM.42   /* "forty-two" -- explicit tail */
+```
+
+### Compound-symbol tail substitution
+
+Non-numeric tail segments are resolved at every reference. With
+`J = 3`, the symbol `A.J` reads or writes `A.3`. The rules:
+
+| Tail segment shape | Behaviour |
+|---|---|
+| `STEM.42` (numeric) | Literal — the digit run becomes the tail directly. |
+| `STEM.NAME` where `NAME` is set | Substituted — value of `NAME` becomes the tail. |
+| `STEM.NAME` where `NAME` is **not** set (NOVALUE) | Literal — the bare uppercased name becomes the tail. |
+| `STEM.I.J` (multi-segment) | Each segment substituted independently — with `I=1, J=2`, references `STEM.1.2`. |
+
+> The NOVALUE-stays-literal rule is the source of bricks's most
+> common porting bug; see
+> [Appendix B](#appendix-b-pitfalls-and-idioms) for the
+> standard pitfall.
+
+### `DROP`
+
+`DROP name [name …]` removes one or more variables from the
+current frame. A trailing dot on a stem name drops the default
+AND every tail — useful for resetting an accumulator between
+paginated reads:
+
+```rexx
+DROP RECS.            /* clear the whole stem    */
+DROP A B C            /* drop three simples      */
+DROP STEM.42          /* drop just one tail      */
+```
+
+### `PROCEDURE` and `EXPOSE`
+
+Inside a `PROCEDURE`, the parent frame's variables are invisible
+unless named on the `EXPOSE` list. `EXPOSE` accepts both simple
+names and stem roots:
+
+```rexx
+GREET: PROCEDURE EXPOSE LANG. SUFFIX
+   ...
+```
+
+`LANG.` exposes the parent's entire `LANG.` stem (default + all
+tails); `SUFFIX` exposes a single simple variable. Exposure is
+transitive — a procedure that exposes a name from a caller which
+also exposed it from its caller sees the outermost binding.
+
+---
+
+## Chapter 16. Control flow
+
+### `IF` / `THEN` / `ELSE`
+
+```rexx
+IF expr THEN stmt-or-block [ELSE stmt-or-block]
+```
+
+The `THEN` keyword is mandatory. Both arms accept either a single
+statement or a `DO ... END` block. Strict boolean evaluation: the
+condition must evaluate to `0` or `1`; anything else raises
+`SYNTAX` (so `IF X` where `X = 'foo'` is an error, not a truthy
+test).
+
+```rexx
+IF AID = 'F3' THEN DO
+   EXEC CICS RETURN END-EXEC
+   EXIT
+END
+ELSE
+   CALL REFRESH
+```
+
+### `SELECT` / `WHEN` / `OTHERWISE` / `END`
+
+```rexx
+SELECT
+   WHEN expr THEN stmt
+   WHEN expr THEN stmt
+   ...
+   OTHERWISE stmt-or-block
+END
+```
+
+`WHEN` arms are tested in order; the first match's body runs and
+the rest are skipped. `OTHERWISE` is optional but if no `WHEN`
+matched and `OTHERWISE` is absent, the runtime raises `SYNTAX`.
+Use `OTHERWISE NOP` for an explicit no-op default.
+
+### `DO` family
+
+| Form | Behaviour |
+|---|---|
+| `DO ... END` | Group several statements as one body (most useful inside `IF` / `WHEN`). |
+| `DO N ... END` | Repeat the body `N` times. `N` is any expression that evaluates to a non-negative integer. |
+| `DO ctrl = start TO end [BY step] ... END` | Counted loop. `BY` defaults to `1`. The loop runs while `ctrl` is between `start` and `end` (inclusive). `DO ctrl=1 TO 5 BY 0` is rejected at runtime (infinite-loop guard). |
+| `DO WHILE expr ... END` | Pre-test loop — body runs while `expr` is truthy. |
+| `DO UNTIL expr ... END` | Post-test loop — body runs at least once, then re-tests. |
+| `DO FOREVER ... END` | Unbounded; exit only via `LEAVE` / `RETURN` / `EXIT` / `SIGNAL`. |
+| `DO ctrl OVER stem. ... END` | Iterate `ctrl` over every set tail of `stem.`. Numeric tails are visited in numeric order, then non-numeric tails in lexicographic order. The default value (`stem. = …`) is not visited. |
+
+The control variable in `DO ctrl =` / `DO ctrl OVER` is set on
+each iteration. `LEAVE [ctrl]` and `ITERATE [ctrl]` target either
+the innermost loop (no argument) or the loop whose control
+variable matches the named argument:
+
+```rexx
+DO I = 1 TO 100
+   DO J = 1 TO 100
+      IF GRID.I.J = '*' THEN ITERATE I  /* skip rest of inner */
+   END
+END
+```
+
+### `CALL` / `RETURN` / `EXIT`
+
+* `CALL name [arg1, arg2, ...]` — call a procedure or a built-in
+  function in statement position. Arguments are expressions,
+  evaluated left-to-right and made visible to the callee via
+  `ARG(n)`. A `CALL` to a built-in throws away the returned
+  value; a user procedure's `RETURN expr` populates `RESULT`.
+* `RETURN [expr]` — return from a procedure (or terminate a
+  top-level program). When `expr` is present and the caller was
+  `CALL`, the value lands in `RESULT`; without `expr`, `RESULT`
+  is dropped.
+* `EXIT [expr]` — terminate the entire program immediately. The
+  optional `expr` becomes the process exit code (clamped to a
+  byte by the host OS); without it the program exits 0.
+
+### `SIGNAL`
+
+* `SIGNAL label` — non-local jump to a label. Active `DO` /
+  `SELECT` / `PROCEDURE` frames are unwound first. `SIGL` is set
+  to the source line of the `SIGNAL` statement.
+* `SIGNAL ON cond [NAME label]` — arm a condition trap (see
+  [Chapter 18](#chapter-18-conditions-and-signal-on)).
+* `SIGNAL OFF cond` — disarm.
+
+### `INTERPRET`
+
+`INTERPRET expr` evaluates `expr` to a string and executes that
+string as REXX source in the current frame. Labels and
+procedures inside the snippet are scoped to that one evaluation
+(they do not leak into the surrounding program).
+
+### `NUMERIC`
+
+| Form | Effect |
+|---|---|
+| `NUMERIC DIGITS n` | Sets the precision used to round arithmetic results. Default 9. |
+| `NUMERIC FUZZ n` | Sets the tolerance applied to numeric comparisons. Default 0. |
+| `NUMERIC FORM SCIENTIFIC` / `NUMERIC FORM ENGINEERING` | Accepted syntactically but bricks always renders numbers in plain decimal — neither form changes output today. |
+
+Arithmetic is `float64` internally, then rounded to `NUMERIC
+DIGITS` significant figures before storing. The `%` and `//`
+operators (integer divide and modulo) bypass that rounding.
+
+### `NOP`, `PUSH`, `PULL`, `QUEUE`, `OPTIONS`, `TRACE`
+
+* `NOP` — explicit no-op (clearer than an empty `DO ... END` in
+  a `WHEN`).
+* `TRACE [opt]` — parsed and accepted but ignored; bricks does
+  not run an interpretive tracer.
+* `OPTIONS …` — accepted and ignored (no recognised options).
+* `PUSH` / `PULL` / `QUEUE` / `PARSE PULL` — accepted; the
+  associated terminal data queue is always empty in bricks. Read
+  forms return the empty string; write forms are silent no-ops.
+  Use `EXEC CICS RECEIVE` for terminal input.
+
+### Bare strings
+
+A bare string at statement position is a command sent to the
+current `ADDRESS` environment (see Chapter 14). Outside an active
+environment it is a syntax error.
 
 ```rexx
 ADDRESS CICS
@@ -3298,89 +3585,112 @@ ADDRESS CICS
 
 ---
 
-## Chapter 15. Variables and stems
-
-* **Simple variables** are case-insensitive. An unset variable
-  resolves to its uppercased name (REXX NOVALUE convention).
-* **Stems** have a default value plus per-tail values:
-
-  ```rexx
-  STEM. = 'unset'
-  STEM.42 = 'forty-two'
-  SAY STEM.1   /* unset      */
-  SAY STEM.42  /* forty-two  */
-  ```
-
-* **Compound-variable tail substitution.** Non-numeric tail symbols
-  are resolved at every reference. With `J = 3`, the symbol `A.J`
-  reads or writes `A.3`. Pure numeric tails (`A.0`, `A.42`) and
-  unset tail symbols (REXX NOVALUE) remain literal. Multi-segment
-  tails work too: with `I=1, J=2`, `A.I.J` references `A.1.2`.
-
-* **`DROP name [name…]`** removes one or more variables. A trailing
-  `.` drops the entire stem (default + every tail) — useful for
-  resetting an accumulator between paginated reads:
-  `DROP RECS.`.
-
-See [Appendix B](#appendix-b-pitfalls-and-idioms) for the canonical
-compound-symbol pitfall.
-
----
-
-## Chapter 16. Control flow
-
-| Construct | Forms |
-|---|---|
-| `IF expr THEN [ELSE]` | one-line or block |
-| `SELECT … WHEN … OTHERWISE … END` | `OTHERWISE NOP` works for the empty branch |
-| `DO`, `DO N`, `DO var=a TO b BY s`, `DO WHILE`, `DO UNTIL`, `DO FOREVER` | the usual loop family |
-| `DO var OVER stem.` | iterate over each tail of a stem; numeric tails sort first, then lexicographic |
-| `LEAVE [ctrlvar]` | exit the innermost (or named outer) DO |
-| `ITERATE [ctrlvar]` | skip to the next iteration of the innermost (or named outer) DO |
-| `CALL`, `RETURN`, `EXIT` | procedure call, return, exit |
-| `SIGNAL <label>` | non-local jump |
-| `INTERPRET expr` | evaluate the string value of `expr` as REXX source and execute |
-| `NUMERIC DIGITS n` / `FUZZ n` / `FORM SCIENTIFIC|ENGINEERING` | basic settings honoured; arithmetic is float64 internally |
-| `NOP` | a real no-op statement |
-
----
-
 ## Chapter 17. PARSE templates
 
-`PARSE [UPPER] {VAR var | VALUE … WITH | ARG | PULL} template`
+```text
+PARSE [UPPER] {VAR var | VALUE expr WITH | ARG | PULL} template
+```
 
-Template features supported:
+The source decides where the input string comes from; the
+template decides how it's chopped up and which pieces land in
+which variables.
 
-* String anchors (`'literal'`).
-* Absolute column markers (`n`).
-* Relative column markers (`+n` / `-n`).
-* The `.` placeholder (skip a token).
-* Bare variable runs.
+### Sources
+
+| Source | Input string |
+|---|---|
+| `VAR var` | Current value of the named variable. |
+| `VALUE expr WITH` | The result of evaluating `expr`. The literal `WITH` keyword separates the source expression from the template. |
+| `ARG [, ARG, …]` | The arguments the program (or procedure) was called with. Each comma-separated segment of the template is one argument, in order — `PARSE ARG H, W` peels `ARG(1)` into the first sub-template and `ARG(2)` into the second. |
+| `PULL` | The terminal-input queue, which in bricks is always empty. Use `EXEC CICS RECEIVE` for real input. |
+
+`PARSE UPPER` uppercases the source string before splitting it
+across the template — convenient for case-insensitive command
+parsing.
+
+### Template elements
+
+| Element | Effect |
+|---|---|
+| Bare variable name | Consumes the next whitespace-delimited word. In a *run* of bare variables, all but the last get one word each; the last gets every remaining word/character up to the next anchor. |
+| `.` (period) | Placeholder — consumes one token without binding it. Useful as a "skip" in a variable run. |
+| `'literal'` | String anchor. Matches the next occurrence of `literal` in the source and splits there. The literal itself is discarded. |
+| `n` (positive integer) | Absolute column marker — jumps to column `n` (1-based) in the source. Variables before the marker get everything from the previous column up to column `n-1`. |
+| `+n` / `-n` | Relative column marker — moves the cursor `n` characters forward or backward from the current position. |
+
+### Worked examples
 
 ```rexx
-PARSE VAR LINE  TID  CKEY  .                /* whitespace tokens */
-PARSE VAR REC   NM '|' AD '|' CY '|' PH     /* '|' delimiter     */
-PARSE VAR ROW   1 NAME 21 ADDR 51 PHONE     /* fixed columns     */
+/* Whitespace tokens. TID = first word, CKEY = second word,
+ * '.' discards the rest of the line.                          */
+PARSE VAR LINE TID CKEY .
+
+/* Pipe-delimited fields.                                      */
+PARSE VAR REC NM '|' AD '|' CY '|' PH
+
+/* Fixed columns.                                              */
+PARSE VAR ROW 1 NAME 21 ADDR 51 PHONE
+
+/* Multi-arg PARSE — peels two call arguments.                 */
+GREET: PROCEDURE
+   PARSE ARG NAME, GREETING
+   SAY GREETING NAME
+   RETURN
+
+/* PARSE UPPER on user command, case-insensitive switch.       */
+PARSE UPPER VAR LINE VERB REST
+SELECT
+   WHEN VERB = 'LIST' THEN CALL LIST_HANDLER REST
+   WHEN VERB = 'ADD'  THEN CALL ADD_HANDLER  REST
+   OTHERWISE SAY 'unknown verb' VERB
+END
 ```
+
+### Not supported
+
+| Feature | Status |
+|---|---|
+| `PARSE LOWER` | Not parsed (only `UPPER` is). Lowercase the source explicitly with `LOWER(VAR)` then `PARSE VAR`. |
+| `PARSE SOURCE` | Not wired — returns empty. |
+| `PARSE VERSION` | Not wired — returns empty. |
+| `PARSE NUMERIC` | Not wired. |
+| Regex / pattern matching in templates | REXX has none; use `POS` / `LASTPOS` + `SUBSTR` for ad-hoc splits. |
 
 ---
 
 ## Chapter 18. Conditions and SIGNAL ON
 
-`SIGNAL ON {ERROR | NOVALUE | SYNTAX | HALT} [NAME label]` arms a
-condition. When it fires:
+```text
+SIGNAL ON {ERROR | NOVALUE | SYNTAX | HALT} [NAME label]
+SIGNAL OFF cond
+SIGNAL label
+```
+
+`SIGNAL ON cond [NAME label]` arms a trap. The optional `NAME`
+clause picks an explicit handler label; without it, bricks
+defaults the handler label to the condition name (so
+`SIGNAL ON ERROR` jumps to a label named `ERROR:`).
+
+When a trapped condition fires:
 
 * `SIGL` is set to the source line of the failing statement.
-* Control jumps to the labelled handler.
+* Control transfers to the handler label, unwinding active
+  `DO` / `SELECT` / `PROCEDURE` frames first.
+* The trap remains armed for the next occurrence.
 
 `SIGNAL OFF cond` disarms.
 
+### Recognised conditions
+
 | Condition | Fires on |
 |---|---|
-| `ERROR` | An `EXEC CICS` command returns a non-zero RC. |
-| `NOVALUE` | A reference to an unset simple or compound variable. |
-| `SYNTAX` | Any other interpreter error — bad numeric, divide by zero, unknown function, etc. |
-| `HALT` | An external halt request. |
+| `ERROR` | An `EXEC CICS` or `EXEC SQL` command returns a non-zero RC (i.e. the bare-string command path under `ADDRESS CICS`). |
+| `NOVALUE` | A reference to a simple or compound variable that has never been assigned. |
+| `SYNTAX` | Any other interpreter error — bad numeric, divide by zero, unknown function, out-of-range subscript, ... |
+| `HALT` | External halt request. Parsed and reserved; bricks has no fan-in for an external halt today, so the condition never fires. |
+
+`FAILURE`, `NOTREADY`, and `LOSTDIGITS` from standard REXX are
+not recognised — `SIGNAL ON FAILURE` parses but never fires.
 
 ### Example
 
@@ -3402,8 +3712,8 @@ OOPS:
 ```
 
 Without an armed trap, the legacy "test EIBRESP after every verb"
-pattern still works. For per-condition (rather than blanket) traps,
-use `EXEC CICS HANDLE CONDITION`
+pattern still works. For per-condition (rather than blanket)
+traps, use `EXEC CICS HANDLE CONDITION`
 ([Chapter 10](#chapter-10-recovery-and-condition-handling)); the
 two styles can coexist.
 
@@ -3411,29 +3721,125 @@ two styles can coexist.
 
 ## Chapter 19. Built-in functions
 
-| Family | Functions |
+The bricks REXX interpreter ships with the functions listed
+below. A `CALL` to any of these in statement position throws
+away the return value; the same name in expression position
+returns the value. Built-in lookups are case-insensitive and
+take precedence over user-defined `PROCEDURE` names of the same
+spelling.
+
+### Length / index
+
+| Signature | Returns |
 |---|---|
-| Length / index | `LENGTH`, `POS`, `LASTPOS`, `WORDS`, `WORDPOS`, `WORDINDEX`, `WORDLENGTH`, `COUNTSTR` |
-| Substring | `SUBSTR`, `LEFT`, `RIGHT`, `SUBWORD`, `WORD`, `DELSTR`, `DELWORD`, `INSERT`, `OVERLAY`, `CHANGESTR` |
-| Whitespace / case | `STRIP`, `SPACE`, `CENTER` (alias `CENTRE`), `JUSTIFY`, `UPPER`, `LOWER`, `REVERSE`, `COPIES`, `ABBREV` |
-| Translation | `TRANSLATE`, `VERIFY`, `COMPARE`, `XRANGE`, `BITAND`, `BITOR`, `BITXOR` |
-| Conversion | `C2X`, `X2C`, `D2X`, `X2D`, `D2C`, `C2D`, `B2X`, `X2B` |
-| Numeric | `ABS`, `MAX`, `MIN`, `INT`, `TRUNC`, `MOD` (= `//` operator), `SIGN`, `FORMAT(num, before, after)`, `DIGITS`, `FUZZ`, `FORM` |
-| Type / data | `DATATYPE` (with `N`, `W`, `A` options), `LENGTH` |
-| Date / time | `DATE` (`N`/`S`/`E`/`U`/`O`/`B`; `B` does basedate arithmetic), `TIME` |
-| Stream I/O | `LINEIN`, `LINEOUT`, `LINES`, `CHARIN`, `CHAROUT`, `CHARS`, `STREAM` |
-| Variables / args | `VALUE`, `ARG`, `RANDOM`, `ERRORTEXT` |
+| `LENGTH(s)` | Byte length of `s`. |
+| `POS(needle, hay [, start])` | 1-based byte position of the first occurrence of `needle` in `hay` starting at `start` (default 1), or 0 if not found. |
+| `LASTPOS(needle, hay [, end])` | 1-based byte position of the last occurrence at or before `end` (default = end-of-string), or 0. |
+| `WORDS(s)` | Number of whitespace-delimited words in `s`. |
+| `WORDPOS(phrase, s [, start])` | 1-based word index where `phrase` first appears as a sub-sequence of words, or 0. |
+| `WORDINDEX(s, n)` | 1-based character position of the start of word `n`, or 0 if `n` is past the end. |
+| `WORDLENGTH(s, n)` | Length of word `n`, or 0. |
+| `COUNTSTR(needle, hay)` | Non-overlapping occurrence count. |
 
-`VALUE` accepts the canonical 1-arg read form
-(`VALUE('SCR.ROW' || J)`) and the 2-arg assignment form
-(`CALL VALUE 'SCR.ROW' || J, LINE` — sets the variable named at
-runtime and returns the prior value).
+### Substring / words
 
-`C2X` is the standard way to compare `EIBAID` to a PF-key code:
-`IF C2X(EIBAID) = 'F7' THEN …` for PF7.
+| Signature | Returns |
+|---|---|
+| `SUBSTR(s, start [, length [, pad]])` | Substring starting at 1-based `start`. With `length`, the result is exactly `length` characters (right-padded with `pad`, default space). Negative `length` raises `SYNTAX`. |
+| `LEFT(s, n [, pad])` | Leftmost `n` characters, padded on the right with `pad` (default space). |
+| `RIGHT(s, n [, pad])` | Rightmost `n` characters, padded on the left with `pad`. |
+| `SUBWORD(s, n [, length])` | Words `n` through `n+length-1` (default: to end). Single space between words in the result. |
+| `WORD(s, n)` | Word `n`, or empty string. |
+| `DELSTR(s, n [, length])` | `s` with `length` characters from position `n` removed (default: through end). |
+| `DELWORD(s, n [, length])` | `s` with `length` words from word `n` removed. |
+| `INSERT(new, target [, n [, length [, pad]]])` | Insert `new` into `target` after position `n` (default 0 = prepend), padded to `length` first. |
+| `OVERLAY(new, target [, n [, length [, pad]]])` | Overwrite `target` at position `n` with `new`, extending `target` if needed. |
+| `CHANGESTR(needle, hay, repl [, count])` | Replace every occurrence (or the first `count`) of `needle` with `repl`. |
 
-`DATE('B')` and `DATE('B', 'YYYYMMDD', 'S')` give days since
-0001-01-01 — subtract two basedates for an exact day delta.
+### Whitespace / case
+
+| Signature | Returns |
+|---|---|
+| `STRIP(s [, opt [, ch]])` | Trim characters `ch` (default space) from `L` (left), `T` (right), or `B` (both, default). |
+| `SPACE(s [, n [, pad]])` | Collapse internal whitespace; insert `n` copies of `pad` (default 1 space) between words. `n=0` removes whitespace entirely. |
+| `CENTER(s, n [, pad])` / `CENTRE(s, n [, pad])` | Centre `s` in a field of width `n`; pad with `pad` (default space). Truncates equally from both ends when `s` is longer than `n`. |
+| `JUSTIFY(s, n [, pad])` | Right-justify the last word in width `n`, padding earlier words. |
+| `UPPER(s)` / `LOWER(s)` | ASCII case conversion. |
+| `REVERSE(s)` | Byte-reverse `s`. |
+| `COPIES(s, n)` | `s` repeated `n` times. |
+| `ABBREV(s, prefix [, minlen])` | Returns `1` if `prefix` is a prefix of `s` with at least `minlen` characters; else `0`. |
+
+### Translation / bits
+
+| Signature | Returns |
+|---|---|
+| `TRANSLATE(s [, out [, in [, pad]]])` | Per-character map from `in` to `out`. With no `out`/`in`, uppercases. With only `out`, `in` defaults to `XRANGE()` (the full byte range), giving a per-position translation table. |
+| `VERIFY(s, ref [, opt [, start]])` | 1-based position of the first character in `s` (from `start`) that is not in `ref` (`opt='N'`, default) or that IS in `ref` (`opt='M'`); 0 if none. |
+| `COMPARE(s1, s2 [, pad])` | 1-based position of the first differing byte after pad-equalising lengths with `pad` (default space); 0 if equal. |
+| `XRANGE([from [, to]])` | All bytes from `from` (default `'\x00'`) to `to` (default `'\xFF'`) inclusive. |
+| `BITAND(s1 [, s2 [, pad]])` / `BITOR(...)` / `BITXOR(...)` | Bytewise logical operation; lengths equalised with `pad`. |
+
+### Conversion
+
+| Signature | Returns |
+|---|---|
+| `C2X(s)` | Uppercase hex of every byte. Canonical way to compare `EIBAID` to a PF-key code: `IF C2X(EIBAID) = 'F7' THEN …` (PF7). |
+| `X2C(hex)` | Decode `hex` (spaces ignored) to a byte string. |
+| `D2X(n [, width])` | Decimal integer to uppercase hex, optionally zero-padded to `width`. |
+| `X2D(hex [, n])` | Hex to decimal. With `n`, treats the value as an `n`-digit signed integer (two's complement when the top bit is set). |
+| `C2D(s [, n])` | Byte string to decimal. With `n`, signed two's complement over `n` bytes. |
+| `D2C(n [, len])` | Integer to byte string, optionally `len` bytes wide. |
+| `B2X(bits)` | Bit string (`0`/`1` chars) to hex. |
+| `X2B(hex)` | Hex to bit string. |
+
+### Numeric
+
+| Signature | Returns |
+|---|---|
+| `ABS(n)` | Absolute value. |
+| `MAX(n, ...)` | Maximum of all arguments. |
+| `MIN(n, ...)` | Minimum of all arguments. |
+| `INT(n)` | Integer part (truncate toward zero). |
+| `TRUNC(n [, places])` | Truncate to `places` decimal positions (default 0). |
+| `MOD(a, b)` | Modulo. Same value as `a // b`. |
+| `SIGN(n)` | `-1` if `n<0`, `0` if `n=0`, `+1` if `n>0`. |
+| `FORMAT(n [, before [, after [, expp [, expt]]]])` | Numeric formatting with `before` characters in the integer part and `after` decimal places. `expp` / `expt` accepted syntactically but ignored. |
+| `DIGITS()` / `FUZZ()` / `FORM()` | Return the current `NUMERIC DIGITS` / `FUZZ` / `FORM` settings. |
+
+### Type / data
+
+| Signature | Returns |
+|---|---|
+| `DATATYPE(s)` | `'NUM'` if `s` parses as a number; `'CHAR'` otherwise. |
+| `DATATYPE(s, 'N')` | `1` / `0` — is `s` numeric? |
+| `DATATYPE(s, 'W')` | `1` / `0` — is `s` a whole number? |
+| `DATATYPE(s, 'A')` | `1` / `0` — is `s` alphanumeric (letters, digits, no spaces)? |
+
+### Date / time
+
+| Signature | Returns |
+|---|---|
+| `DATE()` / `DATE('N')` | Today as `dd Mmm yyyy`. |
+| `DATE('S')` | Today as `yyyymmdd`. |
+| `DATE('E')` | Today as `dd/mm/yy`. |
+| `DATE('U')` | Today as `mm/dd/yy`. |
+| `DATE('O')` | Today as `yy/mm/dd`. |
+| `DATE('B')` | Days since `0001-01-01`. |
+| `DATE('B', 'yyyymmdd', 'S')` | Basedate of a given date — subtract two basedates for an exact day delta. |
+| `TIME()` / `TIME('N')` | `hh:mm:ss`. |
+| `TIME('L')` | `hh:mm:ss.uuuuuu` with microseconds. |
+| `TIME('S')` | Seconds since midnight. |
+
+### Variables / arguments
+
+| Signature | Returns |
+|---|---|
+| `VALUE(name)` | Read the value of the variable named at runtime — useful for indirect reads (`VALUE('SCR.ROW' || J)`). |
+| `VALUE(name, newval)` | Set the variable named at runtime; returns the prior value. The two-argument form usually appears under `CALL VALUE 'SCR.ROW' || J, LINE`. |
+| `ARG()` | Number of arguments the current procedure was called with. |
+| `ARG(n)` | The `n`th argument (1-based), or empty if out of range. |
+| `RANDOM([min [, max]])` | Random integer in `[min, max]` (default `[0, 999]`). |
+| `ERRORTEXT(code)` | Echoes the numeric code as a string (placeholder — bricks does not maintain the standard REXX error-text table). |
 
 ### Stream I/O
 
@@ -3475,9 +3881,36 @@ error and `STREAM('S')` to report `'ERROR'`.
 
 ### Operators
 
-`+ - * / % // **`, comparisons (numeric when both sides parse as
-numbers, trimmed-string otherwise), `||` and juxtaposition concat,
-`& |`, unary `\`.
+Listed lowest to highest precedence. All operators are
+left-associative except `**` which is right-associative.
+
+| Precedence | Operators | Notes |
+|---|---|---|
+| 1 (lowest) | `\|` | Logical OR. Strict boolean: both sides must evaluate to `0` or `1`. Short-circuit. |
+| 2 | `&` / `&&` | Logical AND. Same strict-boolean rules. `&&` is the strict-AND alias. Short-circuit. |
+| 3 | `=` `==` `\=` `\==` `<>` `><` `<` `>` `<=` `>=` | Comparison. The strict variants (`==`, `\==`) compare byte-for-byte; the plain forms compare as numbers when both sides parse as numeric (subject to `NUMERIC FUZZ`) and as trimmed strings otherwise. `\=` and `<>` and `><` are all "not equal". |
+| 4 | `\|\|` and juxtaposition | Concatenation. `A \|\| B` joins with no separator; `A B` (whitespace between operands) joins with a single space. There is no zero-separator juxtaposition — write `\|\|` explicitly. |
+| 5 | `+` `-` | Addition / subtraction. |
+| 6 | `*` `/` `%` `//` | Multiplication, real division, integer division (`%` — truncates toward zero), modulo (`//` — sign of the dividend). |
+| 7 | unary `+` `-` `\` | Arithmetic sign and logical NOT. |
+| 8 (highest) | `**` | Exponentiation. Integer exponents are exact (via repeated squaring); fractional exponents use float64. |
+
+Comparison precedence note: REXX has no separate equality vs.
+ordering precedence, so `A < B = C` parses as `(A < B) = C` —
+comparing the boolean result of `A < B` against `C`.
+
+### Restrictions / unsupported
+
+| Feature | Status |
+|---|---|
+| `TRACE` (interpretive tracer) | Parsed and accepted; bricks does not emit trace output. |
+| `OPTIONS` settings (`NOVALUE`, etc.) | Parsed and accepted; have no effect. |
+| External function libraries / RXFUNCADD | No dynamic linking — every routine must be a `PROCEDURE` in the program or a built-in. |
+| `ADDRESS COMMAND` / `ADDRESS SYSTEM` / `ADDRESS TSO` | Not wired — only `ADDRESS CICS` is recognised. |
+| EXECIO and other host-environment I/O | Not provided — use the stream functions (next section) or `EXEC CICS READQ TD / WRITEQ TD` for file I/O. |
+| `PARSE PULL` / terminal queue (`PUSH` / `QUEUE`) | Statements are parsed; the queue is always empty. Use `EXEC CICS RECEIVE` for terminal input. |
+| `NUMERIC FORM SCIENTIFIC` / `ENGINEERING` | Statement is parsed; rendering is always plain decimal. |
+| Strict IEEE arithmetic | Backed by float64 with `NUMERIC DIGITS` rounding, so very large factorials and the like will round before they overflow. |
 
 ---
 
@@ -3508,10 +3941,23 @@ handlers use.
 * **Comments** use modern `*>` anywhere on a line, or legacy `*` in
   column 1.
 * **Strings** use `'...'` or `"..."` with quote-doubling for
-  embedded quotes.
+  embedded quotes (`'don''t'`, `"say ""hi"""`).
+* **Numeric literals** are decimal digit runs, optionally signed
+  (`+`, `-`) when they appear in a context that accepts a signed
+  number (`VALUE`, `COMPUTE`, arithmetic verbs). There is no
+  COBOL-side decimal-point literal — fractional `VALUE`s use the
+  `V` in the PIC plus a digit-run interpreted against that scale.
 * **Hex literals** like `X'F3'` and `X"7C"` decode to their byte
   value — used for `IF EIBAID = X'F3'` to check PF3 / PF12 / etc.
   without `C2X(EIBAID) = 'F3'` round-trips.
+* **Identifiers** start with a letter or `_`, continue with
+  letters, digits, `_`, and `-`. Names are case-insensitive
+  (uppercased at parse time).
+* **Periods** are scope terminators, not per-statement. The
+  parser requires a period after each division header, section
+  header, paragraph header, and top-level data item; periods
+  inside an explicit `END-IF` / `END-EVALUATE` / etc. body are
+  tolerated as inner punctuation, not as scope terminators.
 
 ### Divisions
 
@@ -3548,114 +3994,354 @@ buffer round-trips cleanly across an inter-language `EXEC CICS LINK`.
 
 ## Chapter 21. DATA DIVISION
 
-* **PIC clauses (unedited):** `X(n)` alphanumeric, `9(n)` integer,
-  `S9(n)` signed, `9(n)V99` decimal (the `V` is positional;
-  arithmetic uses the fixed-point `decimal` type internally so
-  scale survives MOVE / COMPUTE / DISPLAY).
-* **PIC clauses (edited numeric):** five edit characters are
-  recognised:
-  * `Z` — replace a leading zero with a space.
-  * `.` — insert an actual decimal point at that column.
-  * `,` — insert a thousands separator at that column.
-  * `$` — insert a `$`. A single `$` is *fixed* (always emitted
-    at that column, e.g. `$9999` value `42` → `"$0042"`). Two
-    or more in a row *float*: only the rightmost one remains and
-    slides to the position just before the first significant
-    digit (e.g. `$$,$$9.99` value `1234.56` → `"$1,234.56"`).
-  * `*` — check protection. Replaces a leading zero with `*`
-    instead of a space (e.g. `**,**9.99` value `12.34` →
-    `"****12.34"`).
+The DATA DIVISION declares every data item the program touches.
+Bricks expects a single `WORKING-STORAGE SECTION` followed by an
+optional `LINKAGE SECTION` (`DFHCOMMAREA` is auto-injected when
+the program omits it).
 
-  At most one suppression family per PIC: `Z`, floating `$`, and
-  `*` are mutually exclusive (a single fixed `$` is fine with
-  `Z` or with `*`). MOVEing a scaled numeric source through an
-  edited receiver honours the source's V-scale: `MOVE N TO N-Z`
-  where `N` is `PIC 9(5)V99 VALUE 12345.67` and `N-Z` is
-  `PIC ZZ,ZZ9.99` stores `"12,345.67"`. The other ANSI edit
-  characters (`+ - CR DB B 0 / BLANK WHEN ZERO`) are not yet
-  supported.
-* **`VALUE`:** `VALUE 'literal'`, `VALUE 42`, `VALUE SPACES`,
-  `VALUE ZEROS`, `VALUE HIGH-VALUES`, `VALUE LOW-VALUES`,
-  `VALUE QUOTES`.
-* **Level 88 condition-names:** `88 NAME VALUE 'X'.`,
-  `VALUES 'A', 'B', 'C'.`, or `VALUE 'A' THRU 'Z'.` The 88-level
-  attaches to the immediately preceding non-88 data item and
-  declares a boolean condition that is true when that item's
-  current value matches one of the listed values (or falls inside
-  a `THRU` range). Reference as a bare name from PROCEDURE
-  DIVISION — see Chapter 22 "88-level condition names".
-* **Group items:**
+### Level numbers
 
-  ```cobol
-  01 PARENT.
-     05 CHILD PIC X(8).
-     05 OTHER PIC X(4).
-  ```
+| Level | Meaning |
+|---|---|
+| `01` | Top-level data item. Owns a self-contained byte buffer. |
+| `02` – `49` | Subordinate items inside a group. Children share their parent's buffer at a computed offset. |
+| `77` | Standalone elementary item (no children). Functionally equivalent to a flat `01`. |
+| `88` | Condition-name attached to the preceding non-88 item (see below). |
 
-  Children are stored as offsets into a single parent buffer, so
-  `MOVE` to the parent fans out and `EXEC CICS SEND MAP FROM(PARENT)`
-  walks the children for field values.
+The level numbers `66` (RENAMES) and `78` (constant) are **not**
+parsed.
 
-* **Data names can be reused across groups.** A child name that
-  appears under more than one group is fine; the parser accepts the
-  declaration and tracks the collision in
-  `Program.AmbiguousNames`. Unqualified access to such a name is a
-  runtime error ("ambiguous reference") — disambiguate with `OF`
-  (or its synonym `IN`):
+### PIC clauses — unedited
 
-  ```cobol
-  01 SCR.
-     05 CUSTNO PIC X(8).
-  01 DET.
-     05 CUSTNO PIC X(8).
-  ...
-  MOVE 'A1234567' TO CUSTNO OF SCR.
-  MOVE 'B7654321' TO CUSTNO OF DET.
-  DISPLAY CUSTNO OF SCR.
-  ```
+Unedited PICs hold raw data: digits, letters, or padded bytes.
 
-  Single-step qualification (`X OF Y`) picks the matching child
-  anywhere in `Y`'s subtree; multi-step (`X OF Y OF Z`) chains
-  through nested groups. Bare names that are unique across the
-  program continue to work without qualification — the pre-7
-  `runtime/cobol/gust.cob` convention of prefixed child names
-  (`DCUSTNO`, `DNAME`, `DMSG`) still compiles and runs, it just
-  isn't required any more.
+| Form | Class | Notes |
+|---|---|---|
+| `X(n)` or `XXXX…` | Alphanumeric | `n` bytes; left-justified, space-padded on `MOVE`. Up to 1 MiB. |
+| `A(n)` or `AAA…` | Alphabetic | Same storage as `X(n)`; runtime class-check rejects non-alpha on `INSPECT`-style tests. |
+| `9(n)` or `999…` | Numeric (unsigned) | `n` decimal digits; right-justified, zero-padded. Capped at 18 digits (int64 limit). |
+| `S9(n)` | Numeric (signed) | Byte 0 holds the sign character (`' '` for positive, `-` for negative); bytes 1..n-1 hold the digits. Cap 18 digits. |
+| `9(n)V9(m)` | Numeric with implicit decimal | The `V` is positional — no byte is consumed. Total `n+m` digits stored; arithmetic uses the fixed-point `decimal` type so scale survives `MOVE` / `COMPUTE` / `DISPLAY`. |
+| `S9(n)V9(m)` | Signed scaled numeric | Same as above plus a sign byte. |
 
-  A sibling-duplicate (two children of the SAME parent sharing a
-  name) is still a parse-time error — no qualifier can disambiguate
-  between siblings of one group.
+`(n)` is a repetition count; `9(3)` and `999` are equivalent.
+
+### PIC clauses — edited numeric
+
+Edited PICs hold a formatted representation of a numeric value
+suitable for display. Five edit characters are recognised:
+
+| Edit char | Role |
+|---|---|
+| `Z` | Replace a leading zero with a space (zero suppression). |
+| `.` | Insert a literal decimal point at that column. |
+| `,` | Insert a thousands separator at that column. |
+| `$` | Insert a `$`. A *single* `$` is fixed (always emitted, must be the leftmost character). Two or more in a row *float* — the leftmost is the symbol and slides right to the position immediately before the first significant digit. |
+| `*` | Check protection. Replaces a leading zero with `*` instead of a space — used on cheques to prevent forgery. |
+
+**Constraints:**
+
+* At most one suppression family per PIC: `Z`, floating `$`, and
+  `*` are mutually exclusive (a single fixed `$` may coexist
+  with `Z` — e.g. `$ZZ9.99`).
+* `Z` and `*` are forbidden in the fractional half (after the
+  `.` insertion).
+* The literal width of the mask is the PIC length; total digit
+  positions (Z + floating-$ + * + 9) are capped at 18.
+
+**Worked examples:**
+
+| Source | PIC mask | Stored bytes |
+|---|---|---|
+| `42` | `ZZ9` | `" 42"` |
+| `0` | `ZZ9` | `"  0"` |
+| `1.5` | `ZZZ.99` | `"  1.50"` |
+| `1234.56` | `Z,ZZ9.99` | `"1,234.56"` |
+| `12345.67` | `$$$,$$9.99` | `"$12,345.67"` |
+| `0.45` | `$$$,$$$.99` | `"      $.45"` |
+| `12.34` | `**,**9.99` | `"****12.34"` |
+| `42` | `$9999` | `"$0042"` |
+
+When a scaled numeric source is moved through an edited receiver
+the source's V-scale is honoured: `MOVE N TO N-Z` where `N` is
+`PIC 9(5)V99 VALUE 12345.67` and `N-Z` is `PIC ZZ,ZZ9.99`
+stores `"12,345.67"`.
+
+The remaining ANSI edit characters — `+`, `-`, `CR`, `DB`,
+`B` (blank), `0` (zero insertion), `/` (slash), and the
+`BLANK WHEN ZERO` clause — are not yet supported.
+
+### `VALUE`
+
+`VALUE` declares the initial content of an elementary data item.
+Accepted forms:
+
+| Form | Example |
+|---|---|
+| String literal | `VALUE 'ENTER ID'.` or `VALUE "OK"`. |
+| Numeric literal | `VALUE 42.` or `VALUE 0.` (signed `+`/`-` allowed). |
+| Figurative | `VALUE SPACES.`, `VALUE ZEROS.`, `VALUE HIGH-VALUES.`, `VALUE LOW-VALUES.`, `VALUE QUOTES.` |
+
+The figurative aliases `SPACE` / `ZERO` / `ZEROES` / `HIGH-VALUE`
+/ `LOW-VALUE` / `QUOTE` are normalised to their plural form at
+parse time. `VALUE` on a group item is rejected — initialise the
+children individually.
+
+### Group items
+
+A `01` (or any subordinate level >01) item with one or more
+children becomes a group. The group's storage is the
+concatenation of its children's storage; the group itself owns
+no extra bytes beyond what its children occupy.
+
+```cobol
+01 PARENT.
+   05 CHILD PIC X(8).
+   05 OTHER PIC X(4).
+```
+
+`MOVE source TO PARENT` fans out to every elementary child;
+`EXEC CICS SEND MAP FROM(PARENT)` walks the children by name to
+look up map-field values.
+
+### `OCCURS`
+
+`OCCURS n [TIMES]` declares an array of `n` copies of an item.
+The cap is 4096 occurrences per item. Reference one slot with a
+1-based subscript expression: `K(I)`, `K(5)`, `K(I + 1)`.
+Subscript bounds are checked at runtime. `OCCURS` works on
+elementaries and on group items; nested `OCCURS` (an array of
+arrays) is **rejected at parse time**.
+
+```cobol
+01 TABLE-AREA.
+   05 ROW OCCURS 15 TIMES.
+      10 K  PIC X(8).
+      10 N  PIC X(28).
+01 I  PIC 9(4).
+...
+MOVE 'KEY-A' TO K(1).
+MOVE 'KEY-B' TO K(I).
+```
+
+### `FILLER`
+
+`FILLER` is a reserved name for anonymous storage. Multiple
+`FILLER` children under the same parent are allowed (they don't
+collide on the duplicate-name check) and they're never
+registered in the lookup tables — they can only be addressed
+through the parent.
+
+### `USAGE` — DISPLAY vs. COMP
+
+Numeric items have two storage layouts:
+
+| `USAGE` | Synonyms | Storage |
+|---|---|---|
+| `DISPLAY` (default) | — | One byte per digit; signed PICs reserve byte 0 for the sign character (`' '` / `'-'`). The historical bricks layout. |
+| `COMP` | `COMPUTATIONAL`, `COMP-4`, `BINARY` | Big-endian two's-complement signed integer packed into 2, 4, or 8 bytes based on the total digit count. |
+
+The `USAGE` keyword is optional — `PIC S9(8) COMP.` and
+`PIC S9(8) USAGE IS COMP.` both work. `USAGE` may appear before
+or after the `PIC` clause within the same item.
+
+**COMP byte sizing** follows IBM's halfword / fullword /
+doubleword convention:
+
+| Total digits (`PIC 9(n)` or `S9(n)V9(m)` → `n+m`) | Bytes |
+|---|---|
+| 1 – 4 | 2 (halfword) |
+| 5 – 9 | 4 (fullword) |
+| 10 – 18 | 8 (doubleword) |
+
+`USAGE COMP` requires a numeric PIC (`9` or `S9`); declaring it
+on `PIC X(n)` is rejected at parse time. The signed/unsigned
+flag does *not* change the byte count — both `PIC 9(4) COMP`
+and `PIC S9(4) COMP` occupy two bytes. Bricks always stores the
+value as a two's-complement signed int internally.
+
+Scale survives the format transition: a value moved between a
+`PIC 9(5)V99` DISPLAY field and a `PIC S9(8)V99 COMP` field
+preserves the implicit decimal point. Within the interpreter
+every numeric load goes through the fixed-point `decimal`
+engine; DISPLAY decodes digits, COMP decodes binary bytes, but
+both produce the same `decimal{val, scale}` tuple.
+
+**Other USAGE variants** — `COMP-1` (single-precision float),
+`COMP-2` (double-precision float), `COMP-3` /
+`COMPUTATIONAL-3` / `PACKED-DECIMAL` are explicitly rejected at
+parse time with a "not yet supported" message. `REDEFINES`,
+`SYNC`, `INDEXED BY`, and `OCCURS DEPENDING ON` are also
+unsupported.
+
+### Level 88 condition-names
+
+A level-88 line declares a boolean condition tied to the
+**preceding non-88 data item**. The condition is true when the
+parent's current value matches one of the listed values or
+falls within a `THRU` range. Reference as a bare name in any
+PROCEDURE DIVISION condition (see
+[Chapter 22 — 88-level condition names](#88-level-condition-names)
+for the runtime behaviour).
+
+```cobol
+01  RESP-CODE  PIC 9(3).
+    88 RESP-OK        VALUE 0.
+    88 RESP-MISSING   VALUE 13.
+    88 RESP-RECOVER   VALUES 12, 26, 80.
+    88 RESP-FATAL     VALUE 100 THRU 999.
+```
+
+`VALUES` (plural) and `VALUE` (singular) are interchangeable.
+Multiple values are separated by spaces or commas. `THRU`
+(synonym `THROUGH`) declares an inclusive range; ranges and
+single values can be mixed:
+`88 OK VALUES 0, 1 THRU 5, 9.`
+
+A condition-name lives in its own namespace, separate from data
+items. Declaring an 88 whose name collides with an existing
+data item is rejected at parse time.
+
+### LINKAGE SECTION
+
+`LINKAGE SECTION` is parsed but minimal: bricks auto-injects
+`DFHCOMMAREA PIC X(2000)` when the program doesn't declare it,
+so a sub-program can `MOVE DFHCOMMAREA TO key` immediately. The
+dispatcher strips trailing space when reading the COBOL frame's
+`DFHCOMMAREA` back out, so a fixed-width buffer round-trips
+cleanly across an inter-language `EXEC CICS LINK`.
+
+### Cross-group name collisions — `OF` / `IN` qualification
+
+A child name that appears under more than one group is fine; the
+parser accepts the declaration and tracks the collision in
+`Program.AmbiguousNames`. Unqualified access to such a name is a
+runtime error ("ambiguous reference") — disambiguate with `OF`
+(or its synonym `IN`):
+
+```cobol
+01 SCR.
+   05 CUSTNO PIC X(8).
+01 DET.
+   05 CUSTNO PIC X(8).
+...
+MOVE 'A1234567' TO CUSTNO OF SCR.
+MOVE 'B7654321' TO CUSTNO OF DET.
+DISPLAY CUSTNO OF SCR.
+```
+
+Single-step qualification (`X OF Y`) picks the matching child
+anywhere in `Y`'s subtree; multi-step (`X OF Y OF Z`) chains
+through nested groups. Bare names that are unique across the
+program continue to work without qualification — the pre-7
+`runtime/cobol/gust.cob` convention of prefixed child names
+(`DCUSTNO`, `DNAME`, `DMSG`) still compiles and runs, it just
+isn't required any more.
+
+A sibling-duplicate (two children of the SAME parent sharing a
+name) is still a parse-time error — no qualifier can disambiguate
+between siblings of one group.
+
+### Type coercion on `MOVE`
+
+| Source class | Target class | Behaviour |
+|---|---|---|
+| Alphanumeric → Alphanumeric | `X` / `A` → `X` / `A` | Copy, right-pad with spaces if target is wider; right-truncate if source is wider. |
+| Numeric → Numeric | `9` / `S9` → `9` / `S9` | Load through the fixed-point `decimal` engine, rescale to the target's `V` position, store. Truncates high-order if the integer part doesn't fit (silent unless `ON SIZE ERROR` is set on the surrounding verb). |
+| Numeric → Edited | `9` / `S9` → `Z` / `$` / `*` / ... | Read the source as a `decimal` (honouring `V`-scale), render the value through the edited mask. |
+| Edited → Numeric | `Z` / `$` / `*` / ... → `9` / `S9` | De-edit on read by stripping insertion characters (`,`, `.`, `$`, `*`, spaces) and re-parsing the digits. |
+| Alphanumeric → Numeric | `X` → `9` | Best-effort `loadNumeric` — succeeds if the byte content parses as digits after trimming. A letter raises a runtime data exception. |
+| Numeric → Alphanumeric | `9` / `S9` → `X` | Source stringified, then alphanumeric-padded. |
+| Anything → Group | * → group item | Fans out to every elementary child (recursively). |
+
+### Figurative expansion
+
+`SPACES` → `' '` repeated to fill the target;
+`ZEROS` → `'0'` for numeric targets, `\x00` for alphanumeric;
+`HIGH-VALUES` → `\xFF`;
+`LOW-VALUES` → `\x00`;
+`QUOTES` → `'\''`. Group targets compute the fill length from
+the sum of the elementary children's storage.
 
 ---
 
 ## Chapter 22. PROCEDURE DIVISION
 
-### Statements supported
+The PROCEDURE DIVISION is a flat list of paragraphs. Each
+paragraph is a label (`PARAGRAPH-NAME.`) followed by one or
+more statements. Paragraphs are visible to `PERFORM` and
+`GO TO`.
 
-`MOVE`, `DISPLAY`, `STOP RUN`, `GOBACK`, `EXIT`, `EXIT PROGRAM`,
-`CONTINUE` (no-op), `IF ... [ELSE] ... END-IF`, `EVALUATE subject
-WHEN value [WHEN value] ... [WHEN OTHER] ... END-EVALUATE`, `PERFORM
-para`, `PERFORM para UNTIL cond`, `PERFORM para N TIMES`,
-`PERFORM para VARYING idx FROM x BY y UNTIL cond`, `GO TO para`,
-`COMPUTE target [ROUNDED] = expr [ON SIZE ERROR ... END-COMPUTE]`,
-`ADD a TO b [GIVING c] [ROUNDED] [ON SIZE ERROR ... END-ADD]`,
-`SUBTRACT a FROM b [GIVING c] [ROUNDED] [ON SIZE ERROR ... END-SUBTRACT]`,
-`MULTIPLY a BY b [GIVING c] [ROUNDED] [ON SIZE ERROR ... END-MULTIPLY]`,
-`DIVIDE a INTO b [GIVING c] [ROUNDED] [ON SIZE ERROR ... END-DIVIDE]`,
-`DIVIDE a BY b GIVING c [ROUNDED] [ON SIZE ERROR ... END-DIVIDE]`,
-`STRING ... DELIMITED BY (SIZE | 'lit') INTO target END-STRING`,
-`UNSTRING source DELIMITED BY 'lit' INTO t1 t2 ... END-UNSTRING`,
-`INSPECT subject TALLYING counter FOR (ALL | LEADING | CHARACTERS) [needle] [BEFORE/AFTER INITIAL delim]`,
-`INSPECT subject REPLACING (ALL | LEADING | FIRST | CHARACTERS) [needle] BY replacement [BEFORE/AFTER INITIAL delim]`,
-`EXEC CICS ... END-EXEC`.
+### Statement reference
 
-Every target name above (the second operand of MOVE, the target of
-COMPUTE / ADD / SUBTRACT / MULTIPLY / DIVIDE / GIVING / STRING INTO /
-UNSTRING INTO / INSPECT, and the subject of EVALUATE / IF) accepts
-qualification via `OF` / `IN` (see the
+#### Data movement
+
+| Verb | Syntax | Notes |
+|---|---|---|
+| `MOVE` | `MOVE src TO tgt1, tgt2, ...` | One or more targets; fan-out to group children supported. Type coercion table in [Chapter 21 — Type coercion](#type-coercion-on-move). |
+| `INITIALIZE` | Not yet supported. | Initialise individual items with `MOVE`. |
+
+#### Arithmetic
+
+Every arithmetic verb accepts the optional clauses `ROUNDED`,
+`ON SIZE ERROR ... [END-VERB]`, and `GIVING` (where listed). See
+"ROUNDED and ON SIZE ERROR" below.
+
+| Verb | Syntax |
+|---|---|
+| `COMPUTE` | `COMPUTE tgt [ROUNDED] = expr [ON SIZE ERROR ...] [END-COMPUTE]` |
+| `ADD` | `ADD a TO b [GIVING c] [ROUNDED] [ON SIZE ERROR ...] [END-ADD]` |
+| `SUBTRACT` | `SUBTRACT a FROM b [GIVING c] [ROUNDED] [ON SIZE ERROR ...] [END-SUBTRACT]` |
+| `MULTIPLY` | `MULTIPLY a BY b [GIVING c] [ROUNDED] [ON SIZE ERROR ...] [END-MULTIPLY]` |
+| `DIVIDE` (INTO) | `DIVIDE a INTO b [GIVING c] [ROUNDED] [ON SIZE ERROR ...] [END-DIVIDE]` |
+| `DIVIDE` (BY) | `DIVIDE a BY b GIVING c [ROUNDED] [ON SIZE ERROR ...] [END-DIVIDE]` |
+
+`REMAINDER` is not yet supported on `DIVIDE`. Arithmetic
+expressions support `+`, `-`, `*`, `/`, `**`, parentheses, and
+unary sign.
+
+#### Control flow
+
+| Verb | Syntax | Notes |
+|---|---|---|
+| `IF` | `IF cond [THEN] stmts [ELSE stmts] [END-IF]` | The period after the last unscoped statement closes the `IF` when `END-IF` is omitted. |
+| `EVALUATE` | `EVALUATE subject WHEN val [WHEN val] ... [WHEN OTHER stmts] END-EVALUATE` | Simple value form only — `EVALUATE TRUE` / `FALSE` are rejected at parse time. |
+| `PERFORM` | `PERFORM para` <br> `PERFORM para UNTIL cond` <br> `PERFORM para N TIMES` <br> `PERFORM para VARYING idx FROM x BY y UNTIL cond` | In-line `PERFORM ... END-PERFORM` (body inline, no paragraph) is not yet supported. |
+| `GO TO` | `GO TO para` | Calculated `GO TO ... DEPENDING ON` not supported. |
+| `CONTINUE` | `CONTINUE` | Explicit no-op (used in empty `WHEN OTHER` etc.). |
+| `STOP RUN` | `STOP RUN` (or just `STOP`) | Terminate the task. |
+| `GOBACK` | `GOBACK` | Synonym for `EXIT PROGRAM`. |
+| `EXIT` | `EXIT [PROGRAM]` | `EXIT` alone is a no-op; `EXIT PROGRAM` returns to the caller. |
+
+#### Strings
+
+| Verb | Syntax |
+|---|---|
+| `STRING` | `STRING src1 [DELIMITED BY (SIZE \| 'lit')] src2 ... INTO tgt [ON OVERFLOW stmts] [END-STRING]` |
+| `UNSTRING` | `UNSTRING src DELIMITED BY 'lit' INTO t1 t2 ... [ON OVERFLOW stmts] [END-UNSTRING]` |
+| `INSPECT TALLYING` | `INSPECT subject TALLYING counter FOR (ALL \| LEADING \| CHARACTERS) [needle] [BEFORE/AFTER INITIAL delim] [, ...]` |
+| `INSPECT REPLACING` | `INSPECT subject REPLACING (ALL \| LEADING \| FIRST \| CHARACTERS) [needle] BY replacement [BEFORE/AFTER INITIAL delim] [, ...]` |
+
+`INSPECT CONVERTING` is not yet supported.
+
+#### I/O and external
+
+| Verb | Syntax | Notes |
+|---|---|---|
+| `DISPLAY` | `DISPLAY item1 item2 ...` | Concatenates items with no separator; newline after the list. |
+| `ACCEPT` | Not yet supported. | Use `EXEC CICS RECEIVE` for terminal input. |
+| `EXEC CICS` | `EXEC CICS verb operand-list END-EXEC` | Same verb set as REXX. See Parts 4–5 and 7. |
+| `EXEC SQL` | `EXEC SQL stmt END-EXEC` | See Part 6. |
+| `CALL`, `SEARCH`, `ALTER` | Not yet supported. | |
+
+Every target name above (the second operand of `MOVE`, the
+target of `COMPUTE` / `ADD` / `SUBTRACT` / `MULTIPLY` / `DIVIDE` /
+`GIVING` / `STRING INTO` / `UNSTRING INTO` / `INSPECT`, and the
+subject of `EVALUATE` / `IF`) accepts qualification via `OF` /
+`IN` (see the
 [Data Division](#chapter-21-data-division) section on globally
-non-unique names) and subscripts via `(idx)` for OCCURS-resident
-items.
+non-unique names), subscripts via `(idx)` for OCCURS-resident
+items, and reference modification via `(start:length)`.
 
 ### ROUNDED and ON SIZE ERROR
 
@@ -4661,25 +5347,49 @@ form works for both display and arithmetic.
 
 ## Chapter 27. Restrictions and deferred features
 
-### Disallowed
+This chapter is the canonical list of language features bricks
+does **not** accept. Anything not listed here can be assumed
+implemented; refer back to the relevant Chapter 14–26 section
+for the supported syntax.
 
-* **Calculated GOTOs.** `GO TO DEPENDING ON` is rejected at parse
-  time. The bricks runtime gives every task its own heap and stack
-  with no static control-block aliasing; calculated GOTOs would
-  require a per-program label-table the parser deliberately doesn't
-  build.
+### COBOL — disallowed at parse time
 
-### Deferred Syntax Covrage 
+* **Calculated GOTOs.** `GO TO ... DEPENDING ON expr` is
+  rejected. Every task has its own heap and stack with no
+  static control-block aliasing; supporting calculated GOTOs
+  would require a per-program label-table the parser
+  deliberately doesn't build.
+* **Nested `OCCURS`.** An array of arrays is rejected at parse
+  time. One level of `OCCURS` is fine.
+* **`EVALUATE TRUE` / `EVALUATE FALSE`.** The conditional /
+  computed form is rejected with a hint to rewrite as
+  `IF/ELSE`. The simple-value form is supported.
 
-* Reference modification (`DATE-FIELD(1:4)` for substring access).
-* Multi-dimensional `OCCURS`. One-level OCCURS is supported (see
-  [Chapter 22](#chapter-22-procedure-division)); the parser rejects
-  an OCCURS item whose chain already contains another OCCURS
-  ancestor.
-* `SCREENHT`-based map family suffix (e.g. `CUST1L` on a mod-4
-  screen). REXX programs do this with a runtime
-  `IF SCRH >= 43 THEN ...` fallback after a `MAPFAIL`; the COBOL
-  twins always render the unsuffixed mod-2 maps for now.
+### COBOL — deferred (would be implementable, not yet wired)
+
+| Area | Specifics |
+|---|---|
+| DATA DIVISION | `REDEFINES`, `USAGE COMP-1` (single float), `USAGE COMP-2` (double float), `USAGE COMP-3` / `PACKED-DECIMAL`, `SYNC`, `INDEXED BY`, `OCCURS DEPENDING ON`, `66` / `78` levels, `BLANK WHEN ZERO`. `USAGE COMP` / `COMP-4` / `COMPUTATIONAL` / `BINARY` ARE supported — see Chapter 21. |
+| Edited PIC | Edit characters `+`, `-`, `CR`, `DB`, `B`, `0`, `/`. (`Z`, `.`, `,`, `$`, `*` are supported.) |
+| PROCEDURE DIVISION | `CALL` (external program), `SEARCH` / `SEARCH ALL`, `ALTER`, `INITIALIZE`, `ACCEPT`, in-line `PERFORM ... END-PERFORM` (only paragraph-targeted `PERFORM` works), `INSPECT CONVERTING`, `DIVIDE … REMAINDER`. |
+| Intrinsic functions | Only `UPPER-CASE`, `LOWER-CASE`, `LENGTH`, `NUMVAL`, `TRIM`, `REVERSE`, `POS` are implemented. The statistical / date / time families are not. `FUNCTION TRIM` does NOT accept the `LEADING` / `TRAILING` modifier. |
+| Copybooks | `COPY ... REPLACING ==X== BY ==Y==.`, library qualifiers (`COPY name OF lib`), `SUPPRESS`. |
+| EXEC SQL | Multi-row `INSERT VALUES (...), (...)`. Stored-procedure calls (`EXEC SQL CALL`). DDL inside the executor — use `psql` or CEDA DATABASE. |
+| EXEC CICS | `SCREENHT`-based map family suffix (e.g. `CUST1L` on a mod-4 screen) is REXX-only; COBOL twins always render the unsuffixed mod-2 map. |
+
+### REXX — deferred / accepted but inert
+
+| Area | Specifics |
+|---|---|
+| Tracing | `TRACE` is parsed but emits no trace output. |
+| Settings | `OPTIONS …` parsed and accepted; recognised options are none. `NUMERIC FORM SCIENTIFIC` / `ENGINEERING` accepted syntactically, rendering is always plain decimal. |
+| External routines | No dynamic linking — every callable is either a `PROCEDURE` in the program or a built-in. |
+| Address environments | Only `ADDRESS CICS` is wired. `ADDRESS COMMAND` / `ADDRESS SYSTEM` / `ADDRESS TSO` are not recognised. |
+| Terminal queue | `PUSH`, `QUEUE`, `PULL`, `PARSE PULL` are parsed; the queue is always empty. Use `EXEC CICS RECEIVE` for terminal input. |
+| PARSE | `PARSE SOURCE`, `PARSE VERSION`, `PARSE NUMERIC` are not wired. `PARSE LOWER` is not parsed (only `UPPER`). |
+| Conditions | `FAILURE`, `NOTREADY`, `LOSTDIGITS` are not implemented. `HALT` parses but never fires (bricks has no external-halt fan-in). |
+| Numeric | Arithmetic is float64 internally, then rounded to `NUMERIC DIGITS` significant figures — strict IEEE behaviour is not preserved. |
+| Built-ins | `ERRORTEXT(code)` echoes the code rather than returning the standard REXX error-text string. |
 
 ---
 
