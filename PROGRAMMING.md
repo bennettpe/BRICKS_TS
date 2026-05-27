@@ -322,20 +322,34 @@ Bricks ships its own line-oriented, BMS-flavoured map DSL (parsed by
 ### Format
 
 ```
+[MAPSET <name>]                           -- optional, namespace for the file
 MAP <name> SIZE rowsxcols
   [FIELD AT r,c LEN n <attrs> "literal"]
   [INPUT <fieldname> AT r,c LEN n <attrs> [DEFAULT "value"]]
   [STOP AT r,c]
   [CURSOR AT {fieldname | r,c}]
 ENDMAP
+[MAP <name> SIZE rowsxcols                -- multiple MAP blocks per file
+   ...
+ENDMAP]
 ```
 
 ### Statements
 
+**`MAPSET <name>`** *(optional, must be the first non-comment line)*
+   Names the mapset — the namespace every `MAP` block in this file
+   belongs to. The catalog uses `MAPSET.NAME` as its key so two
+   different files can declare a map named `MAPA` without
+   colliding. When the line is omitted, the mapset defaults to the
+   file's basename (uppercased, extension stripped): a file named
+   `help1.map` has implicit mapset `HELP1`.
+
 **`MAP <name> SIZE rowsxcols`**
-   The map header. Names must be unique across the directory
-   (case-insensitive); typical sizes are `24x80` (mod 2) and `43x80`
-   (mod 4).
+   The map header. Names must be unique **within their mapset**
+   (case-insensitive); typical sizes are `24x80` (mod 2) and
+   `43x80` (mod 4). A single `.map` file may declare any number
+   of MAP blocks back-to-back — useful when porting a BMS mapset
+   that contained several DFHMDI macros under one DFHMSD.
 
 **`FIELD AT r,c LEN n <attrs> "literal"`**
    A display-only field that paints the literal at row `r`, column
@@ -385,6 +399,29 @@ directory plus the source file backing the requested name; on `mtime`
 change the directory is reparsed and swapped atomically. A failed
 re-parse keeps the prior catalogue in place — the operator can find
 the broken file with `CEMT PERFORM RESCAN MAP` (see the README).
+
+### Sending a map by mapset
+
+`EXEC CICS SEND MAP('NAME') MAPSET('SET') FROM(stem)` resolves
+through the qualified `MAPSET.NAME` index, so:
+
+```cobol
+EXEC CICS SEND MAP('MAPA') MAPSET('AM01') FROM(AM01) ERASE END-EXEC.
+EXEC CICS SEND MAP('MAPA') MAPSET('AM16') FROM(AP16) ERASE END-EXEC.
+EXEC CICS SEND MAP('MAPB') MAPSET('AM99') FROM(AM99) ERASE END-EXEC.
+```
+
+each picks the right map even when several files share the same
+bare map name. When `MAPSET(...)` is omitted, the catalog tries a
+bare-name lookup; if that name appears in more than one mapset the
+runtime returns the short diagnostic
+`SEND MAP: map "MAPA" is ambiguous; specify MAPSET` rather than
+silently picking one. Programs that only ever reference unique
+bare names (the typical case for the runtime/map shipped with
+bricks) keep working without any code change.
+
+`RECEIVE MAP` accepts the same `MAPSET(...)` clause with identical
+resolution semantics.
 
 ### Example
 
