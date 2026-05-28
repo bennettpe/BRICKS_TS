@@ -2892,7 +2892,129 @@ recognize them at all:
 | Command | Use |
 |---|---|
 | `GETMAIN`, `FREEMAIN` | Dynamic storage. REXX has dynamic variables; COBOL has `WORKING-STORAGE`. |
-| `ENQ`, `DEQ` | User-level resource locking. File-level locking already exists via `READ … UPDATE`. |
+| `LOAD`, `RELEASE` | Explicit program-fetch lifecycle. Bricks caches program text on first dispatch. |
+| `WAIT EVENT`, `POST` | ECB-driven inter-task signalling — bricks's scheduler model does not expose ECBs. |
+
+### DELAY
+
+```
+EXEC CICS DELAY
+            {INTERVAL(hhmmss) | TIME(hhmmss) |
+             FOR HOURS(h) MINUTES(m) SECONDS(s) MILLISECS(ms) |
+             UNTIL HOURS(h) MINUTES(m) SECONDS(s)}
+            [RESP(rc) RESP2(rc2)]
+END-EXEC.
+```
+
+Suspends the issuing task until the given duration elapses (`INTERVAL`
+/ `FOR`) or until the named time-of-day arrives (`TIME` / `UNTIL`). A
+bare `DELAY` with no clauses is a `NORMAL` yield. `INTERVAL` and
+`TIME` accept the same `HHMMSS` digit forms as `START`. `FOR` /
+`UNTIL` are the IBM-canonical compositional alternatives — supply
+any subset of `HOURS`, `MINUTES`, `SECONDS`, `MILLISECS`; the
+millisecond clause is the only sub-second form available.
+
+Bricks sleeps the calling goroutine; PA1 break-out continues to work
+because the connection's prompt loop is unaffected. A long `DELAY` on
+a terminal that disconnects mid-sleep ends when the conn read deadline
+poisons the next dispatch — the task is not held alive past the
+connection.
+
+### CANCEL
+
+```
+EXEC CICS CANCEL
+            {REQID(handle) | TRANSID(name) [TERMID(t)]}
+            [RESP(rc) RESP2(rc2)]
+END-EXEC.
+```
+
+Drops a pending `START` from the in-region scheduler. `REQID(handle)`
+matches against the 1–8-character handle the originating `START`
+supplied; bricks records the handle on the queued entry. `TRANSID(name)`
+drops the soonest pending START to that transid on `TERMID` (default =
+the issuing terminal). `RESP=NOTFND` (13) when no match.
+
+The scheduler is in-memory; a bricks restart drops every pending
+entry, after which any `CANCEL` returns `NOTFND`.
+
+### ENQ / DEQ
+
+```
+EXEC CICS ENQ RESOURCE(name) [LENGTH(n)] [HOLD] [NOSUSPEND]
+            [RESP(rc) RESP2(rc2)]
+END-EXEC.
+
+EXEC CICS DEQ RESOURCE(name) [LENGTH(n)]
+            [RESP(rc) RESP2(rc2)]
+END-EXEC.
+```
+
+Named-resource locking with region scope. `ENQ` blocks until the
+resource is acquired; with `NOSUSPEND`, an already-held resource
+returns `RESP=ENQBUSY` (55) immediately. A re-entrant `ENQ` by the
+same task on the same resource is a `NORMAL` no-op. The default
+lock scope is the next `SYNCPOINT` (commit or rollback) or task
+end; `HOLD` extends the scope past `SYNCPOINT` so the lock persists
+until an explicit `DEQ` or task end.
+
+`LENGTH(n)` is accepted for source compatibility but bricks uses
+the entire resolved `RESOURCE` value as the key (uppercased,
+trimmed).
+
+A non-`NOSUSPEND` `ENQ` that has waited five minutes for the holder
+to release returns `ENQBUSY` rather than blocking indefinitely.
+That cap converts a dropped-owner edge case into a clean recoverable
+status; legitimate same-region holders are never close to that
+limit.
+
+### WRITE OPERATOR
+
+```
+EXEC CICS WRITE OPERATOR
+            TEXT(area) [LENGTH(n)]
+            [ROUTECODES(codes)] [NUMROUTES(n)]
+            [EVENTUAL | ACTION | CRITICAL | IMMEDIATE]
+            [CONSNAME(name)]
+            [RESP(rc) RESP2(rc2)]
+END-EXEC.
+```
+
+Writes `TEXT(area)` to the bricks console with the `SYS` tag. The
+issuing `TERMID` is included so the operator can correlate the
+message with the task that wrote it. `LENGTH(n)` bounds the bytes
+written. `ROUTECODES`, `NUMROUTES`, `CONSNAME`, `EVENTUAL`,
+`ACTION`, `CRITICAL`, and `IMMEDIATE` are accepted for source
+compatibility but fold into a single console write — bricks has no
+multi-console fan-out.
+
+The `REPLY` form (`REPLY(var) MAXLENGTH(n) REPLYLENGTH(var)
+[TIMEOUT(n)]`) is rejected with `RESP=INVREQ`. Bricks has no
+operator-console input port to source the reply from, so accepting
+it silently would hang the task. A program that needs operator
+acknowledgement must reach the operator through `SEND MAP` on a
+configured operator terminal.
+
+### SEND CONTROL
+
+```
+EXEC CICS SEND CONTROL [ERASE | ERASEAUP]
+            [FREEKB] [ALARM] [FRSET]
+            [CURSOR(pos)] [PRINT] [LDC(name)] [STRFIELD]
+            [RESP(rc) RESP2(rc2)]
+END-EXEC.
+```
+
+3270 control order without a data payload — used between a
+`SEND MAP DATAONLY` pre-paint and the next operator interaction to
+clear the screen, unlock the keyboard, or reset MDTs without
+re-painting any field content. `ERASE` and `ERASEAUP` clear the
+screen; the other flags are accepted but their wire-bits are not
+tunnelled by the underlying go3270 layer (`FREEKB` and `FRSET` are
+part of every paint's fixed WCC, so they have no separate effect;
+`ALARM` / `CURSOR` / `PRINT` / `STRFIELD` / `LDC` are silently
+accepted so program source compiles). A flag-less `SEND CONTROL`
+is a `NORMAL` no-op.
 
 ### Recently added
 
@@ -2902,6 +3024,8 @@ recognize them at all:
   scheduling with payload pass-through. Cross-terminal and
   no-`TERMID` (headless) STARTs are still deferred; the v1
   surface rejects them with `RESP-INVREQ` and a clear message.
+* **`DELAY`, `CANCEL`, `ENQ` / `DEQ`, `WRITE OPERATOR`,
+  `SEND CONTROL`** — round-4 verbs documented above.
 * **`WEB *`** (server-side, Phase 1) — see "EXEC CICS WEB" below.
   The client-side surface (`WEB OPEN / SEND / RECEIVE / CONVERSE
   / CLOSE`) and the DOCUMENT API land in Phase 2; URIMAP / TLS
