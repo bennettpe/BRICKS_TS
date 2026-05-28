@@ -1477,13 +1477,22 @@ END-EXEC.
 > **VSAM in Bricks.** Bricks's KSDS file surface is the application-
 > programmer's view of the persistent record store. Each FILE name
 > in `EXEC CICS READ FILE(name)` corresponds to a B+tree bucket in
-> the embedded `data/files.boltdb` database — there is no separate
-> KSDS dataset definition step, no `DEFINE CLUSTER`. The first
-> `EXEC CICS WRITE` creates the bucket; subsequent `READ` / `REWRITE`
-> / `DELETE` / `STARTBR` / `READNEXT` / `READPREV` / `RESETBR` /
-> `ENDBR` see it. Records are opaque byte payloads; the application
-> chooses the layout (typically a pipe-delimited group of fields,
-> the convention every sample uses).
+> the embedded `data/files.boltdb` database. A separate `DEFINE
+> CLUSTER` step is **optional**: the first `EXEC CICS WRITE` creates
+> the bucket if it isn't already there, and subsequent `READ` /
+> `REWRITE` / `DELETE` / `STARTBR` / `READNEXT` / `READPREV` /
+> `RESETBR` / `ENDBR` see it. Records are opaque byte payloads; the
+> application chooses the layout (typically a pipe-delimited group
+> of fields, the convention every sample uses).
+>
+> Operators who want the classic mainframe lifecycle — declare a
+> cluster with `DEFINE CLUSTER`, bulk-load it from a sequential file
+> with `REPRO`, drop it with `DELETE`, enumerate the catalogue with
+> `LISTCAT`, dump records with `PRINT` — should use the **IDCA**
+> transaction described under *VSAM file management* below. Files
+> created through IDCAMS and files auto-created by `EXEC CICS WRITE`
+> are byte-identical: same bucket, same `_catalog` row, same
+> `CEMT INQUIRE FILE` view.
 
 These commands operate on a **single record**, identified by a key,
 in a CICS FILE. Each FILE is a bbolt bucket inside
@@ -1701,6 +1710,215 @@ when supplied; `RC = NOTFND` when no record matches.
 ```rexx
 EXEC CICS DELETE FILE('CUSTOMERS') RIDFLD(CKEY) END-EXEC
 ```
+
+---
+
+### VSAM file management — the IDCA (IDCAMS) transaction
+
+`IDCA` is the BRICKS equivalent of mainframe **IDCAMS / AMSERV** —
+an Access Method Services screen for declaring, loading, dropping,
+listing, and printing VSAM-style KSDS clusters without writing an
+application program. It is a built-in transaction (no entry in
+`runtime/transactions.conf` is required) and is **admin-only**: only
+signed-on users in the `admin` group see the screen.
+
+#### Invocation
+
+At the `>` prompt on any 3270 terminal, type:
+
+```
+IDCA
+```
+
+ENTER drops you into a SYSIN / SYSPRINT screen. Type one or more
+control statements in the SYSIN area, press ENTER to run them, and
+the SYSPRINT area shows classic `IDC0001I FUNCTION COMPLETED…`-style
+messages plus the highest condition code. `PF5` clears the input;
+`PF7` / `PF8` scroll the listing; `PF3` exits.
+
+#### Supported commands
+
+| Command | Syntax |
+|---|---|
+| **DEFINE CLUSTER** | `DEFINE CLUSTER (NAME(name) [RECORDSIZE(avg max)] [KEYS(len off)] [INDEXED] [REPLACE])` |
+| **REPRO** (load) | `REPRO INFILE(seq-file) OUTFILE(cluster) [KEYS(len off)] [SKIP(n)] [COUNT(n)]` |
+| **REPRO** (unload) | `REPRO INFILE(cluster) OUTFILE(seq-file) [COUNT(n)]` |
+| **DELETE** | `DELETE name [CLUSTER]` |
+| **LISTCAT** | `LISTCAT [LEVEL(prefix)] [NAMES \| ALL]` |
+| **PRINT** | `PRINT INFILE(cluster) [CHARACTER \| HEX \| DUMP] [COUNT(n)] [FROMKEY(k)] [TOKEY(k)]` |
+
+Tokenisation is case-insensitive for keywords; values inside parens
+(file names, keys) are taken verbatim. A trailing `-` on a line is
+a continuation marker (JCL convention). Lines starting with `*` and
+text bracketed by `/* … */` are comments.
+
+#### Sequential file convention
+
+`REPRO INFILE(…)` and `REPRO OUTFILE(…)` name files **relative to
+`runtime_dir`** (`./runtime/` by default — see the `runtime_dir` knob
+in `bricks.cnf`). Subdirectories are allowed, so an operator can keep
+loads under `loads/`, dumps under `dumps/`, ad-hoc files under `tmp/`,
+etc.:
+
+```
+REPRO INFILE(tmp/orders.in)         OUTFILE(ORDERS)         KEYS(7 0)
+REPRO INFILE(loads/jan/customers.in) OUTFILE(CUSTOMERS)     KEYS(7 0)
+REPRO INFILE(ORDERS)                OUTFILE(dumps/orders.dat)
+```
+
+Bricks treats a name with a `.` in it as a sequential file and a name
+without one as a cluster, so subdirectory-bearing paths still pick LOAD
+vs UNLOAD direction correctly as long as the seq side has an
+extension. Each line of a sequential file becomes one record. The
+`KEYS(len off)` clause carves the key out of those bytes (length first,
+then offset — matching real IDCAMS); omit it and Bricks defaults to the
+cluster's declared `KeyMax` from `DEFINE CLUSTER`.
+
+**Parent directories are not auto-created.** Writing to
+`OUTFILE(dumps/cust.dat)` when `runtime/dumps/` doesn't exist fails
+cleanly — `mkdir -p runtime/dumps` on the host first.
+
+#### Security
+
+Operator-supplied paths are sandboxed to `runtime_dir`. The resolver
+applies four independent traversal-defence layers before any file is
+opened: a per-segment lexical filter (alphanumeric + `_-.` only,
+rejects `..`, rejects leading-dot, rejects absolute paths and
+backslashes), a `filepath.Clean` round-trip check, an absolute-prefix
+invariant against `runtime_dir`, and a `filepath.EvalSymlinks` check
+that rejects symlinks whose target leaves the sandbox. Attempts like
+`INFILE(../etc/passwd)`, `INFILE(/etc/passwd)`, or `INFILE(symlink)`
+where the symlink points outside the root all return `IDC3009I` with
+condition code 8 and never reach `os.Open`. The IDCA transaction is
+also admin-gated at the screen level; the path sandbox is defence in
+depth on top of that.
+
+#### Worked example
+
+```
+DEFINE CLUSTER (NAME(CUSTOMERS) RECORDSIZE(80 80) KEYS(7 0))
+REPRO INFILE(tmp/customers.in) OUTFILE(CUSTOMERS) KEYS(7 0)
+LISTCAT LEVEL(CUST)
+PRINT INFILE(CUSTOMERS) CHARACTER COUNT(5)
+```
+
+`LISTCAT` produces a CEMT-style fixed-column listing:
+
+```
+CATALOG LISTING -- 1 ENTRY(S)
+  NAME                 RECORDS  KEYMAX  RECMAX  LAST-MOD
+  CUSTOMERS                 42       7      80  28May26 15:04
+IDC0001I FUNCTION COMPLETED, CONDITION CODE IS 0
+```
+
+#### Condition codes
+
+Same scale as classic IDCAMS:
+
+| Code | Meaning |
+|---|---|
+| 0  | success |
+| 4  | warning (e.g. duplicate records bypassed on REPRO, empty LISTCAT) |
+| 8  | error (file not found, file locked by another terminal, DEFINE without REPLACE on an existing cluster) |
+| 12 | severe (parse error, I/O failure) |
+
+The highest code any single statement produced is reported on the
+final `IDC0001I FUNCTION COMPLETED, HIGHEST CONDITION CODE WAS nn`
+line.
+
+#### Lock behaviour and concurrency
+
+`DELETE` and `REPRO` (load mode) check the file's lock state before
+proceeding. A file held under `EXEC CICS READ … UPDATE` by another
+terminal is reported as `IDC3009I ** name LOCKED BY term=Txxxx, NOT
+DELETED` with condition code 8 — the same refusal the CEDA VSAM
+purge screen produces. Locks held by the operator's own terminal are
+ignored (so a user can DELETE a file they themselves are mid-update
+on, if they really want to).
+
+Every IDCAMS command produces one line in the audit log
+(`log/<timestamp>.log`):
+
+```
+idcams=DEFINE  target=CUSTOMERS term=T0001 user=admin status=OK detail="keymax=7 recmax=80"
+idcams=REPRO   target=CUSTOMERS term=T0001 user=admin status=OK detail="source=customers.in records=42 skipped=0 dup=0"
+idcams=DELETE  target=CUSTOMERS term=T0001 user=admin status=OK
+```
+
+#### Relationship to CEDA VSAM
+
+`CEDA VSAM` and `IDCA` are two views of the same catalogue:
+
+- **CEDA VSAM** — interactive table of every cluster with one-keystroke
+  purge (`P` selector + secondary type-the-name confirmation). Use
+  when you want to browse and purge a handful of files visually.
+- **IDCA** — command-driven AMS. Use when you want to script a
+  reproducible cluster lifecycle, declare metadata up front, or
+  bulk-load from a sequential file.
+
+Both go through the same audit logging and same lock checks; both
+operate on the same `data/files.boltdb` buckets that `EXEC CICS WRITE`
+populates from REXX and COBOL.
+
+#### Offline IDCAMS — the `idcams` CLI
+
+`idcams` is the **standalone** counterpart to the IDCA
+transaction. Same engine, same control statements, same audit log
+format — but it opens `data/files.boltdb` directly from the shell, so
+the bricks region must be **stopped** while it runs. This is the
+classic mainframe batch-IDCAMS model: shut the region down, run a
+deck of DEFINE / REPRO / DELETE statements, bring the region back up.
+
+```
+idcams [-c bricks.cnf] [-d datadir] [-r runtimedir] -sysin deck.idcams
+idcams [-c bricks.cnf] -e "DEFINE CLUSTER (NAME(X))"
+idcams                                # reads SYSIN from stdin
+```
+
+Flags:
+
+| Flag | Purpose |
+|---|---|
+| `-c <path>` | path to `bricks.cnf` (default: `./bricks.cnf` then `../bricks.cnf`) |
+| `-d <dir>` | data directory holding `files.boltdb` (overrides `bricks.cnf`) |
+| `-r <dir>` | `runtime_dir` sandbox root for REPRO INFILE/OUTFILE (overrides `bricks.cnf`) |
+| `-sysin <file>` | read IDCAMS control statements from this file |
+| `-e <stmt>` | execute one inline statement and exit |
+| `-logdir <dir>` | audit-log directory (default: `bricks.cnf` `log_location`) |
+| `-q` | suppress the SYSIN echo on stdout (listing only) |
+
+**Exit code is the highest IDCAMS condition code** (0=OK, 4=warning,
+8=error, 12=severe), so the CLI plugs into shell pipelines and CI
+scripts directly. A REPRO that bypassed duplicate records exits 4; a
+LISTCAT on an empty catalogue exits 4; a DELETE of a missing file
+exits 8.
+
+Worked example:
+
+```
+$ idcams -sysin reload.idcams
+idcams — data=data  tmp=runtime/tmp  sysin=reload.idcams
+------------------------------------------------------------------------
+IDCAMS  SYSTEM SERVICES                                  BRICKS / KICKS
+                                                  TIME: 14:21:08
+
+   DEFINE CLUSTER (NAME(CUSTOMERS) RECORDSIZE(80 80) KEYS(7 0) REPLACE)
+IDC0508I CLUSTER CUSTOMERS DEFINED  (KEYMAX=7, RECMAX=80)
+IDC0001I FUNCTION COMPLETED, CONDITION CODE IS 0
+
+   REPRO INFILE(customers.in) OUTFILE(CUSTOMERS) KEYS(7 0)
+IDC0005I NUMBER OF RECORDS PROCESSED WAS 12450
+IDC0001I FUNCTION COMPLETED, CONDITION CODE IS 0
+
+IDC0001I FUNCTION COMPLETED, HIGHEST CONDITION CODE WAS 0
+$ echo $?
+0
+```
+
+If the bricks region is still running, the CLI detects the bbolt lock
+contention and exits with code 16 plus a hint to use the IDCA
+transaction instead — no hang, no partial write, no chance of
+corrupting an in-flight region's view of the catalogue.
 
 ---
 
@@ -4431,14 +4649,15 @@ collide on the duplicate-name check) and they're never
 registered in the lookup tables — they can only be addressed
 through the parent.
 
-### `USAGE` — DISPLAY vs. COMP
+### `USAGE` — DISPLAY vs. COMP vs. COMP-3
 
-Numeric items have two storage layouts:
+Numeric items have three storage layouts:
 
 | `USAGE` | Synonyms | Storage |
 |---|---|---|
 | `DISPLAY` (default) | — | One byte per digit; signed PICs reserve byte 0 for the sign character (`' '` / `'-'`). The historical bricks layout. |
 | `COMP` | `COMPUTATIONAL`, `COMP-4`, `BINARY` | Big-endian two's-complement signed integer packed into 2, 4, or 8 bytes based on the total digit count. |
+| `COMP-3` | `COMPUTATIONAL-3`, `PACKED-DECIMAL` | Packed decimal: two BCD digits per byte (high nibble first), with the last byte's low nibble carrying the sign. |
 
 The `USAGE` keyword is optional — `PIC S9(8) COMP.` and
 `PIC S9(8) USAGE IS COMP.` both work. `USAGE` may appear before
@@ -4466,9 +4685,42 @@ every numeric load goes through the fixed-point `decimal`
 engine; DISPLAY decodes digits, COMP decodes binary bytes, but
 both produce the same `decimal{val, scale}` tuple.
 
-**Other USAGE variants** — `COMP-1` (single-precision float),
-`COMP-2` (double-precision float), `COMP-3` /
-`COMPUTATIONAL-3` / `PACKED-DECIMAL` are explicitly rejected at
+**COMP-3 byte sizing** uses the packed-decimal formula
+`ceil((digits + 1) / 2)` — digits plus the trailing sign nibble,
+rounded up:
+
+| Total digits | Bytes |
+|---|---|
+| 1 | 1 |
+| 4 | 3 |
+| 9 | 5 |
+| 15 | 8 |
+| 18 | 10 |
+
+The sign nibble follows IBM Enterprise COBOL convention: `0xC`
+for signed positive, `0xD` for signed negative, `0xF` for
+unsigned. On read, sign nibbles `0xB` and `0xD` are treated as
+negative; everything else is positive. Like `COMP`, `COMP-3`
+requires a numeric PIC and the digit cap is 18 (the int64
+fixed-point engine's ceiling) — `PIC S9(19)` and wider are
+parser-rejected.
+
+The canonical mainframe shape `PIC S9(15) COMP-3` is the
+standard CICS `EIBABSTIME` carrier:
+
+```cobol
+01  SYS-DT  PIC S9(15) COMP-3.
+EXEC CICS ASKTIME ABSTIME(SYS-DT) END-EXEC.
+EXEC CICS FORMATTIME ABSTIME(SYS-DT) YYYYMMDD(YYYYMMDD) END-EXEC.
+```
+
+`ASKTIME` writes the 15-digit ms-since-1900 decimal string into
+`SYS-DT`; bricks packs it into 8 BCD bytes transparently.
+`FORMATTIME` reads the packed bytes back into the same decimal
+string and parses it.
+
+**Other USAGE variants** — `COMP-1` (single-precision float) and
+`COMP-2` (double-precision float) are explicitly rejected at
 parse time with a "not yet supported" message. `REDEFINES`,
 `SYNC`, `INDEXED BY`, and `OCCURS DEPENDING ON` are also
 unsupported.
@@ -5668,7 +5920,7 @@ for the supported syntax.
 
 | Area | Specifics |
 |---|---|
-| DATA DIVISION | `REDEFINES`, `USAGE COMP-1` (single float), `USAGE COMP-2` (double float), `USAGE COMP-3` / `PACKED-DECIMAL`, `SYNC`, `INDEXED BY`, `OCCURS DEPENDING ON`, `66` / `78` levels, `BLANK WHEN ZERO`. `USAGE COMP` / `COMP-4` / `COMPUTATIONAL` / `BINARY` ARE supported — see Chapter 21. |
+| DATA DIVISION | `REDEFINES`, `USAGE COMP-1` (single float), `USAGE COMP-2` (double float), `SYNC`, `INDEXED BY`, `OCCURS DEPENDING ON`, `66` / `78` levels, `BLANK WHEN ZERO`. `USAGE COMP` / `COMP-4` / `COMPUTATIONAL` / `BINARY` and `USAGE COMP-3` / `COMPUTATIONAL-3` / `PACKED-DECIMAL` ARE supported — see Chapter 21. |
 | Edited PIC | Edit characters `+`, `-`, `CR`, `DB`, `B`, `0`, `/`. (`Z`, `.`, `,`, `$`, `*` are supported.) |
 | PROCEDURE DIVISION | `CALL` (external program), `SEARCH` / `SEARCH ALL`, `ALTER`, `INITIALIZE`, `ACCEPT`, in-line `PERFORM ... END-PERFORM` (only paragraph-targeted `PERFORM` works), `INSPECT CONVERTING`, `DIVIDE … REMAINDER`. |
 | Intrinsic functions | Only `UPPER-CASE`, `LOWER-CASE`, `LENGTH`, `NUMVAL`, `TRIM`, `REVERSE`, `POS` are implemented. The statistical / date / time families are not. `FUNCTION TRIM` does NOT accept the `LEADING` / `TRAILING` modifier. |
