@@ -310,6 +310,41 @@ back; `LENGTH(80)` only sets the input length.
 | Implicit task end | Program runs off the end, or `STOP RUN` (COBOL). |
 | Forced task end | `EXEC CICS ABEND`. |
 
+### Response-code handling (`RESP`, `RESP2`, `DFHRESP`)
+
+Every EXEC CICS verb accepts the IBM-canonical `RESP(var)` and
+`RESP2(var)` clauses. After dispatch the runtime writes the
+numeric response into the named host variables, in addition to
+the always-set `EIBRESP` / `EIBRESP2` frame fields. Programs may
+therefore write either style:
+
+```cobol
+EXEC CICS READ FILE('CUST') INTO(REC) RIDFLD(KEY)
+                            RESP(WS-RC) END-EXEC.
+IF WS-RC = DFHRESP(NORMAL)   PERFORM USE-REC.
+IF WS-RC = DFHRESP(NOTFND)   PERFORM CREATE-REC.
+
+EXEC CICS WRITE FILE('LOG') FROM(BUF) RIDFLD(KEY) END-EXEC.
+IF EIBRESP = DFHRESP(DUPREC) PERFORM HANDLE-DUP.
+```
+
+`DFHRESP(NAME)` is a compile-time function: the COBOL parser
+resolves it to the numeric constant from
+`runtime/cobolcopy/DFHRESP.cpy` (and from the matching table in
+`cobol/parser.go`). An unknown name is a parse-time error with a
+"see DFHRESP.cpy for the list" hint.
+
+### Length as an input bound
+
+`LENGTH(n)` on `READ FILE`, `READQ TS`, `READNEXT`, `READPREV`,
+`RECEIVE INTO`, `LINK COMMAREA`, and `RETURN COMMAREA` is treated
+as IBM's in/out parameter — the caller's value caps the bytes
+returned (or passed forward, for LINK/RETURN); the post-dispatch
+write-back stores the actual byte count. A `LENGTH(80)` on
+`READQ TS` against a 200-byte item now hands the program 80
+bytes and reports `80`, matching real CICS instead of overflowing
+the buffer.
+
 ---
 
 ## Chapter 3. The map DSL
@@ -481,9 +516,11 @@ to press an AID key.
 
 ```
 EXEC CICS SEND MAP(name)
-              [FROM(stem.)]
-              [ERASE | DATAONLY]
+              [MAPSET(set)] [FROM(stem.)]
+              [ERASE | ERASEAUP | DATAONLY] [MAPONLY]
               [CURSOR(position)]
+              [FREEKB] [ALARM] [FRSET]
+              [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
 
@@ -496,6 +533,15 @@ paints the screen, and waits for the operator to press an AID key
 on the TCB so a subsequent `RECEIVE MAP` can pull modified field
 values back into the program. `EIBAID` and `EIBCPOSN` are updated
 with the AID character and 1-based cursor position.
+
+IBM-canonical clauses honoured: `MAPSET(set)` qualifies the lookup
+to disambiguate same-named maps across mapsets (see Chapter 3);
+`ERASEAUP` wipes unprotected fields only (approximated as `ERASE`
+in bricks); `MAPONLY` paints just the map's literals + INPUT
+defaults, ignoring any `FROM(stem.)`. `FREEKB`, `ALARM`, and
+`FRSET` are accepted for source compatibility — `FREEKB` and
+`FRSET` are subsumed by the fixed WCC the go3270 library writes;
+`ALARM` is parsed but not yet tunnelled to the wire.
 
 If `FROM` is omitted, the map renders using its `INPUT DEFAULT`
 values. If `FROM` is a literal string, every named field on the map
@@ -664,21 +710,41 @@ porting them shouldn't require a SEND/RECEIVE rewrite.
 
 #### Format
 
+CONVERSE has two IBM-canonical forms — the 3270 mapped form and
+the raw-text TS form. Bricks supports both.
+
+**Mapped form (3270):**
+
 ```
 EXEC CICS CONVERSE MAP(name) [MAPSET(set)]
                    [FROM(area) | FROMMAP(area)]
                    [INTO(area)]
                    [ERASE] [CURSOR(pos)]
+                   [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
 
-* `FROM(area)` and `FROMMAP(area)` are accepted spellings for the
-  outbound stem; either works, both feed the SEND half.
-* `INTO(area)` is the inbound stem; it feeds the RECEIVE half.
-  May be omitted only if the program follows up with a separate
-  `RECEIVE MAP` (rare; using CONVERSE without INTO is technically
-  legal but defeats the point).
-* `MAPSET`, `ERASE`, `CURSOR` pass through to both halves.
+**Text form (TS):**
+
+```
+EXEC CICS CONVERSE FROM(area) [FROMLENGTH(n)]
+                   INTO(target) [TOLENGTH(var) | MAXLENGTH(n)]
+                   [STRFIELD] [DEFRESP]
+                   [RESP(var)] [RESP2(var)]
+END-EXEC
+```
+
+In the mapped form: `FROM(area)` and `FROMMAP(area)` are accepted
+spellings for the outbound stem; either works, both feed the SEND
+half. `INTO(area)` is the inbound stem; it feeds the RECEIVE
+half. `MAPSET`, `ERASE`, `CURSOR` pass through to both halves.
+
+In the text form (no `MAP`): bricks dispatches `SEND TEXT` then
+`RECEIVE INTO`. `FROMLENGTH(n)` caps the outbound bytes;
+`TOLENGTH(var)` / `MAXLENGTH(n)` cap the inbound buffer.
+`STRFIELD` (structured-field stream) and `DEFRESP` (definite-
+response) are accepted silently — bricks doesn't tunnel either
+wire bit today but program source ports cleanly.
 
 #### Behaviour
 
@@ -877,9 +943,16 @@ resume.
 
 ```
 EXEC CICS XCTL PROGRAM(name)
-              [COMMAREA(data)]
+              [COMMAREA(data) [LENGTH(n)]]
+              [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
+
+`LENGTH(n)` on `COMMAREA` is the IBM-canonical input bound —
+caller's value caps the bytes passed to the receiving program.
+`CHANNEL(...)` (the CICS-TS container alternative to COMMAREA) is
+rejected with a short "not supported in bricks (use COMMAREA)"
+message — single-region bricks doesn't model channels.
 
 #### Description
 
@@ -978,9 +1051,14 @@ Abnormally terminate the current task.
 
 ```
 EXEC CICS ABEND [ABCODE(code)]
-                [NODUMP]
+                [NODUMP] [CANCEL]
+                [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
+
+`CANCEL` bypasses any installed `HANDLE ABEND` trap — the task
+terminates rather than recovering. `NODUMP` is accepted silently
+(bricks has no dump facility).
 
 #### Description
 
@@ -1027,8 +1105,19 @@ EXEC CICS START TRANSID(name)
                 [INTERVAL(hhmmss) | TIME(hhmmss)]
                 [FROM(area) [LENGTH(n)]]
                 [TERMID(tttt)]
+                [REQID(handle)] [PROTECT]
+                [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
+
+`REQID(handle)` tags the START with a request-id handle. IBM uses
+this to disambiguate when cancelling or deferring; bricks's
+single-region scheduler accepts the option without action so
+program source ports cleanly. `PROTECT` declares the START as
+recoverable — bricks already enrolls every START in the task-end
+SYNCPOINT, so this is silent passthrough. `SYSID`, `QUEUE`, the
+hh/mm/ss split forms — explicitly rejected with a short "not
+supported" message.
 
 #### Options
 
@@ -1112,8 +1201,13 @@ fired by `START` typically does.
 #### Format
 
 ```
-EXEC CICS RETRIEVE INTO(var) [LENGTH(lenvar)] END-EXEC
+EXEC CICS RETRIEVE INTO(var) [LENGTH(n)]
+                  [RESP(var)] [RESP2(var)]
+END-EXEC
 ```
+
+`LENGTH(n)` is the IBM in/out parameter — caller's value caps the
+bytes returned, the post-call value is the actual byte count.
 
 #### Options
 
@@ -1196,7 +1290,13 @@ the value.
 | `DATE(t)` | Today as `YYYYMMDD`. *(bricks-specific)* |
 | `TIME(t)` | Now as `HHMMSS`. *(bricks-specific)* |
 | `TODAYYR(t)` / `TODAYMO(t)` / `TODAYDY(t)` | Today's year / month / day individually. *(bricks-specific)* |
-| `DAYCOUNT(t)` | Days since 1970-01-01. Subtract two values for an exact day delta. *(bricks-specific)* |
+| `DAYCOUNT(t)` | Days since `1900-01-01` (the IBM ABSTIME epoch). Subtract two values for an exact day delta. **Behaviour change in round 2:** previously returned Unix-epoch days; bricks now matches real CICS. |
+| `SYSID(t)` | Local CICS region ID (`BRKS` in bricks). |
+| `APPLID(t)` | Region VTAM applid (`BRICKS01` in bricks). |
+| `NETID(t)` | Network ID of the connected terminal (`TCPIP` in bricks; placeholder for a future config knob). |
+| `ABCODE(t)` | Most recent abend code (the value `EIBABCODE` carries). Empty before any ABEND. |
+| `EIBTASKN(t)` | Numeric task number — the integer body of `TxCB.ID`. |
+| `STARTCODE(t)` | How the task was started. `TO` (terminal operator) is the bricks default; future work threads `S` (started by EXEC CICS START) through the scheduler. |
 
 The bricks-specific options exist primarily so the COBOL subset can
 do date math without REXX-style intrinsic functions; see
@@ -1291,10 +1391,18 @@ EXEC CICS FORMATTIME ABSTIME(source)
                      [MMDDYY(t)]   [DDMMYY(t)]
                      [YYYYDDD(t)]  [YYDDD(t)]
                      [TIME(t)] [TIMESEP(c)]
+                     [TIMEZONE(name)]
                      [YEAR(t)] [MONTHOFYEAR(t)] [DAYOFMONTH(t)]
                      [DAYOFWEEK(t)] [DAYCOUNT(t)]
+                     [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
+
+`TIMEZONE(name)` is the IBM-canonical per-call zone override —
+accepts IANA names (`America/New_York`, `Europe/Paris`) plus the
+`UTC` alias. Unknown zone → `INVREQ` with a short clean message.
+Without `TIMEZONE`, the handler's configured location (from the
+`time_zone` line of `bricks.cnf`) is used.
 
 #### Description
 
@@ -1456,10 +1564,17 @@ Insert a new record into a KSDS.
 
 ```
 EXEC CICS WRITE FILE(name)
-               FROM(data)
+               FROM(data) [LENGTH(n)]
                RIDFLD(key)
+               [MASSINSERT]
+               [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
+
+`LENGTH(n)` is the IBM in/out parameter — caller's value caps the
+bytes written, returned value is the actual bytes stored.
+`MASSINSERT` is accepted for source compatibility; bricks's KSDS
+engine is uniformly fast so the flag is a silent hint.
 
 #### Description
 
@@ -1550,7 +1665,8 @@ Remove a record from a KSDS.
 
 ```
 EXEC CICS DELETE FILE(name)
-                [RIDFLD(key)]
+                [RIDFLD(key) [KEYLENGTH(n) GENERIC [NUMREC(var)]]]
+                [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
 
@@ -1558,6 +1674,11 @@ END-EXEC
 
 If `RIDFLD` is supplied, deletes that key. Otherwise deletes the key
 locked by the most recent `READ … UPDATE` on the same FILE.
+
+**IBM-canonical GENERIC delete-by-prefix:** with `KEYLENGTH(n)
+GENERIC`, every record whose key starts with the first `n` bytes
+of `RIDFLD` is deleted. The count goes back through `NUMREC(var)`
+when supplied; `RC = NOTFND` when no record matches.
 
 #### Options
 
@@ -1610,8 +1731,17 @@ EXEC CICS STARTBR FILE(name)
                  [GTEQ | EQUAL]
                  [GENERIC]
                  [KEYLENGTH(n)]
+                 [REQID(handle)]
+                 [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
+
+`REQID(handle)` is the IBM-canonical concurrent-browse handle: a
+program may hold several independent browses against the same
+file by tagging each STARTBR / READNEXT / READPREV / ENDBR /
+RESETBR with a distinct integer handle. Without `REQID` the
+file's single default cursor is used — backward-compatible with
+every existing bricks program.
 
 #### Description
 
@@ -1931,10 +2061,18 @@ Append a new item to a queue, or rewrite an existing item.
 EXEC CICS WRITEQ TS QUEUE(name)
                    FROM(data)
                    [ITEM(n) REWRITE]
+                   [NUMITEMS(var)]
+                   [MAIN | AUXILIARY]
+                   [RESP(var)] [RESP2(var)]
 END-EXEC
 ```
 
-`QNAME` is accepted as a synonym for `QUEUE`.
+`QNAME` is accepted as a synonym for `QUEUE`. `NUMITEMS(var)`
+receives the queue's current item count after the write — IBM
+canonical; lets programs drive paging without a follow-up READQ.
+`MAIN` and `AUXILIARY` are storage-class hints from real CICS;
+bricks uses a uniform bbolt-backed store so both are accepted
+silently.
 
 #### Description
 
