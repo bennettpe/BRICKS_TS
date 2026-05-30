@@ -423,8 +423,12 @@ for usage details.
 
 ### Attributes
 
-`PROT`, `UNPROT`, `BRIGHT`, `DIM`, `UNDERSCORE`, `HIDDEN`, `NUMERIC`,
+`PROT`, `UNPROT`, `BRIGHT`, `DIM`, `UNDERLINE`, `HIDDEN`, `NUMERIC`,
 `MDT`, `BLINK`, `REVERSE`, `COLOR=BLUE|RED|PINK|GREEN|TURQUOISE|YELLOW|WHITE`.
+
+`UNDERLINE` is the canonical IBM BMS spelling (`HILIGHT=UNDERLINE`).
+`UNDERSCORE` is accepted as a legacy alias for hand-written bricks DSL
+maps that already use it; new maps should prefer `UNDERLINE`.
 
 ### Catalogue lifecycle
 
@@ -652,6 +656,55 @@ use `DATAONLY` with the START-INTERVAL pattern above.
 SCR.GREETING = 'Hello, ' || USR
 EXEC CICS SEND MAP('HELO1') FROM(SCR.) ERASE END-EXEC
 ```
+
+#### Runtime field attribute overrides
+
+A map's `COLOR=` clause is the *default* colour for each field. Programs
+can override the colour of any named field at runtime by setting a
+sibling element named `<FIELD>-C` in COBOL or `<stem>.<FIELD>_C` in
+REXX, before the `SEND MAP`. The override wins; an empty / unset value
+means "use map default."
+
+**COBOL**
+
+```cobol
+COPY DFHCOLOR.
+01 SCR.
+   05 STATUS    PIC X(10).
+   05 STATUS-C  PIC X(9) VALUE SPACES.
+...
+IF BALANCE < 0
+    MOVE DFHRED   TO STATUS-C
+ELSE
+    MOVE DFHGREEN TO STATUS-C
+END-IF.
+EXEC CICS SEND MAP('BALC') FROM(SCR) ERASE END-EXEC.
+```
+
+**REXX**
+
+```rexx
+if balance < 0 then scr.status_c = 'RED'
+               else scr.status_c = 'GREEN'
+'EXEC CICS SEND MAP(BALC) FROM(SCR.) ERASE'
+```
+
+Accepted colour mnemonics: `BLUE RED PINK GREEN TURQUOISE YELLOW
+NEUTRAL DEFAULT` (also the `DFH`-prefixed canonical names from
+`DFHCOLOR.cpy`: `DFHBLUE DFHRED DFHPINK DFHGREEN DFHTURQ DFHYELLO
+DFHNEUTR DFHDFT`). Unknown strings degrade to the device default.
+
+**REXX symbol caveat.** REXX evaluates stem tails by value, not
+literal: if your program has assigned a bare variable `STATUS_C`
+anywhere, then `scr.status_c = 'RED'` binds to the value of
+`STATUS_C`, not the literal tail `STATUS_C`. Defensive form is
+`scr.'STATUS_C' = 'RED'` (quoted tail).
+
+Highlight (`-H`) and attribute byte (`-A`) overrides follow the same
+convention and are planned for a follow-up release.
+
+See `runtime/cobol/balc.cob` and `runtime/rexx/balc.rexx` for complete
+worked examples.
 
 ---
 
