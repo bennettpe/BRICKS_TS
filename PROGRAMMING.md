@@ -150,6 +150,20 @@ HELC:cobol:hello.cob:public
 GUST:cobol:gust.cob:public
 ```
 
+A program that runs `EXEC SQL` against something other than the
+**first** database in `runtime/databases.conf` adds an explicit
+binding as the 5th colon-separated field:
+
+```
+BANK:cobol:bank.cob:public,users,admin:bank
+```
+
+See *Database binding* in
+[Chapter 26](#chapter-26-embedded-sql-cobol-and-rexx) for the full
+contract; the short version is that an absent 5th field defaults to
+the first row of `databases.conf` and a misbinding manifests as
+`SQLCODE = -204` (relation does not exist) on every dispatch.
+
 ### Organising programs into sub-directories
 
 Once a deployment grows past a handful of programs, the flat
@@ -336,14 +350,22 @@ resolves it to the numeric constant from
 
 ### Length as an input bound
 
-`LENGTH(n)` on `READ FILE`, `READQ TS`, `READNEXT`, `READPREV`,
-`RECEIVE INTO`, `LINK COMMAREA`, and `RETURN COMMAREA` is treated
-as IBM's in/out parameter — the caller's value caps the bytes
-returned (or passed forward, for LINK/RETURN); the post-dispatch
-write-back stores the actual byte count. A `LENGTH(80)` on
-`READQ TS` against a 200-byte item now hands the program 80
-bytes and reports `80`, matching real CICS instead of overflowing
-the buffer.
+`LENGTH(n)` on `READQ TS`, `RECEIVE INTO`, `LINK COMMAREA`, and
+`RETURN COMMAREA` is treated as IBM's in/out parameter — the
+caller's value caps the bytes returned (or passed forward, for
+LINK/RETURN); the post-dispatch write-back stores the actual byte
+count. A `LENGTH(80)` on `READQ TS` against a 200-byte item now
+hands the program 80 bytes and reports `80`, matching real CICS
+instead of overflowing the buffer.
+
+On `READ FILE`, `READNEXT`, and `READPREV` (file-record family),
+LENGTH is OUTPUT-only — the store decides record size; there is no
+operator-supplied truncation bound. This is a bricks-defensible
+simplification for the KSDS-fixed-length model; real VSAM
+variable-length permits LENGTH-as-max-buffer. The write-back-then-
+read-as-input pattern (call 1 writes len(rec1) into LEN, call 2
+re-reads LEN as a cap) would silently corrupt subsequent reads, so
+bricks ignores the input value entirely on these verbs.
 
 ---
 
@@ -1598,6 +1620,17 @@ written back.
    Receives the record's actual length when the option is a bare
    variable.
 
+#### Bricks deviation from IBM canonical
+
+`LENGTH(var)` on `READ FILE` is OUTPUT-only, not input-as-max-
+buffer. Real CICS VSAM variable-length reads `LENGTH(var)` as a cap
+on the bytes returned and writes back the actual size; bricks
+ignores the input value and only writes back. The write-back-then-
+read-as-input shape would otherwise corrupt subsequent reads in a
+loop (`LENGTH(LEN)` on call 1 stores 4; call 2 silently caps a
+13-byte record to 4). The bricks KSDS store is fixed-size-per-
+record so there is no operator-meaningful truncation here.
+
 #### Conditions
 
 | Condition | EIBRESP | Cause |
@@ -1693,6 +1726,18 @@ END-EXEC
 Overwrites the value at the key locked by the most recent `READ
 FILE … UPDATE` on the same FILE. Releases the per-FCB update lock at
 end of transaction.
+
+> **Bricks deviation from IBM canonical:** `READ UPDATE` + `REWRITE`
+> do **not** survive the `CECI` `PF5` boundary. Real conversational
+> CICS programs hold the UPDATE lock across the operator's pause;
+> `CECI` in bricks treats each `PF5` press as an implicit
+> `SYNCPOINT`, which releases non-`HOLD` locks. Recommended
+> patterns: type both verbs on one `PF5` input (assembled as a
+> single command), or wrap the pair with
+> `ENQ resource HOLD … DEQ resource` so the lock persists across
+> the press. Outside `CECI` (REXX or COBOL programs running as a
+> normal task) the lock survives until the next `SYNCPOINT` or
+> task end, matching real CICS.
 
 #### Options
 
@@ -1990,6 +2035,15 @@ idempotent in CICS).
 The dispatcher releases any cursor the program forgot to `ENDBR` via
 a `defer handler.CloseBrowses()` at task end.
 
+> **Bricks deviation from IBM canonical:** browse cursors survive
+> `SYNCPOINT`. Real CICS closes VSAM RPL browses at every
+> `SYNCPOINT`; bricks browses are bbolt MVCC snapshots and remain
+> valid until the matching `ENDBR` (or the dispatcher's task-end
+> defer). Closing them at `SYNCPOINT` would be theater — the MVCC
+> snapshot is already isolated from concurrent writers. This is
+> what lets a `STARTBR` on `CECI` `PF5` #1 drive `READNEXT` on
+> `PF5` #2 (each press is a per-PF5 implicit `SYNCPOINT`).
+
 ### STARTBR
 
 Open a browse cursor on a KSDS file.
@@ -2097,6 +2151,19 @@ transaction between `STARTBR` and the read are skipped automatically
 **LENGTH(len)**
    Receives the actual record length.
 
+#### Bricks deviation from IBM canonical
+
+`LENGTH(var)` on `READNEXT` (browse-family) is OUTPUT-only, not
+input-as-max-buffer. Real CICS reads the caller's `LENGTH(var)` as
+a cap on the bytes returned and writes back the actual size; bricks
+ignores the input value and only writes back. The write-back-then-
+read-as-input shape would otherwise corrupt subsequent reads in a
+loop (`LENGTH(LEN)` on call 1 stores 4; call 2 caps a 13-byte
+record to 4). The bricks KSDS store is fixed-size-per-record so
+there is no operator-meaningful truncation here. A `LENGTH(20)`
+literal on a 13-byte record returns the full 13 bytes (the literal
+is silently ignored).
+
 #### Conditions
 
 | Condition | EIBRESP | Cause |
@@ -2143,6 +2210,16 @@ paginating backward through a key range.
 #### Options
 
 As for `READNEXT`.
+
+#### Bricks deviation from IBM canonical
+
+Same shape as `READNEXT`: `LENGTH(var)` is OUTPUT-only, not
+input-as-max-buffer. The write-back-then-read-as-input pattern
+would corrupt subsequent reads in a backward walk; bricks ignores
+the operator-supplied input value and only writes back the actual
+record size. Real VSAM variable-length permits LENGTH-as-max-
+buffer; the bricks KSDS-fixed model has no operator-meaningful
+truncation here.
 
 #### Conditions
 
@@ -2279,12 +2356,40 @@ END-EXEC
 
 #### Description
 
-Reads one item from the queue. With `ITEM(n)`, returns item `n`.
-Without `ITEM`, or with `NEXT`, advances the **per-task implicit
-cursor**: the first cursor-less READQ on a queue returns item 1, the
-second returns item 2, and so on. The cursor is keyed on the running
-TxCB and released when the task ends — a fresh invocation of the
-same TRANSID starts at item 1 again.
+`READQ TS` runs in one of two modes:
+
+1. **Cursor mode** — advance the **per-task implicit cursor**: the
+   first cursor-less READQ on a queue returns item 1, the second
+   returns item 2, and so on. The cursor is keyed on the running
+   TxCB and released when the task ends — a fresh invocation of the
+   same TRANSID starts at item 1 again.
+
+2. **Explicit-item mode** — `ITEM(n)` reads that exact item without
+   touching the cursor. Useful for random-access reads where the
+   program knows the item number in advance.
+
+The mode is selected by IBM-canonical strict semantics. Cursor mode
+fires when `NEXT` is present OR when `ITEM` is absent. Explicit-item
+mode fires when `ITEM(n)` is present without `NEXT`; the variable's
+current value names the item to read and must be a positive integer.
+The four operator patterns are:
+
+```
+READQ TS QUEUE(q) INTO(d)                   — cursor mode; item number not returned
+READQ TS QUEUE(q) INTO(d) NEXT              — cursor mode; same as above
+READQ TS QUEUE(q) INTO(d) NEXT ITEM(N)      — cursor mode; writes item number to N
+READQ TS QUEUE(q) INTO(d) ITEM(N)           — explicit mode; N must be a positive integer input
+```
+
+> **Bricks deviation from IBM canonical:** the per-task implicit
+> cursor survives `SYNCPOINT`. Real CICS clears the read cursor on
+> recoverable TSQs at every SYNCPOINT; bricks does not. The bricks
+> design treats `SYNCPOINT` as a unit-of-work commit boundary that
+> does not touch cursor state, browse cursors, TD handles, WEB
+> sessions, or DOCUMENT tokens. This is what lets a `CECI` operator
+> walk a queue across `PF5` presses (each press is a per-PF5
+> implicit `SYNCPOINT`), and what lets a long-running REXX program
+> issue periodic `SYNCPOINT`s without rewinding its read loop.
 
 #### Options
 
@@ -2293,7 +2398,11 @@ same TRANSID starts at item 1 again.
 **INTO(target)** *— required*
 
 **ITEM(n)** | **NEXT**
-   Item to read. Default = next per the implicit cursor.
+   `NEXT` (or `ITEM` absent) selects cursor mode. `ITEM(n)` without
+   `NEXT` is **strict input**: the variable must hold a positive
+   integer or `INVREQ` fires with a short error pointing the
+   operator at `NEXT`. `NEXT ITEM(var)` is the cursor-loop form —
+   the resolved item number is written back into `var` on success.
 
 **LENGTH(len)**
    Receives the actual item length.
@@ -2308,13 +2417,13 @@ same TRANSID starts at item 1 again.
 | NORMAL | 0 | Item returned. |
 | ITEMERR | 26 | `ITEM(n)` out of range, or implicit cursor past the last item. |
 | QIDERR | 44 | Queue does not exist. |
-| INVREQ | 16 | Missing required option, invalid name. |
+| INVREQ | 16 | Missing required option, invalid name, or `ITEM(var)` (no `NEXT`) when `var` is unset / non-numeric. |
 
 #### Example
 
 ```rexx
 DO FOREVER
-  EXEC CICS READQ TS QUEUE(QNM) INTO(REC) END-EXEC
+  EXEC CICS READQ TS QUEUE(QNM) INTO(REC) NEXT END-EXEC
   IF EIBRESP = 26 THEN LEAVE                /* end of queue */
   SAY REC
 END
@@ -5845,6 +5954,57 @@ EXEC SQL CLOSE C1 END-EXEC
 End-of-data is `SQLCODE = +100`. A closed cursor stays in the
 registry, so `OPEN c1` can rewind it without re-`DECLARE`.
 
+### Database binding (`transactions.conf` 5th field)
+
+Every transaction starts on exactly one database. Which one is
+fixed by the 5th colon-separated field of its row in
+`runtime/transactions.conf`:
+
+```
+BANK:cobol:bank.cob:public,users,admin:bank
+```
+
+The grammar of the file is therefore:
+
+```
+transid:lang:program[:groups[:database]]
+```
+
+* `database` -- name of a row in `runtime/databases.conf`. The
+  value is case-sensitive and must match the row's first column
+  exactly. Whitespace around the name is trimmed.
+* **Absent 5th field** -- the transaction binds to the **first**
+  row of `databases.conf`. The first row is the deployment-wide
+  default; CEDA DATABASE labels it `(def)` and refuses `D`elete on
+  it.
+* **Unknown name** -- the dispatcher logs the misbinding at task
+  start and the first `EXEC SQL` returns `SQLCODE = -1` with an
+  empty `SQLSTATE`.
+
+A transaction whose program never runs `EXEC SQL` may leave the
+field empty -- the implicit default never gets touched. A
+transaction whose program **does** run `EXEC SQL` against a
+non-default database **must** list the binding explicitly:
+omitting it sends every statement to the default pool, which
+typically does not host the requested table. The operator-visible
+symptom is a flood of paired errors:
+
+```
+SQL error SQLCODE=-204 SQLSTATE=42P01: relation "accounts" does not exist
+SQL error SQLCODE=-100 SQLSTATE=25P02: current transaction is aborted, commands ignored until end of transaction block
+```
+
+The `-204` is the first statement landing on the wrong pool; the
+`-100 / 25P02` cascade is Postgres marking the per-task PG
+transaction aborted, so every follow-up statement under a
+`WHENEVER SQLERROR CONTINUE` declaration logs the same pair until
+SYNCPOINT runs at task end. Fix: add the correct 5th field and
+restart the task.
+
+`CEDA TRANSACTION` (A / U actions) and operator-`vi` edits of
+`transactions.conf` both honour the field; the file is hot-
+reloaded on mtime change.
+
 ### CONNECT TO 'name' (per-task database switch)
 
 A program that needs to touch a second database during a task
@@ -6048,6 +6208,15 @@ Run any TRANSID by typing it at the blank prompt after CSSN sign-on.
 Refer to `runtime/transactions.conf` for the full list and ACL
 configuration.
 
+> **Bank-domain bindings.** `BANK`, `BALC`, `BALR`, and `BRDS` carry
+> an explicit `:bank` 5th field in `transactions.conf` so their
+> `EXEC SQL` statements land on the retail-banking pool rather than
+> the default `bricks` database. `BALC` / `BALR` / `BRDS` do not
+> currently issue SQL, but they share the bank-domain map set and
+> are pinned to the same pool for forward compatibility — adding an
+> `EXEC SQL` later will Just Work without re-binding. See [Chapter 26
+> — Database binding](#database-binding-transactionsconf-5th-field).
+
 ### Built-in transactions (no entry in `transactions.conf`)
 
 The bricks core dispatches a handful of TRANSIDs directly, without
@@ -6060,8 +6229,29 @@ entry in the table.
 | `CSSF` | Sign-off | `CSSF LOGOFF` clears the session's identity; bare `CSSF` is a no-op. |
 | `CEMT` | Master-operator | INQUIRE / MONITOR / PERFORM trees; CONTROLBLOCKS sub-tree and PERFORM gated on the `admin` group. |
 | `CEDA` | Resource definitions | TRANSACTION / PROGRAM / USER screens; admin-only. |
-| `CECI` | Command-level interpreter | Type one `EXEC CICS` / `EXEC SQL` / `EXEC WEB` command (up to 5 input rows), press `PF5`, see RESPONSE / RESP2 / LEN / ELAPSED plus any variables the handler set or `INTO` buffers it filled. Each `PF5` press mints a fresh `TxCB` and `cics.Handler` and tears down on completion (browses, TD handles, WEB sessions, document tokens, ENQ locks). Variable frame is session-scoped so a sequence of commands can refer back to values set earlier. Verbs that would unwind the CECI task itself (`RETURN`, `XCTL`, `LINK`, `ABEND`), repaint the screen (`SEND MAP`, `SEND TEXT`, `RECEIVE MAP`, `CONVERSE`), schedule deferred work (`START`, `RETRIEVE`, `CANCEL`, `DELAY`), or set per-task trap tables (`HANDLE`, `IGNORE`, `WHENEVER`) are refused with a short red-status message. Every command is wrapped in a 7-second wall-clock cap. Gated on the `dev` group. **Operator manual:** the [CECI section in `README.md`](README.md#ceci--command-level-interpreter) covers layout, key bindings, verb policy, the response-line state mapping, and the EBCDIC-037 input rules. |
+| `CECI` | Command-level interpreter | Type one `EXEC CICS` / `EXEC SQL` / `EXEC WEB` command (up to 5 input rows), press `PF5`, see RESPONSE / RESP2 / LEN / ELAPSED plus any variables the handler set or `INTO` buffers it filled. The `TxCB` and `cics.Handler` are session-scoped — built once on CECI entry, torn down on `PF3` / `CLEAR` / `PA1` / disconnect. Each `PF5` press is a per-PF5 commit boundary via `h.CommitImplicit()` on success / `h.RollbackImplicit()` on failure; SYNCPOINT in bricks does not touch cursors, so the per-task TS read cursor, all open browses, TD handles, WEB sessions, and DOCUMENT tokens survive across PF5 presses (a `STARTBR` on PF5 #1 drives `READNEXT` on PF5 #2). Variable frame is also session-scoped. `READ UPDATE` + `REWRITE` still cannot span PF5 — the per-PF5 implicit SYNCPOINT releases non-`HOLD` record locks; see the [`REWRITE` deviation note](#rewrite) for the recommended workaround. Verbs that would unwind the CECI task itself (`RETURN`, `XCTL`, `LINK`, `ABEND`), repaint the screen (`SEND MAP`, `SEND TEXT`, `RECEIVE MAP`, `CONVERSE`), schedule deferred work (`START`, `RETRIEVE`, `CANCEL`, `DELAY`), or set per-task trap tables (`HANDLE`, `IGNORE`, `WHENEVER`) are refused with a short red-status message. Every command is wrapped in a 7-second wall-clock cap; a cap-hit *poisons* the session (every subsequent PF5 short-circuits with `TIMEOUT`, and the session-end defer skips the handler-owned closers to avoid racing the abandoned goroutine — `PF3` is the only exit). Gated on the `dev` group — and the same gate applies to `EXEC CICS LINK PROGRAM('CECI')` / `XCTL PROGRAM('CECI')`, so a non-DEV caller sees `PGMIDERR` (LINK) or a 403 task-error screen (XCTL) without the built-in's own Run ever being reached. **Operator manual:** the [CECI section in `README.md`](README.md#ceci--command-level-interpreter) covers layout, key bindings, verb policy, the response-line state mapping, and the EBCDIC-037 input rules. |
 | `ISPF` | Source editor | Browse and edit the REXX, COBOL, and BMS-map source trees. Gated on the `dev` group. **Operator manual:** [`ISPF_editor.md`](ISPF_editor.md) — covers every PF key, every command-line word, every line-prefix command (D / I / C / M / R / U / L / ) / ( / X / O / A / B plus the doubled block forms), the file browser, the warn-then-save flow, multi-file editing, and edit locks. |
+
+Every built-in TRANSID above can be reached via `EXEC CICS LINK
+PROGRAM(name)` and `EXEC CICS XCTL PROGRAM(name)` as well as by
+typing it at the blank prompt. The two paths share one dispatch
+helper, so the per-built-in auth gate (`dev` for ISPF/CECI,
+`admin` for CEDA/IDCA) fires uniformly regardless of how the
+operator reached it. CEMT carries a mixed model — the outer menu
+is open to any signed-on user (INQUIRE TRANSACTION, MONITOR), and
+the `CONTROLBLOCKS` / `PERFORM` sub-trees gate on `admin` inside
+`walk()`. The ACL check at the LINK / XCTL boundary refuses a
+denied caller before the built-in's `Run` is reached: the LINK
+returns the access-denied error to `programControl` which
+surfaces `PGMIDERR` via `EIBRESP`, and the XCTL renders the
+familiar 403 task-error screen — no internal refusal paint
+hijacks the caller's session. Built-ins do not have a
+COMMAREA-style interface; `LINK PROGRAM('CEMT') COMMAREA(VAR)`
+returns an empty COMMAREA (`VAR` is set to "" on return) and the
+caller's `sess.Commarea` is restored unchanged. `CSSN` is the one
+exception: it refuses LINK/XCTL with a short message because the
+auth-prompt loop cannot be wedged into a caller's task stack
+sanely; operators sign on at a blank prompt.
 
 ---
 

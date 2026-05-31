@@ -426,8 +426,15 @@ without needing an entry in `transactions.conf`:
 
 | Group | Gate |
 |---|---|
-| `admin` | Required for the `CEMT CONTROLBLOCKS` / `PERFORM` sub-trees and the entire `CEDA` transaction. |
-| `dev` | Required for the `ISPF` source editor — see [ISPF — built-in source editor](#ispf--built-in-source-editor) and the operator manual at [`ISPF_editor.md`](ISPF_editor.md). A user without `dev` who types `ISPF` at the prompt gets `ISPF requires DEV group membership.` and is returned to the prompt. |
+| `admin` | Required for the `CEMT CONTROLBLOCKS` / `PERFORM` sub-trees and the entire `CEDA` / `IDCA` transactions. |
+| `dev` | Required for the `ISPF` source editor and `CECI` command-level interpreter — see [ISPF — built-in source editor](#ispf--built-in-source-editor), [CECI — command-level interpreter](#ceci--command-level-interpreter), and the operator manual at [`ISPF_editor.md`](ISPF_editor.md). A user without `dev` who types `ISPF` at the prompt gets `ISPF requires DEV group membership.` and is returned to the prompt. |
+
+The same group ACL applies uniformly to `EXEC CICS LINK` and `XCTL`
+into a built-in: a low-privilege transaction attempting
+`LINK PROGRAM('ISPF')` (DEV-only) or `LINK PROGRAM('CEDA')`
+(admin-only) sees `PGMIDERR` via `EIBRESP`, with no refusal-paint
+hijacking the caller's screen. The dispatcher boundary check fires
+before the built-in's `Run` is reached.
 
 Anything else (`users`, `ops`, `qa`, …) is yours to define and use in
 the per-transaction ACL column of `runtime/transactions.conf`.
@@ -446,13 +453,16 @@ The script refuses to overwrite an existing user without `--update`.
 
 ## Per-transaction ACL
 
-`runtime/transactions.conf` accepts an **optional last field** —
+`runtime/transactions.conf` accepts an **optional 4th field** —
 comma-separated, case-insensitive group names — that gates dispatch
-per transaction. Format:
+per transaction. The full row grammar is:
 
 ```
-transid:type:program[:groups]
+transid:type:program[:groups[:database]]
 ```
+
+(the 5th field is the EXEC SQL database binding documented later
+in this README under [SQL support](#sql-support).)
 
 Three-field entries keep the legacy behaviour: `enforce_secure_login`
 in `bricks.cnf` is the only check (so a signed-on user can run
@@ -978,6 +988,16 @@ ORDQ:cobol:ordq.cob:public:orders           # orders db
 LEDQ:cobol:ledq.cob:admin,users:ledger      # ledger db, ACL'd
 ```
 
+A program that runs `EXEC SQL` against a non-default database
+**must** list the binding explicitly. Omitting the 5th field
+sends every statement to the first row of `databases.conf`; if
+the target table doesn't live there, the operator sees
+`SQLCODE=-204 relation "..." does not exist` immediately, then
+`SQLCODE=-100 SQLSTATE=25P02 current transaction is aborted` on
+every subsequent statement of the same task. See
+[PROGRAMMING.md Chapter 26 — *Database binding*](PROGRAMMING.md#database-binding-transactionsconf-5th-field)
+for the full contract.
+
 Adding a row to `databases.conf` (or CEDA DATABASE `A`) **only**
 tells bricks about the database; it doesn't yet exist in
 Postgres. To create the PG-side database, select the row and use
@@ -1197,6 +1217,12 @@ on the screen. Like ISPF it is restricted to users who belong to the
 `CECI requires DEV group membership.` and a return to the blank
 prompt.
 
+The same DEV-group gate fires for `EXEC CICS LINK PROGRAM('CECI')`
+and `EXEC CICS XCTL PROGRAM('CECI')`. A non-DEV caller attempting
+either gets `PGMIDERR` (via `EIBRESP`) on the LINK and a 403
+task-error screen on the XCTL — no refusal paint reaches the
+caller's terminal.
+
 ```
 CECI                                                      TERM=T0001  14:30:42
 > exec cics asktime abstime(t)
@@ -1246,12 +1272,27 @@ The screen has three zones:
 | `PF8` | Page up through the result pane |
 | `PA1` | Break out (also exits CECI) |
 
-**Per-PF5 transaction lifetime.** Each press of `PF5` mints a fresh
-`TxCB` and `cics.Handler` that commits on success and tears down
-all handler-owned resources — open browses, TD handles, outbound
-WEB sessions, document tokens, ENQ locks. Consequence: a file
-`READ UPDATE` followed by `REWRITE` cannot span two PF5 presses;
-type both on the same input or use a real transaction.
+**Session-scoped transaction lifetime.** The `TxCB` and `cics.Handler`
+are built ONCE when the operator enters CECI and torn down on `PF3` /
+`CLEAR` / `PA1` / disconnect — not between PF5 presses. Each `PF5`
+press is just an implicit commit boundary: `h.CommitImplicit()` on a
+successful verb, `h.RollbackImplicit()` on failure. SYNCPOINT in
+bricks does NOT touch cursors, so all cursor-shaped state — the
+per-task TS read cursor, every open browse, every TD handle, every
+outbound WEB session, every DOCUMENT token — survives the per-PF5
+commit and remains usable on the next press. The session-end defer
+runs `CloseBrowses` / `CloseAllTD` / `CloseWebSessions` /
+`CloseAllDocs` / `ReleaseAllLocks` / `Registry.EndTxn` exactly once,
+on the way out. Consequence: a file `READ UPDATE` followed by
+`REWRITE` still cannot span two PF5 presses — the per-PF5 implicit
+SYNCPOINT releases non-`HOLD` record locks. See the
+[`READ UPDATE` + `REWRITE` deviation note](PROGRAMMING.md#rewrite)
+in `PROGRAMMING.md` for the recommended workaround (type both verbs
+on one PF5 input, or wrap with `ENQ resource HOLD … DEQ resource`).
+On a 7-second cap-hit the session is *poisoned*: every subsequent
+`PF5` short-circuits with `TIMEOUT` and the session-end defer skips
+its handler-owned closers to avoid racing the abandoned goroutine.
+`PF3` is the only path out of a poisoned session.
 
 **Session-scoped variable frame.** A simple in-memory map satisfies
 the `cics.Frame` contract; variables the handler `Set()` persist for

@@ -25,6 +25,10 @@ enable_wapi=yes
 wapi_port=8080
 wapi_tls_port=8443
 
+#show welcoe to bricks?
+show_welcome=yes
+
+
 # ── Sandbox for sequential file I/O
 # Directory used by REXX (LINEIN / LINEOUT / STREAM) and COBOL
 # (EXEC CICS READQ TD / WRITEQ TD / DELETEQ TD) for sequential text
