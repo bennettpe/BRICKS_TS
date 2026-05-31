@@ -1187,6 +1187,123 @@ and risks) is in [`ispf_plan.md`](ispf_plan.md). The source layout:
 
 ---
 
+## CECI — command-level interpreter
+
+`CECI` is a built-in TRANSID (no entry in `transactions.conf`,
+implemented in package `ceci/`) that lets developers type a single
+`EXEC CICS`, `EXEC SQL`, or `EXEC WEB` command and see the response
+on the screen. Like ISPF it is restricted to users who belong to the
+**`dev`** group in `runtime/users.conf`; everyone else gets
+`CECI requires DEV group membership.` and a return to the blank
+prompt.
+
+```
+CECI                                                      TERM=T0001  14:30:42
+> exec cics asktime abstime(t)
+>
+>
+>
+>
+RESPONSE:  NORMAL(0)    RESP2: 0      LEN: 46      ELAPSED: 0.044msec
+EIBDATE=0126151
+EIBTIME=143042
+T=003989219027483
+(blank result rows)
+PF 3 END   5 PROCESS   7 SCROLL UP   8 SCROLL DOWN   PA1 BREAK
+```
+
+The screen has three zones:
+
+1. **Input zone (rows 1–5).** Five writable rows, each marked with a
+   green `>` indicator at the left edge. Type the command across as
+   many rows as needed; rows that end in `(` or `,` are joined to the
+   next row without a space (mid-token continuation), otherwise rows
+   are joined with one space. A leading `EXEC CICS` / `EXEC WEB` /
+   `EXEC SQL` is stripped before parsing, so both styles work.
+
+2. **Response line (row 6).** Shows the dispatch outcome as
+   `RESPONSE: NAME(rc)   RESP2: n   LEN: n   ELAPSED: d.dddmsec`.
+   The `NAME(rc)` slot carries `NORMAL(0)` in white intense on
+   success, the IBM condition name (`NOTFND`, `INVREQ`, etc.) in
+   red on a non-NORMAL return, and one of `SYNTAX`, `DENIED`,
+   `TIMEOUT`, `BADCHAR`, `NOSQL` in red for the corresponding
+   early-return paths. Mutating verbs that succeed render
+   `NORMAL(0)` in yellow intense so the operator notices the
+   commit.
+
+3. **Result pane (rows 7..R-2).** Variables the handler set during
+   the call (`T=003989...`), `INTO`/`SET` buffer hex dumps,
+   and any error detail (lines starting with `! `). The pane is
+   cleared at the top of every PF5 press so each run's output
+   replaces the previous run's output rather than appending.
+   Scrolls with PF7 / PF8.
+
+| Key | Action |
+|---|---|
+| `PF5` | Execute the current input |
+| `PF3` | Exit CECI |
+| `PF7` | Page down through the result pane |
+| `PF8` | Page up through the result pane |
+| `PA1` | Break out (also exits CECI) |
+
+**Per-PF5 transaction lifetime.** Each press of `PF5` mints a fresh
+`TxCB` and `cics.Handler` that commits on success and tears down
+all handler-owned resources — open browses, TD handles, outbound
+WEB sessions, document tokens, ENQ locks. Consequence: a file
+`READ UPDATE` followed by `REWRITE` cannot span two PF5 presses;
+type both on the same input or use a real transaction.
+
+**Session-scoped variable frame.** A simple in-memory map satisfies
+the `cics.Frame` contract; variables the handler `Set()` persist for
+the whole CECI session, so a sequence like
+`READ FILE('CUSTOMERS') RIDFLD('00001') INTO(REC) RESP(RC)` populates
+`REC` and `RC`, and the next command can reference them. The frame
+is cleared when CECI exits, not when a command runs.
+
+**Verb policy.** CECI rejects verbs that would mangle the shell
+itself:
+
+- **Flow-altering:** `RETURN`, `XCTL`, `LINK`, `ABEND` would unwind
+  the CECI task.
+- **Screen-stealing:** `SEND MAP`, `SEND TEXT`, `SEND CONTROL`,
+  `RECEIVE MAP`, `CONVERSE` would repaint CECI's own screen.
+- **Task-life:** `START`, `RETRIEVE`, `CANCEL`, `DELAY` have no live
+  task to receive deferred work or block in.
+- **Trap tables:** `HANDLE`, `IGNORE`, `WHENEVER` set per-task trap
+  state that would not survive the per-PF5 handler teardown.
+- **Rollback:** `SYNCPOINT ROLLBACK` is meaningless — the per-PF5
+  TxCB auto-commits at end-of-press.
+
+`ENQ` is auto-rewritten with `NOSUSPEND` so a typed-in lock cannot
+wedge the CECI session for the full 5-minute ENQ wait. Mutating
+verbs that pass policy (`WRITE`, `REWRITE`, `DELETE`, `WRITEQ TS/TD`,
+`WEB SEND` / `WEB RECEIVE` / etc.) commit at end-of-PF5 and the
+RESPONSE line paints `NORMAL(0)` in yellow as the visible warning.
+
+**Wall-clock cap.** Every command runs under a 7-second timeout.
+On cap-hit the RESPONSE line shows `TIMEOUT` in red and the
+abandoned goroutine is left to drain; CECI's defer chain skips
+the handler closers on the timeout path to avoid racing the
+in-flight call.
+
+**EBCDIC 037 character discipline.** The shell rejects input rows
+containing characters outside EBCDIC code page 037 (`[`, `]`, `{`,
+`}`, `~`, `\`, backtick, `|`, `^`) with a `BADCHAR` response — these
+characters do not render on a real 3270 terminal.
+
+The source layout:
+
+| File | What |
+|---|---|
+| `ceci/ceci.go` | `TransID`, `Deps`, `Run` AID loop, per-PF5 `executeOnce`, 7-second timeout race. |
+| `ceci/screen.go` | Layout primitives, RESPONSE-line composition, EBCDIC input audit. |
+| `ceci/frame.go` | Map-backed `cics.Frame` implementation. |
+| `ceci/policy.go` | Verb deny / soft-warn lists; ENQ auto-NOSUSPEND rewrite. |
+| `ceci/result.go` | Scrollable result buffer with wrap, head-trim, hex/ASCII dump. |
+| `txn/ceci.go` | `Dispatcher.runCECI` — DEV-group gate + `Deps` construction. |
+
+---
+
 ## CEMT — master-operator transaction
 
 `CEMT` is a built-in TRANSID (no entry needed in `transactions.conf`,
