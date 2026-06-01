@@ -93,7 +93,7 @@ This publication is organised into nine parts, an appendix series, and a quick-r
 
 * [Chapter 4. Terminal I/O commands](#chapter-4-terminal-io-commands) — `SEND MAP`, `RECEIVE MAP`, `CONVERSE`, `SEND TEXT`, `RECEIVE`
 * [Chapter 5. Program control commands](#chapter-5-program-control-commands) — `RETURN`, `XCTL`, `LINK`, `ABEND`, `START`, `RETRIEVE`
-* [Chapter 6. System services](#chapter-6-system-services) — `ASSIGN`, `ASKTIME`, `FORMATTIME`, `QUERY SECURITY`, `VERIFY PASSWORD`
+* [Chapter 6. System services](#chapter-6-system-services) — `ASSIGN`, `ASKTIME`, `FORMATTIME`, `QUERY SECURITY`, `VERIFY PASSWORD`, `INQUIRE SYSTEM`
 * [Chapter 10. Recovery and condition handling](#chapter-10-recovery-and-condition-handling) — `SYNCPOINT`, `SYNCPOINT ROLLBACK`, `HANDLE CONDITION`, `IGNORE CONDITION`, `HANDLE AID`, `HANDLE ABEND`
 * [Chapter 11. The Execute Interface Block (EIB)](#chapter-11-the-execute-interface-block-eib)
 * [Chapter 12. Response codes](#chapter-12-response-codes)
@@ -1915,6 +1915,152 @@ bricks decimal-text host-variable convention — same rule as the
 DFHVALUE constants documented under `QUERY SECURITY` above.
 
 ---
+
+### System inquiry — `INQUIRE SYSTEM`
+
+> **Recently added in 2.7.x.** `INQUIRE SYSTEM` is the entry point
+> for SIT-level inquiries — values the operator set in `bricks.cnf`
+> that a program needs at run time. Bricks v1 honours **only** the
+> `GMMTEXT` option (the IBM CICS canonical "Good Morning" sign-on
+> text); the dispatch infrastructure is in place so future SIT
+> options (`RELEASE`, `CICSSTATUS`, `MAXTASKS`, `JOBNAME`, `APPLID`,
+> `SYSID`) extend the same verb without touching the Handler /
+> Dispatcher field set.
+
+#### Format
+
+```
+EXEC CICS INQUIRE SYSTEM
+    [GMMTEXT(var)]
+    [RESP(rc)] [RESP2(rc2)]
+END-EXEC
+```
+
+#### Description
+
+Reads SIT-level configuration into the program. v1 honours only the
+`GMMTEXT(var)` option, which writes the configured `gmtext=` value
+from `bricks.cnf` (default `"Welcome to bricks"`) into the named
+host variable. A bare `INQUIRE SYSTEM` (no options, or only
+RESP/RESP2) is a no-op success matching real CICS.
+
+#### Options
+
+| Option | Bricks v1 behaviour |
+|---|---|
+| `GMMTEXT(var)` | Writes the configured GMTEXT into `var`. Full 256-byte value is delivered verbatim — no truncation at verb time. (The bricks LogonPrompt renderer truncates to `cols-1` at paint time, but the verb's host-variable surface preserves the full storage.) |
+| Other (RELEASE, CICSSTATUS, MAXTASKS, JOBNAME, APPLID, SYSID, etc.) | Not yet supported in v1 — surfaces `INVREQ` with `EIBRESP2 = 1`. |
+
+#### Conditions
+
+| Condition | EIBRESP | EIBRESP2 | Cause |
+|---|---:|---:|---|
+| NORMAL | 0 | 0 | Verb succeeded. Bare `INQUIRE SYSTEM` (no options) also returns NORMAL even when the dispatcher hasn't wired a `SystemInfoProvider`. |
+| INVREQ | 16 | 1 | The operator named an option v1 doesn't honour yet. The diagnostic names the option. |
+| INVREQ | 16 | 2 | `h.SystemInfo == nil` AND a substantive option was named — the dispatcher did not wire a provider. Mirrors the QUERY SECURITY / VERIFY PASSWORD `RESP2=3` loud-fail convention. |
+
+**Reserved RESP2 sub-codes 3..9** are kept free for future INQUIRE
+form sub-errors (INQUIRE FILE, INQUIRE TASK, etc.). v1 programs
+that pin numeric RESP2 codes will continue to see only `1` or `2`
+for INQUIRE SYSTEM; future bricks releases will not silently
+re-bind these reservations.
+
+#### Bricks deviations (loud)
+
+Per the `bricks_cics_ibm_canonical` memory every deviation from
+IBM canonical INQUIRE SYSTEM is called out individually below.
+
+> **Bricks deviation — `GMMTEXT` is the only honoured option in v1.**
+>
+> Of the 30+ IBM `INQUIRE SYSTEM` options (`RELEASE`, `CICSSTATUS`,
+> `MAXTASKS`, `JOBNAME`, `APPLID`, `SYSID`, ...) bricks v1 honours
+> only `GMMTEXT`. Any other named option surfaces `INVREQ`
+> `RESP2=1` with the option name in the diagnostic, so a port from
+> a z/OS shop fails loudly rather than silently returning zero /
+> empty. Adding any deferred option is a ~5-line extension to the
+> `cics.SystemInfoProvider` interface (one new method) plus a
+> single case in `cics/inquire.go`'s `inquireSystem` handler — no
+> Handler / Dispatcher / Frame changes.
+
+> **Bricks deviation — EBCDIC-037 fail-fast at startup.**
+>
+> The `gmtext=` value is validated against the EBCDIC-037
+> printable range (`0x20..0x7E`) minus the
+> `3270_ebcdic_037_printables` deny-set (`[ ] { } ~ \ ` `` ` ``
+> `| ^`) at config load. A `gmtext=` containing any non-printable
+> byte (e.g. an embedded bell `\x07`, a control character, or a
+> non-ASCII glyph) or any deny-set glyph is a startup error. Real
+> CICS would silently substitute on the wire; bricks refuses to
+> start so the operator notices.
+
+> **Bricks deviation — empty `gmtext=` restores the default.**
+>
+> A bare `gmtext=` line (or one with only whitespace inside the
+> quotes) DOES NOT blank the banner — it restores the
+> `"Welcome to bricks"` default. Mirrors the `ntp_server=on`
+> aliasing precedent and matches the bricks last-wins-per-key
+> configuration policy. An operator who genuinely wants no banner
+> cannot achieve that via `gmtext=`; the only way to suppress the
+> sign-on banner entirely is to leave both `gmtext=` and the
+> legacy welcome line out of the LogonPrompt path (currently not
+> possible without a code change).
+
+> **Bricks deviation — GMTEXT replaces the legacy welcomeLine on every welcome screen.**
+>
+> GMTEXT is painted at row 0 of the connect-time `ShowLogoSplash`
+> AND at row 1 of the `LogonPrompt` (when
+> `enforce_secure_login=yes`) AND on the CSSF LOGOFF confirmation
+> splash. The legacy `Welcome to BRICKS HH:MM:SS` banner with
+> timestamp only paints when `gmtext=` is empty or absent.
+> `BlankPrompt` (the steady-state TRANSID cursor) is NOT a banner
+> site — adding GMTEXT there would repaint on every return from
+> a transaction, which surprises operators.
+>
+> Real CICS paints both the GMTEXT and a "good morning" line on
+> the sign-on prompt. Bricks stacks neither — the operator sees
+> one centred banner instead of two, which the architect's C7
+> review flagged as the correct layout. When `gmtext=` is empty /
+> whitespace (which the config load layer should have already
+> restored to default, but the renderer composes safely either
+> way) the legacy welcomeLine paints as fallback.
+
+#### Sample REXX
+
+The shipped `runtime/rexx/gmtq.rexx` (TRANSID `GMTQ`) demonstrates
+the recommended idiom — RESP(RC) for clean error branching, no
+comma-continuations inside the EXEC body (per the
+`bricks_rexx_exec_one_line` memory):
+
+```rexx
+/* GMTQ -- read GMTEXT and echo it to the terminal. */
+ADDRESS CICS
+
+MSG = ''
+EXEC CICS INQUIRE SYSTEM GMMTEXT(MSG) RESP(RC) END-EXEC
+
+IF RC \= 0 THEN
+  MSG = 'INQUIRE SYSTEM GMMTEXT failed; EIBRESP=' || RC || ' EIBRESP2=' || EIBRESP2
+
+EXEC CICS SEND TEXT FROM(MSG) ERASE END-EXEC
+EXEC CICS RETURN END-EXEC
+```
+
+A program that omits `RESP(RC)` still gets the Go-level error in
+`EIBRESP` via the existing captureRespVars pipeline (a `RESP`
+clause that names a host variable is the recommended shape for
+clean per-call error branching; the `EIBRESP` post-check shape
+also works).
+
+#### SIT-knob — `gmtext=` in `bricks.cnf`
+
+```
+# bricks.cnf
+gmtext="Sample bank -- production"   # max 256 bytes, EBCDIC-037 printable only
+```
+
+Defaults to `"Welcome to bricks"` when the line is absent or empty.
+See [Configuration — `bricks.cnf`](README.md#configuration--brickscnf)
+in the README for the full knob reference.
 
 ---
 
@@ -7150,6 +7296,9 @@ literal: `IF EIBAID = X'F3' ...`.
 | `ASSIGN <FIELD>(v) ...` | Read EIB / environment fields. |
 | `ASKTIME [ABSTIME(v)]` | Refresh `EIBDATE` / `EIBTIME` (+ optional ABSTIME). |
 | `FORMATTIME ABSTIME(s) [DATE / TIME / YYYY... / DAYOFWEEK ...]` | Decode an ABSTIME. |
+| `QUERY SECURITY RESOURCE(name) [RESCLASS(c)] [READ/UPDATE/CONTROL/ALTER(v)]` | Four-axis access inquiry. |
+| `VERIFY PASSWORD USERID(u) PASSWORD(p)` | Re-authenticate credentials. |
+| `INQUIRE SYSTEM [GMMTEXT(v)]` | SIT-level inquiry (v1 honours GMMTEXT only). |
 
 ## EXEC CICS — KSDS files (Chapter 7-8)
 
