@@ -105,6 +105,7 @@ VSAM-style KSDS files and temporary-storage / transient-data queues.
 
 * [Chapter 7. KSDS file commands](#chapter-7-ksds-file-commands) — `READ`, `WRITE`, `REWRITE`, `DELETE`
 * [Chapter 8. KSDS browse commands](#chapter-8-ksds-browse-commands) — `STARTBR`, `READNEXT`, `READPREV`, `RESETBR`, `ENDBR`
+* [Chapter 8a. File Control on `tmp_dir` Sequential Files](#chapter-8a-file-control-on-tmp_dir-sequential-files) — browse + positional `READ` against ESDS-style sequential files in the tmp_dir sandbox
 * [Chapter 9. Temporary storage and transient data commands](#chapter-9-temporary-storage-and-transient-data-commands) — `READQ TS`/`TD`, `WRITEQ TS`/`TD`, `DELETEQ TS`/`TD`, the `tmp_dir` sandbox
 
 ### <span style="color:#0a1f44;">Part 6. EXEC SQL command reference</span>
@@ -2310,6 +2311,141 @@ EXEC CICS ENDBR FILE('CUSTOMERS') END-EXEC
 
 ---
 
+## Chapter 8a. File Control on `tmp_dir` Sequential Files
+
+The browse verbs in Chapter 8 (`STARTBR` / `READNEXT` / `READPREV` /
+`RESETBR` / `ENDBR`) and the direct positional `READ FILE … RIDFLD`
+also operate on **sequential files** living in the `tmp_dir`
+sandbox — the same files `READQ TD` / `WRITEQ TD` and the REXX
+`LINEIN` / `LINEOUT` family read and write. The routing is transparent
+and existence-based: if `tmp_dir/<name>` exists, the browse verbs use
+the line-record / RBA-keyed sequential backend; otherwise they fall
+through to the KSDS bbolt store (Chapter 8). When the same name is
+present in BOTH back-ends, the sequential file wins on `STARTBR`, and
+bricks logs a `WARN` line at startup so the operator knows the routing.
+
+Use this chapter when the program needs **non-FIFO** access to a
+sequential file — random-access reads by byte offset, backward
+walks, or jumping to a known position with `RESETBR`. Pure FIFO
+consumption stays cheapest via `READQ TD` (Chapter 9).
+
+### RBA semantics
+
+The Relative Byte Address (RBA) is the **decimal byte offset of the
+start of a record**, expressed as plain ASCII text — consistent with
+`READQ TS NUMITEMS` and the rest of the bricks numeric conventions.
+A three-line file `"line1\nline2\nline3\n"` (each line is 5 bytes
+plus the LF terminator) has records at RBA 0, 6, and 12.
+
+Bricks deviation from IBM canonical: real CICS ESDS exposes RBA as a
+4-byte fullword (`PIC S9(8) COMP`). Bricks renders it as decimal text
+so REXX programs and COBOL `PIC X(n)` host variables both see a
+value they can arithmetic on without datatype conversion. The
+deviation is called out here and in `README.md` so a porter from a
+z/OS shop isn't surprised.
+
+`STARTBR` (and `RESETBR`) with an RBA that falls **mid-line** rounds
+backward to the prior LF+1 so the next `READNEXT` returns the
+**containing** record rather than a garbled split. Mid-line `RIDFLD`
+on a direct `READ FILE … RIDFLD(rba)` rounds the same way. This
+matches the operator's mental model: "the byte I named lives inside
+record X; give me X."
+
+### Record boundary
+
+Records terminate with a single LF (`0x0A`). The LF is excluded from
+the `INTO(area)` payload. A trailing line without LF is returned
+once; the next `READNEXT` returns `ENDFILE`. The byte-level encoding
+is the same as Chapter 9's TD queues — see "[The `tmp_dir`
+sandbox](#the-tmp_dir-sandbox)" for the strict ASCII rule.
+
+Bricks deviation: real ESDS uses an RDW (Record Descriptor Word) or
+fixed-length records, not LF-terminated lines. Bricks aligns the
+sequential format with the rest of the tmp_dir contract (REXX
+`LINEIN`, COBOL `READQ TD`) so one file is portable across all
+three I/O surfaces.
+
+### Verb subset
+
+| Verb | Supported? | Notes |
+|---|---|---|
+| `STARTBR` | yes | `RIDFLD` optional — defaults to BOF (= RBA 0). `EQUAL`, `GENERIC`, `KEYLENGTH` rejected with INVREQ. |
+| `READNEXT` | yes | Returns next line; RIDFLD writeback = decimal RBA. |
+| `READPREV` | yes | Walks backward; same RBA conventions. |
+| `RESETBR` | yes | RIDFLD parsed as decimal RBA; backward-rounds same as STARTBR. |
+| `ENDBR` | yes | Releases the FD. |
+| `READ FILE … RIDFLD(rba)` | yes | One-shot positional read; LENGTH semantics same as READNEXT. |
+| `UNLOCK FILE` | yes | No-op accepted (bricks has no record locks). |
+| `WRITE FILE` | **no** — INVREQ "use WRITEQ TD" | |
+| `REWRITE FILE` | **no** — INVREQ "use WRITEQ TD" | |
+| `DELETE FILE` | **no** — INVREQ "use DELETEQ TD" | |
+
+### LENGTH semantics (divergence from KSDS!)
+
+On KSDS browse verbs (Chapter 8), `LENGTH(var)` is **output-only** —
+the store decides record size and writes it back to `var`. The
+recent KSDS fix made this explicit: treating LENGTH-on-READNEXT as
+an INPUT bound triggered the write-back-then-read-as-input bug that
+truncated record 2 to the length of record 1.
+
+On `tmp_dir` sequential files, `LENGTH(var)` is **INPUT bound +
+OUTPUT actual** — the program's declared buffer capacity is
+honoured. If the record exceeds the buffer, the verb returns
+`LENGERR`, truncates the payload to the buffer size, and writes the
+**actual** (untruncated) record length back to `var`. The "actual
+not truncated" rule is the canonical real-CICS LENGERR semantic so
+a program can see how much was lost.
+
+```rexx
+LEN = 80                              /* buffer cap */
+EXEC CICS READNEXT FILE('orders.txt') INTO(REC) RIDFLD(K) LENGTH(LEN) END-EXEC
+IF EIBRESP = 22 THEN                  /* LENGERR */
+   SAY 'Record was' LEN 'bytes; lost' (LEN - 80) 'bytes after truncation'
+```
+
+### RESP / RESP2 mapping
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | Record returned (or `ENDBR` succeeded). |
+| INVREQ | 16 | `EQUAL` / `GENERIC` / `KEYLENGTH` on sequential file; bad RBA (negative, parse failure); `WRITE` / `REWRITE` / `DELETE` against a tmp_dir name; missing `STARTBR` cursor. |
+| LENGERR | 22 | Record exceeded `LENGTH(var)` buffer; payload truncated. Actual length writeback. |
+| NOTFND | 13 | File not present in tmp_dir at `READ FILE … RIDFLD(rba)`, or `STARTBR` opened OK but the RBA landed past EOF on the next `READNEXT`. Real-CICS `FILENOTFOUND` (RESP=12) is not separately surfaced; programs already test for NOTFND. |
+| ENDFILE | 20 | `READNEXT` past end, or `READPREV` past beginning. (Both directions reuse one constant — matches real CICS.) |
+| IOERR | 17 | Filesystem error (rare; the sandbox is local-only). |
+
+### Interaction with `WRITEQ TD` mid-browse
+
+Bricks's sequential backend is single-FD-per-cursor. When a
+concurrent task issues `WRITEQ TD` against the **same file** while
+this task holds a `STARTBR` open, the appended bytes ARE picked up:
+on each `READNEXT` whose internal position has reached the size we
+captured at `STARTBR`, the cursor re-`Stat`s the file descriptor.
+If the file has grown, the new bytes flow into the next `READNEXT`;
+otherwise, `ENDFILE` is returned as normal.
+
+This is a documented deviation — real CICS holds a transient view
+of the dataset at `STARTBR` time and does not see mid-browse
+writes. Bricks chose the "moving target" rule so a long-running
+report transaction can stream a file that's still being written by
+a feeder task.
+
+### Real-CICS-veteran gotchas
+
+* **RBA-is-decimal-text** — not a 4-byte `COMP` fullword. A REXX
+  variable receiving RBA is a plain string; arithmetic works
+  directly.
+* **Record boundary is LF**, not a fixed-length record or RDW. A
+  binary-mode browse is out of scope today.
+* **STARTBR without RIDFLD** = BOF. Real CICS requires `RIDFLD`.
+* **Browses survive `SYNCPOINT`** — same deviation already
+  documented for KSDS (Chapter 8). Released by `ENDBR` or by the
+  dispatcher's defer at task end.
+* **Mid-browse writes are visible** via Stat-refresh-on-EOF. Real
+  CICS doesn't do this.
+
+---
+
 ## Chapter 9. Temporary storage and transient data commands
 
 Bricks supports two related queue families:
@@ -2529,6 +2665,15 @@ EXEC CICS DELETEQ TS QUEUE('AUDIT') END-EXEC
 ### READQ TD
 
 Read the next line from a sequential text file in `tmp_dir`.
+
+> **Need non-FIFO access?** `READQ TD` is the cheapest read for plain
+> forward-sequential consumption. When the program needs random
+> access by byte offset, backward walks, or repositioning by RBA on
+> the same file, switch to the browse verbs against the same
+> `tmp_dir` name — see [Chapter 8a. File Control on `tmp_dir`
+> Sequential Files](#chapter-8a-file-control-on-tmp_dir-sequential-files).
+> Both verbs read the same on-disk bytes, so a file written via
+> `WRITEQ TD` is immediately browsable via `STARTBR`.
 
 #### Format
 

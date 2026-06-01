@@ -786,6 +786,31 @@ reference is in
 and the worked walk-through is in
 [Chapter 27, example E](PROGRAMMING.md#e-sequential-import-via-readq-td--write-file).
 
+**Non-FIFO access via `STARTBR`.** The same `tmp_dir` files are also
+browsable via `STARTBR` / `READNEXT` / `READPREV` / `RESETBR` /
+`ENDBR` and direct `READ FILE … RIDFLD(rba)`. Bricks deviations from
+real-CICS ESDS:
+
+* RBA is **decimal text**, not a 4-byte binary fullword.
+* Record boundary is **LF**, not a fixed-length record or RDW.
+* `STARTBR` `RIDFLD` is **optional** (defaults to BOF / RBA 0).
+* `STARTBR` / `READ FILE` with a mid-line RBA **rounds backward** to
+  the prior LF+1 so the operator gets the containing record.
+* `LENGTH(var)` on `READNEXT` / `READPREV` / `READ FILE` is
+  **input bound + output actual**: a record exceeding the buffer
+  truncates and returns `LENGERR`, with `LENGTH` rewritten to the
+  un-truncated record length. (Distinct from the KSDS path, where
+  `LENGTH` is output-only — see PROGRAMMING.md Chapter 8a for the
+  rationale.)
+* `WRITE` / `REWRITE` / `DELETE FILE` against a `tmp_dir` name
+  return `INVREQ` with the documented "use WRITEQ TD / DELETEQ TD"
+  hint — sequential files mutate only through the queue verbs.
+* A concurrent `WRITEQ TD` append IS visible mid-browse
+  (Stat-refresh-on-EOF). Real CICS holds a frozen view at `STARTBR`
+  time.
+
+Full reference: [PROGRAMMING.md, Chapter 8a](PROGRAMMING.md#chapter-8a-file-control-on-tmp_dir-sequential-files).
+
 ---
 
 ## Time synchronisation
