@@ -74,13 +74,10 @@ DO FOREVER
 
   /* Default ENTER: consume the next item via the implicit cursor.    */
   /*                                                                  */
-  /* DROP GOTI first so its value resolves to the literal "GOTI" via  */
-  /* REXX NOVALUE -- the handler then treats ITEM(GOTI) as a cursor-   */
-  /* less READ and writes the item number actually read back into     */
-  /* GOTI on success. Without DROP, GOTI keeps the prior iteration's  */
-  /* value (e.g. "1") and the handler reads item 1 again forever.     */
-  DROP GOTI
-  EXEC CICS READQ TS QUEUE(QNM) INTO(REC) ITEM(GOTI) END-EXEC
+  /* NEXT triggers IBM-canonical cursor mode; ITEM(GOTI) receives the */
+  /* item number actually read on success. Without NEXT, bricks now   */
+  /* treats ITEM(var) as strict input and would surface INVREQ.       */
+  EXEC CICS READQ TS QUEUE(QNM) INTO(REC) NEXT ITEM(GOTI) END-EXEC
   SELECT
     WHEN EIBRESP = 0 THEN DO
       LITM = GOTI

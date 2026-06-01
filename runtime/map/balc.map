@@ -1,0 +1,7 @@
+* BALC -- runtime per-field color override demo.
+* The map's COLOR= is the design-time default. The COBOL/REXX program
+* paints STATUS in GREEN / RED at SEND MAP time via the -C suffix.
+MAP BALC SIZE 24x80
+  FIELD BALOUT AT 5,10 LEN 12 PROT BRIGHT COLOR=BLUE
+  FIELD STATUS AT 7,10 LEN 10 PROT BRIGHT COLOR=NEUTRAL
+ENDMAP

@@ -1,0 +1,20 @@
+* CSSR password-prompt map ("Sign-on Re-verify").
+*
+* Shown by runtime/rexx/cssr.rexx when the signed-on user types CSSR
+* at the bricks blank prompt and the transaction needs to re-verify
+* the password before authorising a privileged step. The PASSWORD
+* field is HIDDEN so the operator's keystrokes do not echo on the
+* 3270 -- the canonical "type your password again" gate. Compare
+* with cssn.map (the initial sign-on screen): same HIDDEN attribute
+* convention so an operator sees the same affordance both places.
+MAP CSSRPW SIZE 24x80
+  FIELD AT 0,28 LEN 18 PROT BRIGHT COLOR=BLUE      "CSSR RE-VERIFY"
+  FIELD AT 2,0  LEN 9  PROT                        "Userid:"
+  INPUT USERID   AT 2,11 LEN 8  PROT BRIGHT COLOR=WHITE
+  FIELD AT 4,0  LEN 9  PROT                        "Password:"
+  INPUT PASSWORD AT 4,11 LEN 8  HIDDEN UNDERSCORE COLOR=RED
+  STOP           AT 4,20
+  FIELD AT 6,0  LEN 60 PROT DIM COLOR=BLUE         "Re-enter password. ENTER=verify  PF3=cancel."
+  FIELD MSG      AT 8,0 LEN 60 PROT BRIGHT COLOR=RED
+  CURSOR         AT 4,12
+ENDMAP
