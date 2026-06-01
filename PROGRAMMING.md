@@ -93,7 +93,7 @@ This publication is organised into nine parts, an appendix series, and a quick-r
 
 * [Chapter 4. Terminal I/O commands](#chapter-4-terminal-io-commands) — `SEND MAP`, `RECEIVE MAP`, `CONVERSE`, `SEND TEXT`, `RECEIVE`
 * [Chapter 5. Program control commands](#chapter-5-program-control-commands) — `RETURN`, `XCTL`, `LINK`, `ABEND`, `START`, `RETRIEVE`
-* [Chapter 6. System services](#chapter-6-system-services) — `ASSIGN`, `ASKTIME`, `FORMATTIME`
+* [Chapter 6. System services](#chapter-6-system-services) — `ASSIGN`, `ASKTIME`, `FORMATTIME`, `QUERY SECURITY`, `VERIFY PASSWORD`
 * [Chapter 10. Recovery and condition handling](#chapter-10-recovery-and-condition-handling) — `SYNCPOINT`, `SYNCPOINT ROLLBACK`, `HANDLE CONDITION`, `IGNORE CONDITION`, `HANDLE AID`, `HANDLE ABEND`
 * [Chapter 11. The Execute Interface Block (EIB)](#chapter-11-the-execute-interface-block-eib)
 * [Chapter 12. Response codes](#chapter-12-response-codes)
@@ -1535,6 +1535,384 @@ EXEC CICS FORMATTIME ABSTIME(WS-NOW)
 END-EXEC.
 *  WS-DATE → "12/05/2026"     WS-TIME → "10:30:45"     WS-DOW → "2"
 ```
+
+---
+
+### Security inquiry — `QUERY SECURITY` and `VERIFY PASSWORD`
+
+Read-only programmatic introspection of the running user's
+authorisation. The verb lets an application program ask "may this
+caller perform action X on resource Y?" before it builds the menu
+or before it dispatches a destructive operation. Bricks ships
+both `QUERY SECURITY` (this section) and `VERIFY PASSWORD` (the
+following section, *Password verification*) in 2.7.x — the first
+asks the authorisation question, the second re-authenticates the
+caller's credentials.
+
+#### Format
+
+```
+EXEC CICS QUERY SECURITY RESOURCE(name)
+                         [RESCLASS(class)]
+                         [READ(target)]
+                         [UPDATE(target)]
+                         [CONTROL(target)]
+                         [ALTER(target)]
+                         [RESP(rc) RESP2(rc2)]
+END-EXEC.
+```
+
+#### Description
+
+Consults the in-memory user record (loaded from `users.conf`) and
+the resource's group list (from the dispatch table). Writes one
+`DFHVALUE` integer into each of the four optional target host
+variables — the program then compares against the named constants
+in the `DFHVALUE` copybook.
+
+The verb is stateless and has no side effects: nothing is logged,
+no lock is taken, no journal entry written. Calling it a thousand
+times in a tight loop is harmless.
+
+#### Options
+
+| Option | Direction | Notes |
+|---|---|---|
+| `RESOURCE(name)` | input | TRANSID or program name being checked. Required. |
+| `RESCLASS(class)` | input | `TCICSTRN` (transactions, default) or `PCICSPSB` (programs). Both class names consult the same transaction-table lookup — bricks has no separate program table, so a TRANSID and the program it dispatches share one ACL row. Anything else → `INVREQ` `QuerySecurityResp2BadResclass` (RESP2=2). |
+| `READ(t)` | output | `DFHVALUE-READABLE` (50) when the caller may read, `DFHVALUE-NOTREADABLE` (51) otherwise. |
+| `UPDATE(t)` | output | `DFHVALUE-UPDATABLE` (52) / `DFHVALUE-NOTUPDATABLE` (53). |
+| `CONTROL(t)` | output | `DFHVALUE-CTRLABLE` (54) / `DFHVALUE-NOTCTRLABLE` (55). |
+| `ALTER(t)` | output | `DFHVALUE-ALTERABLE` (56) / `DFHVALUE-NOTALTERABLE` (57). |
+
+A literal-string argument on any output axis (`READ('FOO')`) is
+silently skipped — matches the same "literal or empty → no-op" rule
+the `RESP(var)` / `RESP2(var)` clauses use everywhere.
+
+The verb is a per-user inquiry, so the caller must be signed on.
+A `PUBLIC` resource is reachable at *dispatch* time without sign-on,
+but `QUERY SECURITY` answers it like any other resource: an
+unauthenticated terminal sees all four axes as the NOT-* code.
+After sign-on the verb delegates the READ axis to the same
+`txn.IsAllowed` rule the dispatch gate uses — including PUBLIC and
+`*` semantics — so a signed-on caller against a `PUBLIC` resource
+sees `READ=DFHVALUE-READABLE`.
+
+#### Bricks-flavoured access mapping (explicit deviation)
+
+Real CICS / RACF projects per-class permissions onto the four
+axes via a class-specific matrix. Bricks's existing ACL substrate
+is binary (you are in the resource's allow-list, or you are not),
+so the bricks projection narrows the IBM matrix:
+
+| Axis | Bricks rule |
+|---|---|
+| `READ` | Caller's userid shares any group with the resource's allow-list, OR the resource has no ACL (open), OR caller is in `ADMIN`. |
+| `UPDATE` | Caller is in the `ADMIN` group. |
+| `CONTROL` | Caller is in the `ADMIN` group. |
+| `ALTER` | Caller is in the `ADMIN` group. |
+
+Document this rule in operator-facing notes alongside any program
+that gates a menu on `UPDATE` — "only members of `ADMIN` see the D
+key" reads more directly than the abstract DFHVALUE matrix.
+
+#### Conditions
+
+| Condition | EIBRESP | EIBRESP2 | Cause |
+|---|---:|---:|---|
+| NORMAL | 0 | 0 | Verb completed; up to four host variables written. |
+| INVREQ | 16 | `QuerySecurityResp2NoResource` (1) | `RESOURCE(...)` is missing or resolves to the empty string. |
+| INVREQ | 16 | `QuerySecurityResp2BadResclass` (2) | `RESCLASS(...)` is neither `TCICSTRN` nor `PCICSPSB`. |
+| INVREQ | 16 | `QuerySecurityResp2NoChecker` (3) | The dispatcher did not wire a `SecurityChecker` (operator misconfiguration). |
+
+Unknown resource → `NORMAL` with every requested axis set to the
+NOT-* code. No `NOTFND` is emitted: the verb is a yes/no inquiry,
+and "I don't know that resource" collapses cleanly to "all axes
+denied". Programs that need to distinguish "denied" from "absent"
+should pair `QUERY SECURITY` with a separate `INQUIRE` of the
+transaction table (not yet implemented; tracked on the deferred
+list).
+
+`NOTAUTH` (70) is the IBM-canonical "the caller is not authorised"
+response code; `QUERY SECURITY` never emits it (a denied caller
+sees `NORMAL` plus the `NOT*` DFHVALUE on each axis). The
+`VERIFY PASSWORD` verb in the following section is the verb that
+*does* return `NOTAUTH` for a bad-credentials outcome.
+
+The admin group name is hard-coded to `ADMIN` in `main.go`
+(`securityAdminGroup`). If a deployment renames it, the
+`UPDATE` / `CONTROL` / `ALTER` axes return the NOT-* code for
+every user (the `READ` axis is unaffected because it consults
+the per-resource `Groups` list, not the admin group). A future
+`bricks.cnf` `admin_group=X` knob would lift this hard-coding.
+
+#### DFHVALUE constants
+
+The `runtime/cobolcopy/DFHVALUE.cpy` copybook declares each
+constant twice per the `cobol_copybook_dual_names` convention —
+once under the bricks-style short name and once under the
+`DFHVALUE-` IBM-traditional alias. Either form compiles:
+
+| Bricks mnemonic | IBM alias | Value |
+|---|---|---:|
+| `READABLE` | `DFHVALUE-READABLE` | 50 |
+| `NOTREADABLE` | `DFHVALUE-NOTREADABLE` | 51 |
+| `UPDATABLE` | `DFHVALUE-UPDATABLE` | 52 |
+| `NOTUPDATABLE` | `DFHVALUE-NOTUPDATABLE` | 53 |
+| `CTRLABLE` | `DFHVALUE-CTRLABLE` | 54 |
+| `NOTCTRLABLE` | `DFHVALUE-NOTCTRLABLE` | 55 |
+| `ALTERABLE` | `DFHVALUE-ALTERABLE` | 56 |
+| `NOTALTERABLE` | `DFHVALUE-NOTALTERABLE` | 57 |
+
+> **Storage format — bricks decimal-text deviation.** DFHVALUE
+> constants ship as `PIC S9(8) VALUE` (DISPLAY) per the bricks
+> decimal-text host-variable convention — see Chapter 8a for the
+> same shape on `RBA`. Programs that declare target host vars as
+> `PIC S9(8) COMP` and then `IF WS-CACR-UP = DFHVALUE-UPDATABLE`
+> will silently mismatch: the comparison sees a 4-byte binary
+> half-word on one side and the seven ASCII digits "0000052" on
+> the other, and the `IF` always falls false. Declare the target
+> as plain `PIC S9(8)` (DISPLAY) so the comparison is bit-equal
+> to the constant; the `DFHVALUE.cpy` header block carries the
+> long-form rationale and points back here.
+
+#### COBOL example — gating a Delete menu entry
+
+The shipped `runtime/cobol/gust.cob` sample demonstrates the
+typical pattern. In its `DISPATCH` paragraph, before the
+`EVALUATE ACTION` switch, an admin gate sits in front of the
+`D=Delete` branch:
+
+```cobol
+       COPY DFHVALUE.
+       ...
+       01 WS-CACR-UP PIC S9(8) VALUE 0.
+       ...
+       IF VALID-ACTION = 'Y' AND ACTION = 'D' THEN
+           EXEC CICS QUERY SECURITY RESOURCE('GUST')
+                                    UPDATE(WS-CACR-UP) END-EXEC
+           IF WS-CACR-UP NOT = DFHVALUE-UPDATABLE THEN
+               MOVE 'Delete not permitted for this user.' TO MSG
+               MOVE 'N' TO VALID-ACTION
+           END-IF
+       END-IF.
+```
+
+Non-admin callers see the message in `MSG` on the next menu
+SEND; admins fall through to the standard `ACT-DELETE` path.
+
+#### REXX example
+
+```rexx
+EXEC CICS QUERY SECURITY RESOURCE('GUST'),
+                         READ(WS_RD),
+                         UPDATE(WS_UP) END-EXEC
+IF WS_UP = 52 THEN
+    SHOW_DELETE = 'Y'
+ELSE
+    SHOW_DELETE = 'N'
+```
+
+REXX programs may compare against the bare integer (52 above) or
+import the same numeric values from a constants stem if the shop
+prefers symbolic names.
+
+### Password verification — `VERIFY PASSWORD`
+
+Companion verb to `QUERY SECURITY`. Asks "is this plaintext
+password the right one for this userid?" against the same
+`users.conf`-backed authenticator `CSSN` uses for sign-on. Used
+by batch / SOAP entry points that need to re-authenticate before
+a privileged operation, and by terminal screens that want a
+"type your password again" gate in front of a destructive
+action — even though the session is already signed on.
+
+#### Format
+
+```
+EXEC CICS VERIFY PASSWORD USERID(uid)
+                          PASSWORD(pwd)
+                          [CHANGETIME(t)]
+                          [EXPIRYTIME(t)]
+                          [DAYSLEFT(d)]
+                          [INVALIDCOUNT(n)]
+                          [LASTUSETIME(t)]
+                          [RESP(rc) RESP2(rc2)]
+END-EXEC.
+```
+
+#### Description
+
+Re-authenticates the (userid, password) pair against the running
+`users.conf` and returns `NORMAL` (0) on success, `NOTAUTH` (70)
+on any failure. The verb itself is stateless — no journal entry,
+no lock — and reads the same in-memory user record `CSSN` consults
+at sign-on. Calling it repeatedly is harmless aside from the
+bcrypt cost on each call (the FileStore.Authenticate path spends
+the same compute on unknown users as on known ones to defeat
+username-enumeration via response timing).
+
+#### Options
+
+| Option | Direction | Notes |
+|---|---|---|
+| `USERID(uid)` | input | Userid to verify. Required. Trimmed of surrounding whitespace; empty → `INVREQ` RESP2=1. |
+| `PASSWORD(pwd)` | input | Plaintext password. Required. Passed verbatim to the verifier (no trim — leading/trailing whitespace is part of the credential); empty or missing PASSWORD passes through to the verifier and folds onto the standard `NOTAUTH` (70) bad-credential branch. (A fast-reject on empty PASSWORD was withdrawn in review pass 3 — see the Conditions table below for the rationale.) |
+| `CHANGETIME(t)` | output | *Parsed but not populated* — see deviation below. |
+| `EXPIRYTIME(t)` | output | *Parsed but not populated*. |
+| `DAYSLEFT(d)`   | output | *Parsed but not populated*. |
+| `INVALIDCOUNT(n)` | output | *Parsed but not populated*. |
+| `LASTUSETIME(t)` | output | *Parsed but not populated*. |
+
+#### Bricks deviation — non-distinguishing failure mode (explicit)
+
+> **Loud deviation from IBM RACF.** Real CICS distinguishes
+> "unknown userid" from "bad password" via separate RESP2
+> sub-codes. **Bricks intentionally does not.** Every authentication
+> failure — unknown userid, wrong password, future account lockout,
+> rate-limit refusal — collapses onto the single `NOTAUTH` (70)
+> result with `RESP2=0`. The motivation is straightforward: this
+> verb is safe to expose behind public-facing entry points (a WAPI
+> re-auth endpoint, a SOAP credential check), and any RESP2-level
+> distinction would let a hostile caller enumerate valid userids
+> by inspecting the sub-code. The bricks `FileStore.Authenticate`
+> path already pays the bcrypt cost on unknown users for the same
+> timing-resistance reason, so the bricks path is uniform end-to-
+> end. The contract is enforced in code by the
+> `cics.ErrPasswordVerifyBadCredentials` sentinel: every
+> `PasswordVerifier` implementation must collapse its failure
+> modes onto this single sentinel before returning.
+
+#### Bricks deviation — password-policy outputs not populated
+
+The optional outputs `CHANGETIME` / `EXPIRYTIME` / `DAYSLEFT` /
+`INVALIDCOUNT` / `LASTUSETIME` parse cleanly (so source ported
+from a real z/OS shop continues to compile) but bricks does not
+populate them. Bricks's `users.conf` records bcrypt hash + group
+list and nothing else — there is no password-policy metadata to
+write back. If the named target is a host variable, it is left
+unchanged after the verb returns; if it is a literal, the option
+is silently dropped.
+
+A program that relies on `DAYSLEFT` or `EXPIRYTIME` to drive an
+"expires in N days" warning must gate that branch on whether
+the variable is still at its pre-call value. The shipped
+`runtime/rexx/cssr.rexx` sample (below) does not invoke the
+optional outputs.
+
+#### Conditions
+
+| Condition | EIBRESP | EIBRESP2 | Cause |
+|---|---:|---:|---|
+| NORMAL  |  0 | 0 | Credentials matched. |
+| NOTAUTH | 70 | 0 | Bad credentials — wrong password OR unknown userid OR empty/missing PASSWORD OR any future failure mode. The sub-code is intentionally 0 to defeat enumeration (see deviation above). |
+| INVREQ  | 16 | `VerifyPasswordResp2NoUserid` (1) | `USERID(...)` missing or resolves to the empty string. |
+| INVREQ  | 16 | `VerifyPasswordResp2NoVerifier` (3) | The dispatcher did not wire a `PasswordVerifier` (operator misconfiguration). |
+| IOERR   | 17 | 0 | The verifier reported a transient error (file-system fault, future store unreachable, ...). The shipped bricks `passwordAdapter` folds every observed `FileStore` error onto `NOTAUTH` today, but custom verifiers may return arbitrary errors that surface as `IOERR` — a deployer who plugs in an LDAP or RACF-passthrough verifier should expect this path to fire. |
+
+> **No `RESP2=2` row.** Sub-code 2 was withdrawn in review pass 3:
+> it formerly meant "PASSWORD missing or empty" and was a
+> fast-reject before the verifier ran. The wall-clock gap between
+> "PASSWORD absent — fast `INVREQ`" and "PASSWORD wrong —
+> ran-bcrypt-then-`NOTAUTH`" let an attacker time the verb and learn
+> whether the verifier was reached. Empty / missing PASSWORD now
+> falls through to the verifier and lands on the standard `NOTAUTH`
+> branch. The numeric gap at 2 is preserved deliberately so an
+> operator reading a `RESP2=3` log line from a deployed program
+> still finds the same "no verifier configured" cause.
+
+> **Refused in CECI.** The CECI debugging shell refuses
+> `EXEC CICS VERIFY PASSWORD` outright because the operator's typed
+> PASSWORD value would echo on the input pane (and could land in the
+> CECI audit log if `ceci_audit` is ever re-enabled). Programs that
+> need a "type your password again" gate must run as their own
+> TRANSID (see `runtime/rexx/cssr.rexx` for the canonical sample).
+
+#### REXX example — re-authenticate before a privileged action
+
+The shipped `runtime/rexx/cssr.rexx` sample demonstrates the
+canonical "type your password again" gate (`CSSR` = "Sign-on
+Re-verify"; TRANSID registered in `runtime/transactions.conf`
+with `USERS,ADMIN` groups). Usage: type `CSSR` at the bricks
+blank prompt; the `CSSRPW` map then prompts for the password in a
+HIDDEN (non-echoing) writable field. PF3 cancels without verifying.
+
+```rexx
+ADDRESS CICS
+EXEC CICS ASSIGN USERID(USR) END-EXEC
+MAP.USERID   = USR             /* preload the signed-on user */
+MAP.PASSWORD = ''              /* clear any leftover value   */
+EXEC CICS SEND    MAP('CSSRPW') FROM(MAP) ERASE END-EXEC
+EXEC CICS RECEIVE MAP('CSSRPW') INTO(MAP) END-EXEC
+IF EIBAID = '3' THEN DO        /* PF3 = cancel              */
+  EXEC CICS SEND TEXT FROM('CSSR cancelled.') ERASE END-EXEC
+  EXEC CICS RETURN END-EXEC
+END
+PWD = STRIP(MAP.PASSWORD)
+EXEC CICS VERIFY PASSWORD USERID(USR) PASSWORD(PWD) RESP(RC) END-EXEC
+IF RC = 0 THEN
+  MSG = 'Password OK. Privileged step authorised.'
+ELSE IF RC = 70 THEN
+  MSG = 'Bad credentials. Privileged step refused.'
+ELSE
+  MSG = 'VERIFY PASSWORD failed RESP=' || RC || ' RESP2=' || EIBRESP2
+EXEC CICS SEND TEXT FROM(MSG) ERASE END-EXEC
+EXEC CICS RETURN END-EXEC
+```
+
+The `RESP(RC)` clause writes the result into a host variable
+inline so the `IF RC = 70` branch reads cleanly instead of
+fishing through `EIBRESP` after the fact.
+
+> **Why the map, not a command-tail.** A prior draft of CSSR read
+> the password from the initial-input buffer (`CSSR <password>`).
+> That pattern echoes the password on the 3270 input pane, drops
+> it into any `CONS` shell view, and lands it in CECI's input
+> echo if an operator ever reissues the command from there. The
+> shipped sample uses a `CSSRPW` map whose `PASSWORD` writable
+> field carries the `DARK` (HIDDEN) attribute, so the operator's
+> keystrokes never render on screen. Production re-auth flows
+> must follow the same pattern — see the [3270 EBCDIC 037 memory](#)
+> notes on writable-field attributes if you build your own map.
+
+#### COBOL idiom — gating LINK with a typed-again password
+
+The same pattern in COBOL. The `WS-PWD` field is the operator's
+re-typed password (collected on a `RECEIVE MAP` from a sensitive-
+action confirmation screen, not shown). On `NOTAUTH` the program
+falls through to a refuse-message path; on `NORMAL` it can `LINK`
+to the privileged sub-program.
+
+```cobol
+       77  WS-VP-RC PIC S9(8) VALUE 0.
+       77  WS-USR   PIC X(8).
+       77  WS-PWD   PIC X(32).
+       ...
+       EXEC CICS ASSIGN USERID(WS-USR) END-EXEC
+       EXEC CICS VERIFY PASSWORD USERID(WS-USR)
+                                 PASSWORD(WS-PWD)
+                                 RESP(WS-VP-RC) END-EXEC
+       EVALUATE WS-VP-RC
+           WHEN 0
+               EXEC CICS LINK PROGRAM('ADMNDEL') END-EXEC
+           WHEN 70
+               MOVE 'Password does not match. Try again.' TO MSG
+           WHEN OTHER
+               MOVE 'VERIFY PASSWORD failed (config?).' TO MSG
+       END-EVALUATE.
+```
+
+The `EXEC CICS ASSIGN USERID(WS-USR)` step is the canonical way to
+read the signed-on userid into a host variable — bricks does **not**
+populate an `EIBUSER` field, so a port from a z/OS shop that used
+`USERID(EIBUSER)` directly must be rewritten to go through `ASSIGN`
+first. The shipped `runtime/rexx/cssr.rexx` sample uses the REXX
+flavour of the same pattern.
+
+A COBOL caller that intends to `EVALUATE WS-VP-RC WHEN 70` must
+declare `WS-VP-RC` as plain `PIC S9(8)` (DISPLAY) to match the
+bricks decimal-text host-variable convention — same rule as the
+DFHVALUE constants documented under `QUERY SECURITY` above.
 
 ---
 
@@ -3419,6 +3797,12 @@ recognize them at all:
 | `GETMAIN`, `FREEMAIN` | Dynamic storage. REXX has dynamic variables; COBOL has `WORKING-STORAGE`. |
 | `LOAD`, `RELEASE` | Explicit program-fetch lifecycle. Bricks caches program text on first dispatch. |
 | `WAIT EVENT`, `POST` | ECB-driven inter-task signalling — bricks's scheduler model does not expose ECBs. |
+
+> **Recently added in 2.7.x.** `QUERY SECURITY` and `VERIFY PASSWORD`
+> both graduated from this deferred list — programs can now ask the
+> four-axis authorisation question and re-authenticate a userid /
+> password pair through the verbs described in
+> [Chapter 6 — Security inquiry](#chapter-6-system-services).
 
 ### DELAY
 
@@ -6560,6 +6944,50 @@ Notes:
 * A REXX equivalent reads the same file via `LINEIN` and writes via
   `EXEC CICS WRITE`. Because both languages share the `tmp_dir`
   backend, the sample file works untouched from either side.
+
+### F. Menu items gated by `QUERY SECURITY`
+
+The shipped `GUST` transaction (`runtime/cobol/gust.cob`) is a
+small CRUD UI: A=Add / Q=Query / U=Update / D=Delete / L=List /
+S=Search. Delete is destructive and only the admin role should be
+allowed to invoke it. Before 2.7.x the operator had to hard-code
+`IF EIBUSER = 'ADMIN'` or `IF EIBTRMID = ...`, which bypasses the
+ACL gate that already governs sign-on. `QUERY SECURITY` lets the
+program ask the dispatcher's `SecurityChecker` directly:
+
+```cobol
+       WORKING-STORAGE SECTION.
+       COPY DFHAID.
+       COPY DFHRESP.
+       COPY DFHVALUE.
+       ...
+       01 WS-CACR-UP PIC S9(8) VALUE 0.
+       ...
+       DISPATCH.
+           ...
+      *> EXEC CICS QUERY SECURITY: refuse D=Delete to callers who
+      *> are not authorised to UPDATE the GUST resource.
+           IF VALID-ACTION = 'Y' AND ACTION = 'D' THEN
+               EXEC CICS QUERY SECURITY RESOURCE('GUST')
+                                        UPDATE(WS-CACR-UP) END-EXEC
+               IF WS-CACR-UP NOT = DFHVALUE-UPDATABLE THEN
+                   MOVE 'Delete not permitted for this user.' TO MSG
+                   MOVE 'N' TO VALID-ACTION
+               END-IF
+           END-IF.
+```
+
+The gate runs once per dispatch (the verb is stateless and cheap)
+and lands before the `EVALUATE ACTION` switch. Non-admins see the
+`MSG` line on the next menu paint; admins fall through to
+`ACT-DELETE` unchanged. The same pattern transports to any
+program with a destructive action — replace `'GUST'` with the
+gated transaction's TRANSID and reuse the four-line block.
+
+See the in-tree `runtime/cobolcopy/DFHVALUE.cpy` for the full
+constant set, and the security-inquiry sub-chapter of
+[Chapter 6](#chapter-6-system-services) for the bricks-flavoured
+access mapping that decides the `WS-CACR-UP` value.
 
 ---
 
