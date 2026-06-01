@@ -12,8 +12,14 @@
        WORKING-STORAGE SECTION.
        COPY DFHAID.
        COPY DFHRESP.
+       COPY DFHVALUE.
        01 USR PIC X(8).
        01 TRM PIC X(4).
+      *> WS-CACR-UP holds the EXEC CICS QUERY SECURITY UPDATE result
+      *> (DFHVALUE-UPDATABLE or DFHVALUE-NOTUPDATABLE) so the menu
+      *> can gate the D=Delete action on whether this caller may
+      *> mutate the GUST resource.
+       01 WS-CACR-UP PIC S9(8) VALUE 0.
 
        01 SCR.
           05 INFOLINE PIC X(78).
@@ -127,6 +133,18 @@
                        MOVE 'Customer # required.' TO MSG
                        MOVE 'N' TO VALID-ACTION
                    END-IF
+               END-IF
+           END-IF.
+
+      *> EXEC CICS QUERY SECURITY: refuse D=Delete to callers who
+      *> are not authorised to UPDATE the GUST resource. Mirrors the
+      *> menu-gating pattern documented in PROGRAMMING.md Chapter 6.
+           IF VALID-ACTION = 'Y' AND ACTION = 'D' THEN
+               EXEC CICS QUERY SECURITY RESOURCE('GUST')
+                                        UPDATE(WS-CACR-UP) END-EXEC
+               IF WS-CACR-UP NOT = DFHVALUE-UPDATABLE THEN
+                   MOVE 'Delete not permitted for this user.' TO MSG
+                   MOVE 'N' TO VALID-ACTION
                END-IF
            END-IF.
 
