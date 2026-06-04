@@ -1,7 +1,7 @@
       *> BALC -- runtime per-field colour override demo.
       *> Branches on a hard-coded balance, paints STATUS in GREEN when
       *> in funds and RED when overdrawn, waits for ENTER, then flips
-      *> STATUS to TURQUOISE on the second SEND. Demonstrates the
+      *> STATUS to RED on the second SEND. Demonstrates the
       *> IBM-canonical NAME-C convention: the map field STATUS reads
       *> its colour from STATUS-C at SEND MAP time, overriding the
       *> map's COLOR= default.
@@ -37,6 +37,6 @@
            IF EIBAID = PF03 THEN
                EXEC CICS RETURN END-EXEC
            END-IF.
-           MOVE DFHTURQ TO STATUS-C.
+           MOVE DFHRED TO STATUS-C.
            EXEC CICS SEND MAP('BALC') FROM(SCR) END-EXEC.
            EXEC CICS RETURN END-EXEC.
