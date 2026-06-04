@@ -17,7 +17,7 @@ MAP HELP1 SIZE 24x80
   FIELD AT 14,0  LEN 30  PROT COLOR=YELLOW "BANK                   -  PSEUDO-CONVERSATIONAL BANKING APP"
   FIELD AT 15,0  LEN 30  PROT COLOR=YELLOW "CUST                   -  PSEUDO-CONVERSATIONAL CRM"
   FIELD AT 16,0  LEN 30  PROT COLOR=PINK   "CHAT                   -  PSEUDO-CONVERSATIONAL REAL-TIME CHAT"
-  FIELD AT 17,0  LEN 30  PROT COLOR=PINK   "MDNL                   -  Mandelbrot !!"
+  FIELD AT 17,0  LEN 30  PROT COLOR=PINK   "MNDL                   -  Mandelbrot !!"
   FIELD AT 19,2 LEN 45  PROT COLOR=WHITE   "To logon with CSSN, the operator must grant you an account"
   FIELD AT 20,2 LEN 45  PROT COLOR=WHITE   "To use ISPF, you must have a DEV group assignment"
   FIELD AT 22,0 LEN 50 PROT COLOR=BLUE     "PF3=Exit"

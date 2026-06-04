@@ -5,10 +5,12 @@ dns_name=localhost
 port=2300                                                                                                                                                                            
 tlsport=2023                                                                                                                                                                         
 tlscert=
-tlskey=www.moshix.tech.key                                                                                                                                                           
+tlskey=
 #start_TLS=yes         
 enforce_secure_login=no
 GMTEXT='DFHZC2312 Welcome to BRICKS"
+#show welcoe to bricks?
+show_welcome=yes
 
 #secure_login_transaction=CSSN
 start_transaction=HELP
@@ -24,9 +26,6 @@ map_cache = 128
 enable_wapi=yes
 wapi_port=8080
 wapi_tls_port=8443
-
-#show welcoe to bricks?
-show_welcome=yes
 
 
 # ── Sandbox for sequential file I/O
