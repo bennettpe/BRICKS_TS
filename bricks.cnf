@@ -91,6 +91,24 @@ data_dir=data
 users_file=runtime/users.conf
 transactions_file=runtime/transactions.conf
 
+
+# ── VSAM record cache ────────────────────────────────────────────
+# Byte-bounded read cache in front of the bbolt file store. A keyed
+# READ FILE for a cached record is served from memory; every WRITE /
+# REWRITE / DELETE (and SYNCPOINT rollback) invalidates the affected
+# record so the cache stays coherent. When the budget fills, the
+# least-recently-read records are evicted.
+#
+# Default when the line is omitted: 16 MB.
+# Valid range: 4..4096 MB (4 MB floor, 4 GB cap).
+# Out-of-range values are rejected at startup.
+#
+# Live rates, latency, and hit ratio: CEMT MONITOR -> PF11 (VSAM).
+record_cache=16
+
+
+
+
 # ── Program cache
 # LRU pool for parsed REXX/COBOL programs, allocated once at startup
 # as a contiguous byte slab. Because the slab is a single

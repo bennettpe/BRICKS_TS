@@ -131,6 +131,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `max_conns_per_ip`           | `8`                           | Per-client cap. |
 | `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as eight contiguous byte slabs — one per shard — and reused for the life of the process; Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
 | `map_cache`                  | `128`                         | LRU bound on the number of **parsed** 3270 maps held resident. The directory index — `(map name → file path, mtime, size, SHA-256)` — always covers every `*.map` in `maps_dir`, so any map remains resolvable by name; only the parsed body is bounded. A `SEND/RECEIVE MAP` for a cached map is zero-parse; an evicted map is re-parsed on next lookup (microseconds) and re-inserted. Evicted entries drop their `*Map` pointer and the Go GC reclaims them on the next cycle, capping both steady-state memory and per-GC pointer-graph walk regardless of how many maps a deployment ships. Valid range is `1..1028`; rejected at startup if out of range. Live counters and runtime resize are visible in `CEMT P M`. |
+| `record_cache`               | `16`                          | Byte budget in **MB** for the VSAM record read cache that sits in front of the bbolt file store. A keyed `READ FILE` for a cached record skips the B-tree traversal and is served from memory; every `WRITE`/`REWRITE`/`DELETE` (and SYNCPOINT rollback) invalidates the affected record, so the cache stays coherent within the process. The budget bounds the total cached record bytes; the least-recently-read records are evicted when it fills. Valid range is `4..4096` (4 MB floor, 4 GB cap); out-of-range values are rejected at startup. Live read/write rates, latency, and the hit ratio are on the `CEMT MONITOR` **VSAM File Monitor** (PF11); the since-boot hit ratio also shows on the `CEMT MONITOR` Caches panel. |
 | `banner`                     | `BRICKS Transaction Server`   | Shown at top of system screens. |
 | `gmtext`                     | `Welcome to bricks`           | **IBM CICS SIT `GMTEXT` equivalent — operator-configured "Good Morning" banner.** Painted at row 0 of the connect-time splash and row 1 of `LogonPrompt` (when `enforce_secure_login=yes`) (Turquoise intense, centred; replaces the legacy `Welcome to BRICKS HH:MM:SS` banner when set), and retrievable programmatically via `EXEC CICS INQUIRE SYSTEM GMMTEXT(var)`. **Hard caps:** max 256 bytes, and EBCDIC-037 printable bytes only (`0x20..0x7E` minus the `[ ] { } ~ \ ` `` ` `` `\| ^` deny-set per the 3270-printables memory) — any violation is a startup error, **not** a silent substitute. An empty `gmtext=` line **restores the default** (matches the `ntp_server=on` aliasing precedent). The full 256-byte value is preserved through the verb — the LogonPrompt renderer truncates to `cols-1` only at paint time, so programs reading `GMMTEXT` see the full configured value regardless of screen width. See [PROGRAMMING.md / INQUIRE SYSTEM](PROGRAMMING.md#system-inquiry--inquire-system) for the verb and bricks deviations. |
 | `dns_name`                   | (none)                        | **Bind address.** Every bricks listener — the plain-TCP and TLS 3270 listeners, and the web3270 / `/metrics` HTTP services — binds **only** to the single IP this name resolves to (a literal IP is used as-is; a hostname resolves to one address, IPv4 preferred). A `dns_name` that is set but unresolvable is a fatal startup error. When `dns_name` is **empty**, listeners fall back to binding *all* interfaces (`0.0.0.0`) and bricks logs a `WARNING` — set `dns_name` to confine the server to one interface. |
@@ -1473,14 +1474,35 @@ what used to be `CEMT P PERFORMANCE`:
 |  Goroutines               7                                          |
 |  Uptime               3m 12s                                         |
 |                                                                      |
-|  Sessions                                                            |
-|  ───────────────────────────────────────────────────────────────────  |
-|  Active terminals    2          Active transactions    1             |
-|  Signed-on users     1          Known files            1             |
+|  Sessions                     Caches                                 |
+|  ──────────────────────       ──────────────────────                 |
+|  Active terminals    2        L1 hits/miss   90/10 (90.0%)           |
+|  Signed-on users     1        …                                      |
+|  Active transactions 1        Web req/err    12/0 (0 in flight)      |
+|  Known files         1        VSAM hit/miss  840/160 (84%)           |
 |                                                                      |
-|  ENTER=Refresh  PF3=Back                                             |
+|  ENTER=Refresh  PF3=Back  PF10=Database  PF11=VSAM                   |
 +----------------------------------------------------------------------+
 ```
+
+`PF10` opens the **DB Transaction Monitor** and `PF11` the **VSAM File
+Monitor** — two auto-refreshing sub-screens with vertical equalizer
+bars (and, on a Model 4, an inline history heatmap; Model 2/3 reach the
+same history with PF4). They are also addressable directly as
+`CEMT M D` (database) and `CEMT M V` (VSAM); bare `CEMT M` stays on this
+process-metrics screen. Each owns the terminal until PF3 returns here;
+`Auto Update ON/OFF` toggles the live refresh, PF9/PF10 slow it down /
+speed it up.
+
+* **DB Transaction Monitor** (PF10) — read/write/total EXEC SQL rates
+  per minute and average query latency, against the configured
+  PostgreSQL database.
+* **VSAM File Monitor** (PF11) — the file-store equivalent: keyed-read
+  and mutation rates per minute, average record-operation latency, and
+  the **record-cache hit ratio** (the live, per-window ratio of the
+  `record_cache` LRU). Its summary panel shows the cache occupancy
+  (used/cap MB, entries) and lifetime hits/misses. The since-boot hit
+  ratio also appears on the `Caches` panel above (`VSAM hit/miss`).
 
 ### CEMT PERFORM
 
