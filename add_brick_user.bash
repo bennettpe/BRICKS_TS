@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # add_brick_user.bash — add (or update) a user in runtime/users.conf.
-# You may have your bricks.cnf pointing to different file though.. So 
-# be careful. You can also just use brickspw directly to generate a pasword
-# Copyright 2026 by moshix
+#
 # Usage:
 #   ./add_brick_user.bash <username> <password> [groups]
 #   ./add_brick_user.bash --update <username> <password> [groups]
 #
 #   groups is a comma-separated list (e.g. admin,users). Defaults to "users".
 #
-# The password is hashed with bcrypt via cmd/brickspw before being written.
+# The password is hashed with bcrypt before being written, using the
+# prebuilt brickspw helper in ./bin that matches this machine's OS and
+# architecture (e.g. bin/brickspw-2.8.0-linux-amd64) -- no Go toolchain
+# needed. If ./bin has no brickspw for this platform, the script tells
+# you to run ./build.bash or to add the user from inside bricks (CSSN
+# sign-on, then CEDA USER).
 # Without --update the script refuses to overwrite an existing user.
 
 set -euo pipefail
@@ -24,6 +27,79 @@ usage: $0 [--update] <username> <password> [groups]
 Reads/writes runtime/users.conf relative to the script's directory.
 EOF
   exit 2
+}
+
+# detect_goos / detect_goarch map the running platform onto the naming
+# build.bash uses for bin/ artifacts (<name>-<version>-<goos>-<goarch>).
+# Each prints the empty string for a platform build.bash doesn't target,
+# which find_brickspw treats as "no prebuilt binary".
+detect_goos() {
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) echo darwin ;;
+    Linux) echo linux ;;
+    MINGW* | MSYS* | CYGWIN*) echo windows ;;
+    *) echo "" ;;
+  esac
+}
+
+detect_goarch() {
+  # NB: build.bash names the 32-bit ARM target "armv7" (GOARCH=arm +
+  # GOARM=7), so emit armv7 here, not the raw GOARCH "arm".
+  case "$(uname -m 2>/dev/null)" in
+    arm64 | aarch64) echo arm64 ;;
+    x86_64 | amd64) echo amd64 ;;
+    armv7l | armv6l | armv7 | armhf) echo armv7 ;;
+    *) echo "" ;;
+  esac
+}
+
+# find_brickspw prints the path to the arch-matched brickspw binary in
+# bin/ and returns 0; returns non-zero when none is found. A match that
+# exists but isn't executable is reported (rc=2) so the caller can give
+# a chmod hint instead of a "not built" message.
+find_brickspw() {
+  local goos goarch ext=""
+  goos=$(detect_goos)
+  goarch=$(detect_goarch)
+  if [[ -z "$goos" || -z "$goarch" ]]; then
+    return 1
+  fi
+  [[ "$goos" == "windows" ]] && ext=".exe"
+
+  local matches=()
+  shopt -s nullglob
+  matches=(bin/brickspw-*-"${goos}-${goarch}${ext}")
+  shopt -u nullglob
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    return 1
+  fi
+
+  # bin/ normally holds one version (build.bash wipes it first); if
+  # several ever coexist, take the highest version.
+  local bin
+  bin=$(printf '%s\n' "${matches[@]}" | sort -V | tail -1)
+  if [[ ! -x "$bin" ]]; then
+    printf '%s\n' "$bin"
+    return 2
+  fi
+  printf '%s\n' "$bin"
+  return 0
+}
+
+# restore_pwbin_mode reverts the temporary +x applied to PWBIN when the
+# arch-matched binary was found non-executable. PWBIN / PWBIN_RESTORE_MODE
+# are set by the hashing step below. Safe to call more than once (it's a
+# no-op once restored) so the EXIT trap and the normal path can both call
+# it without double-chmod.
+restore_pwbin_mode() {
+  [[ -n "${PWBIN_RESTORE_MODE:-}" ]] || return 0
+  if [[ "$PWBIN_RESTORE_MODE" == "-" ]]; then
+    # Original octal mode couldn't be read; just drop the +x we added.
+    chmod -x "$PWBIN" 2>/dev/null || true
+  else
+    chmod "$PWBIN_RESTORE_MODE" "$PWBIN" 2>/dev/null || true
+  fi
+  PWBIN_RESTORE_MODE=""
 }
 
 UPDATE=0
@@ -73,9 +149,50 @@ if [[ -n "$existing_line" && $UPDATE -eq 0 ]]; then
   exit 1
 fi
 
-HASH=$(go run ./cmd/brickspw "$PASS")
+# Hash the password with the arch-matched brickspw helper from ./bin.
+# `|| rc=$?` keeps `set -e` from aborting on a non-zero return so we can
+# branch on it (a failing command substitution in a bare assignment
+# would otherwise exit the script before we read $?).
+rc=0
+PWBIN=$(find_brickspw) || rc=$?
+if [[ $rc -ne 0 && $rc -ne 2 ]]; then
+  cat >&2 <<EOF
+error: no prebuilt brickspw for $(uname -s)/$(uname -m) found in ./bin.
+  Option A: build it for this platform:   ./build.bash
+  Option B: add the user from inside bricks instead of this script:
+            connect with a 3270 emulator, sign on with CSSN
+            (default admin / admin), then use CEDA USER (CEDA U)
+            to add or alter the user.
+EOF
+  exit 1
+fi
+
+# rc==2: the matched binary exists but isn't executable. Make it
+# executable just for this run and restore its original mode afterward
+# (the EXIT trap guarantees restoration even if hashing fails), so we
+# never leave a persistent permissions change behind.
+PWBIN_RESTORE_MODE=""
+if [[ $rc -eq 2 ]]; then
+  # stat -c is GNU (Linux); stat -f '%Lp' is BSD (macOS). "-" marks the
+  # mode as unknown so restore falls back to just removing +x.
+  PWBIN_RESTORE_MODE=$(stat -c '%a' "$PWBIN" 2>/dev/null || stat -f '%Lp' "$PWBIN" 2>/dev/null || echo "-")
+  if ! chmod u+x "$PWBIN" 2>/dev/null; then
+    echo "error: '$PWBIN' is not executable and chmod failed; run: chmod +x '$PWBIN'" >&2
+    exit 1
+  fi
+  echo "note: '$PWBIN' was not executable; made it temporarily executable for this run" >&2
+  trap restore_pwbin_mode EXIT
+fi
+
+HASH=$("$PWBIN" "$PASS")
+
+if [[ $rc -eq 2 ]]; then
+  restore_pwbin_mode
+  trap - EXIT
+fi
+
 if [[ -z "$HASH" ]]; then
-  echo "error: failed to generate bcrypt hash" >&2
+  echo "error: failed to generate bcrypt hash (via $PWBIN)" >&2
   exit 1
 fi
 
