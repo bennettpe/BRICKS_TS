@@ -11,19 +11,22 @@
 
 /* Another magic trick! */
 /* If DFHCOMMAREA is not empty is is treated as command line options. */
-/* Make sure to include the TID. You can present a different TID if desired. */
 /* Example: */
-/*   ARGS = 'BRDS -s ~ BRDSTEST ReallyBig Press F3 to return.' */
-/*   EXEC CICS LINK PROGRAM(SET.TID) COMMAREA(ARGS) END-EXEC */
+/*   ARGS = '-s ~ BRDSTEST ReallyBig Press F3 to return.' */
+/*   EXEC CICS LINK PROGRAM('BRDS'') COMMAREA(ARGS) END-EXEC */
+/* When BRDS returns it will set DFHCOMMAREA to: SET.FILE SET.KEY SET.SEP */
+/*   The file name, the current key, the field separator. */
+/* This has the fun sideeffect of saving your place when you exit BRDS. */
 
 /* Pressing PF24 will demonstrate everything BRDS can do. */
 /* This will load test data into the file BRDSTEST. */
 /* There are examples for each field separator along with really big text records. */
 
 /* Pressing PF23 will LINK BRDS with COMMAREA set to the following: */
-/*   TID "-s ~ BRDSTEST ReallyBig This is a message." */
+/*   -s ~ BRDSTEST ReallyBig This is a message. */
 
-/* For developers, press PF13 to show all of the tails from the STEMS: SET. SCR. FIELDS. */
+/* For developers, press PF13 to show all of the tails from the STEMS: */
+/*   SET. SCR. FIELDS. */
 
 ADDRESS CICS
 
@@ -44,7 +47,7 @@ SET.MAP = ''        /* The map to show the user. */
 SET.REC = ''        /* The record read from KSDS. */
 SET.PAGES = 0       /* The number of pages if more than one screen of data. */
 SET.PAGE = 1        /* The current page. */
-SET.PER_PAGE = 10   /* Rows per page, adjusted for terminal model. */
+SET.PER_PAGE = 12   /* Rows per page, adjusted for terminal model. */
 SET.ROW_WIDTH = 76  /* row width for normal width terminals. */
 SET.SEP = ''        /* Field separator. Empty means treat the record as text. */
 SET.START_KEY = ''  /* Starting key. */
@@ -57,16 +60,16 @@ TEST_DATA_FILE = 'BRDSTEST'
 MAPBASE = 'BRDS1'                       /* Model 2 - 24x80 */
 SUFFIX = ''
 IF SCRH >= 43 THEN DO                   /* Model 4 - 43x80 */
-  SET.PER_PAGE = 30
+  SET.PER_PAGE = 31
   SUFFIX = 'L'
 END
 ELSE IF SCRH >= 32 THEN DO              /* Model 3 - 32x80 */
-  SET.PER_PAGE = 18
+  SET.PER_PAGE = 20
   SUFFIX = 'M'
 END
 ELSE IF SCRH >= 27 & SCRW = 132 THEN DO /* Model 5 - 27x132 */
   SET.ROW_WIDTH = 128
-  SET.PER_PAGE = 15
+  SET.PER_PAGE = 17
   SUFFIX = 'W'
 END
 SET.MAP = MAPBASE || SUFFIX
@@ -76,10 +79,11 @@ CALL COMMAND_LINE_PARSE
 /* Main loop. */
 DO FOREVER
   SKIP         = 'NO' /* Don't fetch a new record if YES. */
+  SCR.FIELDSEP = SET.SEP
   SCR.FNAME    = SET.FILE
   SCR.LASTKEY  = SET.KEY
   SCR.STARTKEY = SET.START_KEY
-  SCR.FIELDSEP = SET.SEP
+  SCR.TRANSID   = SET.TID
 
   EXEC CICS CONVERSE MAP(SET.MAP) FROM(SCR.) INTO(MAP) ERASE END-EXEC
   /* Make sure the map is found. */
@@ -108,14 +112,16 @@ DO FOREVER
     END
     /* Exit. */
     WHEN AID = 'F3' THEN DO
-      /* TODO: This doesn't seem to work. Or more likely I don't understand. :shrug: */
-      /* COMMAREA = SET.TID '-s' SET.SEP SET.FILE SET.KEY */
-      /* EXEC CICS RETURN COMMAREA(COMMAREA) END-EXEC */
+      DFHCOMMAREA = ''
+      IF SET.SEP \= '' THEN
+        DFHCOMMAREA = '-s' SET.SEP
+      DFHCOMMAREA = DFHCOMMAREA SET.FILE SET.KEY
       EXEC CICS RETURN END-EXEC
     END
     /* Reset the cursor. */
     WHEN AID = 'F5' & SET.FILE \= '' THEN DO
-      CALL CURSOR_RESET SET.FILE SET.START_KEY
+      CALL CURSOR_CLOSE SET.FILE
+      CALL CURSOR_OPEN SET.FILE SET.START_KEY
     END
     /* Toggle the field separator. */
     WHEN AID = 'F6' THEN DO
@@ -159,21 +165,30 @@ DO FOREVER
     /* Starts another copy of BRDS with test data. */
     WHEN AID = '4B' THEN DO /* PF23 */
       CALL TEST_DATA_LOAD
-      ARGS = SET.TID '-s ~ BRDSTEST ReallyBig Press F3 to return.'
-      EXEC CICS LINK PROGRAM(SET.TID) COMMAREA(ARGS) END-EXEC
-      SKIP = 'YES'
+      COMMAREA = '-s ~ BRDSTEST ReallyBig Press F3 to return.'
+      EXEC CICS LINK PROGRAM(SET.TID) COMMAREA(COMMAREA) END-EXEC
+      IF COMMAREA \= '' THEN DO
+        IF SET.FILE \= '' THEN
+          CALL CURSOR_CLOSE SET.FILE
+        PARSE VAR COMMAREA MAP.FNAME SET.START_KEY SET.SEP
+        MAP.STARTKEY = SET.START_KEY
+        MAP.FIELDSEP = SET.SEP
+        SET.FILE = '' /* Make it look like the user entered a new file name. */
+      END
+      ELSE
+        SKIP = 'YES'
     END
     /* Test data. SSSHHH! TOP SECRET!! */
     WHEN AID = '4C' THEN DO /* PF24 */
-      CALL CURSOR_CLOSE SET.FILE
+      IF SET.FILE \= '' THEN
+        CALL CURSOR_CLOSE SET.FILE
       CALL TEST_DATA_LOAD
-      SET.FILE = 'BRDSTEST'
-      MAP.FNAME = SET.FILE
+      MAP.FNAME = 'BRDSTEST'
       SET.START_KEY = ''
-      SET.SEP = ''
       MAP.STARTKEY = SET.START_KEY
-      CALL CURSOR_OPEN SET.FILE SET.START_KEY
-      CALL CURSOR_LOAD
+      SET.SEP = ''
+      MAP.FIELDSEP = SET.SEP
+      SET.FILE = '' /* Make it look like the user entered a new file name. */
     END
     OTHERWISE NOP
   END
@@ -197,7 +212,7 @@ DO FOREVER
   END
 
   /* Skip fetching a new record, if the file name has not changed. */
-  IF SKIP = 'YES' & SET.FILE = MAP.FNAME THEN
+  IF SKIP = 'YES' & SET.FILE = UPPER(MAP.FNAME) THEN
     ITERATE
 
   /* Did the file name changed. */
@@ -206,7 +221,7 @@ DO FOREVER
       CALL CURSOR_CLOSE SET.FILE
     /* IF SET.FILE \= MAP.FNAME THEN */
       CALL CURSOR_OPEN MAP.FNAME SET.START_KEY
-    SET.FILE = MAP.FNAME
+    SET.FILE = UPPER(MAP.FNAME)
     SET.REC = ''
     SET.KEY = ''
   END
@@ -225,18 +240,16 @@ END
 
 EXIT
 
-/* FIELDS. is here so it gets passed on to procedure calls. */
+/* FIELDS. is here so it gets passed through to procedure calls. */
 COMMAND_LINE_PARSE: PROCEDURE EXPOSE DFHCOMMAREA FIELDS. SCR. SET.
-  /* Check for anything in DFHCOMMAREA. */
-  /* Use the contents as if they were from the command line. */
-  IF DFHCOMMAREA \= '' THEN
-    BUF = STRIP(DFHCOMMAREA)
-  ELSE
-    EXEC CICS RECEIVE INTO(BUF) END-EXEC
-
-  /* Parse the command line. */
+  /* Check for command line arguments. */
+  /* If there are none check for arguments in DFHCOMMAREA. */
+  EXEC CICS RECEIVE INTO(BUF) END-EXEC
   PARSE VAR BUF SET.TID CKEY
-  SCR.TRANSID = SET.TID
+  IF DFHCOMMAREA \= '' & CKEY = '' THEN DO
+    CKEY = STRIP(DFHCOMMAREA)
+  END
+
 
   /* Do they need help? */
   IF        CKEY        = '-?'   |,
@@ -257,6 +270,7 @@ COMMAND_LINE_PARSE: PROCEDURE EXPOSE DFHCOMMAREA FIELDS. SCR. SET.
   /* If a file is given open it and read a record. */
   IF CKEY \= '' THEN DO
     PARSE VAR CKEY SET.FILE SET.START_KEY
+    SET.FILE = UPPER(SET.FILE)
 
     /* Check for a message to display. */
     PARSE VAR SET.START_KEY NEW_KEY MESSAGE
@@ -276,39 +290,40 @@ RECORD_PARSE: PROCEDURE EXPOSE FIELDS. SCR. SET. TRUNC.
   SET.PAGE = 1
   SCR.PAGES_EXTRA = ''
   IF SET.SEP = '' THEN DO
+    /* Present the record as one long string of text. */
+    /* The record is wrapped as needed. */
     FIELDS.0 = 0
     POS = 1
     DO WHILE POS < LENGTH(SET.REC)
-      N = FIELDS.0 + 1
-      FIELDS.0 = N
-      FIELDS.N = SUBSTR(SET.REC, POS, SET.ROW_WIDTH)
-      TRUNC.N = ''
+      FIELD_NUM = FIELDS.0 + 1
+      FIELDS.0 = FIELD_NUM
+      FIELDS.FIELD_NUM = SUBSTR(SET.REC, POS, SET.ROW_WIDTH)
+      TRUNC.FIELD_NUM = ''
       POS = POS + SET.ROW_WIDTH
     END
     IF LENGTH(SET.REC) > SET.ROW_WIDTH THEN
       SCR.PAGES_EXTRA = 'Record wrapped. '
   END
   ELSE DO
+    /* Parse the record into separate fields. */
     FIELDS.0 = 0
     RIGHT = SET.REC
-    LEFT = RIGHT
-    DO WHILE LEFT \= ''
+    DO WHILE LENGTH(RIGHT) > 0
       /* Do a strange little dance to parse the record. */
       /* This translate to: PARSE VAR LEFT 'X' RIGHT */
       /* With X as the separator character. */
       INTERPRET 'PARSE VAR RIGHT LEFT ''' || SET.SEP || ''' RIGHT' 
-      N = FIELDS.0 + 1
-      FIELDS.0 = N
-      TRUNC.N = ''
+      FIELDS.0 = FIELDS.0 + 1
+      FIELD_NUM = FIELDS.0
+      TRUNC.FIELD_NUM = ''
       IF LENGTH(LEFT) > SET.ROW_WIDTH THEN DO
-        FIELDS.N = LEFT(LEFT, SET.ROW_WIDTH - 6) '...'
+        FIELDS.FIELD_NUM = LEFT(LEFT, SET.ROW_WIDTH - 6) '...'
         SCR.PAGES_EXTRA = 'Field(s) truncated. '
-        TRUNC.N = 'T'
+        TRUNC.FIELD_NUM = 'T'
       END
       ELSE
-        FIELDS.N = LEFT
+        FIELDS.FIELD_NUM = LEFT
     END
-    FIELDS.0 = FIELDS.0 - 1
   END
   SET.PAGES = (FIELDS.0 + SET.PER_PAGE - 1) % SET.PER_PAGE
   CALL FIELDS_LOAD
@@ -348,6 +363,9 @@ FIELDS_LOAD: PROCEDURE EXPOSE FIELDS. SCR. SET. TRUNC.
     ELSE
       SCR.PAGES = SCR.PAGES || 'Fields:'
     SCR.PAGES = SCR.PAGES FIELDS.0 'Page:' SET.PAGE 'of' SET.PAGES
+    /* Add a note on scrolling through the pages. */
+    PADD = COPIES(' ', SET.WIDTH - LENGTH(SCR.PAGES) - 37)
+    SCR.PAGES = SCR.PAGES || PADD 'PF9=Page up PF10=Page Down'
   END
 RETURN
 
@@ -415,25 +433,30 @@ NEXT_SEPARATOR: PROCEDURE EXPOSE SET.
 
 /* Send some help text. */
 SEND_HELP: PROCEDURE EXPOSE SET.
+  BLANK_LINE = LEFT('', SET.WIDTH)
   HELP_TEXT = LEFT('BRDS - Browse KSDS file records.', SET.WIDTH) ||,
-  LEFT('', SET.WIDTH) ||,
+  BLANK_LINE ||,
   LEFT('Usage:' SET.TID '[-h] [-s SEPARATOR] [FILE_NAME [START_KEY]]', SET.WIDTH) ||,
-  LEFT('', SET.WIDTH) || ,
+  BLANK_LINE || ,
   LEFT('Displays the records for a given KSDS file. Starting at the optional key.', SET.WIDTH) ||,
   LEFT('The record is parsed into fields by SEPARATOR.', SET.WIDTH) ||,
   LEFT('If SEPARATOR is blank the record is wrapped into multiple rows.', SET.WIDTH) ||,
-  LEFT('', SET.WIDTH) ||,
+  BLANK_LINE ||,
   LEFT('Wide fields will be truncated and a red "T" will mark the field.', SET.WIDTH) ||,
-  LEFT('', SET.WIDTH) ||,
+  BLANK_LINE ||,
+  LEFT('PF5 closes the cursor then opens a new one. New records will be seen.', SET.WIDTH) ||,
+  BLANK_LINE ||,
+  LEFT('PF4 rotates the separator through: "" "|" "," ";" ":" "!"', SET.WIDTH) ||,
+  BLANK_LINE ||,
+  LEFT('PF7 and PF8 read the Previous and Next record.', SET.WIDTH) ||,
+  BLANK_LINE ||,
+  LEFT('PF9 and PF10 scroll Up and Down through the record fields/rows.', SET.WIDTH) ||,
+  BLANK_LINE ||,
+  LEFT('Press PF24 for a demonstration with test data.', SET.WIDTH) ||,
+  BLANK_LINE ||,
   LEFT('Example: BRDS -s | mandelbrot Defaults', SET.WIDTH) ||,
   LEFT('(Requires the Mandelbrot saves be loaded using MNDU.)', SET.WIDTH) ||,
-  LEFT('', SET.WIDTH) ||,
-  LEFT('PF4 rotates the separator through: "" "|" "," ";" ":" "!"', SET.WIDTH) ||,
-  LEFT('', SET.WIDTH) ||,
-  LEFT('PF9 and PF10 scroll up and down through the parsed fields.', SET.WIDTH) ||,
-  LEFT('', SET.WIDTH) ||,
-  LEFT('Press PF24 for a demonstration with test data.', SET.WIDTH) ||,
-  LEFT('', SET.WIDTH) || X2C(13)
+  BLANK_LINE || X2C(13)
   EXEC CICS SEND TEXT FROM(HELP_TEXT) ERASE END-EXEC
   RETURN
 
@@ -443,11 +466,11 @@ SEND_HELP: PROCEDURE EXPOSE SET.
   Key = '1234567890'
   CALL TEST_DATA_RECORD KEY REC
   REC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-  REC = 'This is a really big record.|' || COPIES(REC,100)
+  REC = 'This is a really big record.|' || COPIES(REC,100) || '|The End.'
   KEY = 'ReallyBig'
   CALL TEST_DATA_RECORD KEY REC
   REC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-  REC = 'This is an incredibly big record.:' || COPIES(REC,200)
+  REC = 'This is an incredibly big record.:' || COPIES(REC,200) ||':The End.'
   KEY = 'ZBig'
   CALL TEST_DATA_RECORD KEY REC
   REC = '1|2|3|4|5|6|7|8|9|0'
@@ -485,6 +508,9 @@ SEND_HELP: PROCEDURE EXPOSE SET.
   CALL TEST_DATA_RECORD KEY REC
   REC = REC || '~' || REC
   KEY = 'TildeB'
+  CALL TEST_DATA_RECORD KEY REC
+  REC = 'This record has a blank field.||Right there, the line above.'
+  KEY = 'BlankRow'
   CALL TEST_DATA_RECORD KEY REC
   REC = 'This record is just a little bit of plain text.'
   KEY = 'PlainText'
