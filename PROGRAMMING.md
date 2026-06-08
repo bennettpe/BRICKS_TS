@@ -5709,8 +5709,7 @@ unary sign.
 | `UNSTRING` | `UNSTRING src DELIMITED BY 'lit' INTO t1 t2 ... [ON OVERFLOW stmts] [END-UNSTRING]` |
 | `INSPECT TALLYING` | `INSPECT subject TALLYING counter FOR (ALL \| LEADING \| CHARACTERS) [needle] [BEFORE/AFTER INITIAL delim] [, ...]` |
 | `INSPECT REPLACING` | `INSPECT subject REPLACING (ALL \| LEADING \| FIRST \| CHARACTERS) [needle] BY replacement [BEFORE/AFTER INITIAL delim] [, ...]` |
-
-`INSPECT CONVERTING` is not yet supported.
+| `INSPECT CONVERTING` | `INSPECT subject CONVERTING from TO to [BEFORE/AFTER INITIAL delim]` |
 
 #### I/O and external
 
@@ -5948,6 +5947,8 @@ INSPECT subject REPLACING (ALL | LEADING | FIRST | CHARACTERS)
                           [needle] BY replacement
                           [BEFORE/AFTER INITIAL delim]
                           [, ...]
+INSPECT subject CONVERTING from TO to
+                          [BEFORE/AFTER INITIAL delim]
 ```
 
 Quantifiers:
@@ -5985,13 +5986,32 @@ resetting, matching IBM semantics. REPLACING phrases run left-to-
 right in declared order, so later phrases see the output of earlier
 ones.
 
+Converting: `CONVERTING from TO to` builds a positional per-character
+map and translates every character of the in-scope region through it —
+`from[k]` becomes `to[k]`, exactly like Unix `tr` or the old COBOL
+`TRANSFORM`. This is the verb for case folding:
+
+```cobol
+INSPECT VMUSR CONVERTING 'abcdefghijklmnopqrstuvwxyz'
+                      TO 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.
+```
+
+If `from` repeats a character, the **leftmost** occurrence defines its
+mapping and later duplicates are ignored. The sets need not be the same
+length: only the overlapping `min(len(from), len(to))` positions map and
+any surplus is silently ignored (no runtime error), matching the
+REPLACING leniency philosophy. IBM allows only **one** CONVERTING phrase
+per INSPECT (no comma list), and `BEFORE/AFTER INITIAL delim` narrows the
+region just like REPLACING.
+
 Subject, counter, and operands all accept qualified data-names
 (`INSPECT REC OF DET ...`). Trailing PIC X padding is rstripped from
 both the subject and the needle before matching, so a 30-byte filter
 containing `FOO` plus trailing spaces matches against the meaningful
 content of the subject rather than against the padding.
 
-IBM's CONVERTING form is not parsed yet.
+IBM's CONVERTING form is now supported (see the Converting paragraph
+above).
 
 ### EVALUATE limitations
 
@@ -6810,7 +6830,7 @@ for the supported syntax.
 |---|---|
 | DATA DIVISION | `REDEFINES`, `USAGE COMP-1` (single float), `USAGE COMP-2` (double float), `SYNC`, `INDEXED BY`, `OCCURS DEPENDING ON`, `66` / `78` levels, `BLANK WHEN ZERO`. `USAGE COMP` / `COMP-4` / `COMPUTATIONAL` / `BINARY` and `USAGE COMP-3` / `COMPUTATIONAL-3` / `PACKED-DECIMAL` ARE supported — see Chapter 21. |
 | Edited PIC | Edit characters `+`, `-`, `CR`, `DB`, `B`, `0`, `/`. (`Z`, `.`, `,`, `$`, `*` are supported.) |
-| PROCEDURE DIVISION | `CALL` (external program), `SEARCH` / `SEARCH ALL`, `ALTER`, `INITIALIZE`, `ACCEPT`, in-line `PERFORM ... END-PERFORM` (only paragraph-targeted `PERFORM` works), `INSPECT CONVERTING`, `DIVIDE … REMAINDER`. |
+| PROCEDURE DIVISION | `CALL` (external program), `SEARCH` / `SEARCH ALL`, `ALTER`, `INITIALIZE`, `ACCEPT`, in-line `PERFORM ... END-PERFORM` (only paragraph-targeted `PERFORM` works), `DIVIDE … REMAINDER`. |
 | Intrinsic functions | Only `UPPER-CASE`, `LOWER-CASE`, `LENGTH`, `NUMVAL`, `TRIM`, `REVERSE`, `POS` are implemented. The statistical / date / time families are not. `FUNCTION TRIM` does NOT accept the `LEADING` / `TRAILING` modifier. |
 | Copybooks | `COPY ... REPLACING ==X== BY ==Y==.`, library qualifiers (`COPY name OF lib`), `SUPPRESS`. |
 | EXEC SQL | Multi-row `INSERT VALUES (...), (...)`. Stored-procedure calls (`EXEC SQL CALL`). DDL inside the executor — use `psql` or CEDA DATABASE. |

@@ -1,0 +1,16 @@
+* UPPR -- customer text upper-case converter demo. The COBOL program
+* (runtime/cobol/uppr.cob) reads the operator's text from CUSTIN with
+* RECEIVE MAP, folds a-z to A-Z with INSPECT CONVERTING, and sends the
+* upper-cased copy back in CUSTOUT.
+MAP UPPR1 SIZE 24x80
+  FIELD AT 0,0   LEN 42 PROT BRIGHT COLOR=BLUE      "UPPR -- Customer text upper-case converter"
+  FIELD AT 2,2   LEN 50 PROT COLOR=TURQUOISE        "Demonstrates INSPECT CONVERTING (lower to upper)."
+  FIELD AT 5,2   LEN 22 PROT COLOR=TURQUOISE        "Customer text (input):"
+  INPUT CUSTIN   AT 5,27 LEN 40 UNDERSCORE COLOR=GREEN
+  STOP           AT 5,68
+  FIELD AT 8,2   LEN 22 PROT COLOR=TURQUOISE        "Upper-case result:"
+  FIELD CUSTOUT  AT 8,27 LEN 40 PROT BRIGHT COLOR=WHITE
+  FIELD MSG      AT 11,2 LEN 70 PROT BRIGHT COLOR=YELLOW
+  FIELD AT 22,2  LEN 30 PROT DIM COLOR=BLUE         "ENTER=Convert   F3=Exit"
+  CURSOR         AT CUSTIN
+ENDMAP
