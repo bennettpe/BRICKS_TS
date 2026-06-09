@@ -1,0 +1,51 @@
+* BOOK -- SABRE CRS scrolling transcript. Model 2 (24x80).
+*
+* Field-name contract shared with bookm4.map so the same book.rexx
+* program drives either terminal model. Per-row transcript fields are
+* ROW01..ROW18, newest at the BOTTOM (closest to the command line). The
+* CMD field is the only UNPROT field -- the operator types commands
+* there and the program echoes them back into the transcript.
+*
+* All chrome and transcript fields start at col 0 so the leftmost
+* visible character lands at col 1 (the attribute byte at col 0 displays
+* as blank). ROW01..ROW18 / STATUS use LEN 78, the max safe length at
+* col 0 -- col 79 stays untouched to dodge the wrap-to-next-row bug.
+* EBCDIC-037 printables only; no line feeds.
+*
+* Colors:
+*   BLUE/BRIGHT  -- title
+*   TURQUOISE    -- clock, footer, agent label
+*   YELLOW       -- agent id
+*   RED/BRIGHT   -- status / error line
+*   GREEN        -- transcript rows, prompt
+*   WHITE        -- operator command input
+MAP BOOKM2 SIZE 24x80
+  FIELD TITLE  AT 0,0  LEN 30 PROT BRIGHT COLOR=BLUE       "SABRE CRS  --  BOOK"
+  FIELD CLOCK  AT 0,40 LEN 8  PROT COLOR=TURQUOISE
+  FIELD AGTLBL AT 0,52 LEN 6  PROT COLOR=TURQUOISE         "AGENT:"
+  FIELD AGTID  AT 0,59 LEN 18 PROT COLOR=YELLOW
+  FIELD ROW01  AT 2,0  LEN 78 PROT COLOR=GREEN
+  FIELD ROW02  AT 3,0  LEN 78 PROT COLOR=GREEN
+  FIELD ROW03  AT 4,0  LEN 78 PROT COLOR=GREEN
+  FIELD ROW04  AT 5,0  LEN 78 PROT COLOR=GREEN
+  FIELD ROW05  AT 6,0  LEN 78 PROT COLOR=GREEN
+  FIELD ROW06  AT 7,0  LEN 78 PROT COLOR=GREEN
+  FIELD ROW07  AT 8,0  LEN 78 PROT COLOR=GREEN
+  FIELD ROW08  AT 9,0  LEN 78 PROT COLOR=GREEN
+  FIELD ROW09  AT 10,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW10  AT 11,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW11  AT 12,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW12  AT 13,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW13  AT 14,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW14  AT 15,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW15  AT 16,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW16  AT 17,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW17  AT 18,0 LEN 78 PROT COLOR=GREEN
+  FIELD ROW18  AT 19,0 LEN 78 PROT COLOR=GREEN
+  FIELD STATUS AT 21,0 LEN 78 PROT BRIGHT COLOR=RED
+  FIELD PROMPT AT 22,0 LEN 4  PROT BRIGHT COLOR=GREEN      "==>"
+  INPUT CMD    AT 22,6 LEN 62 UNDERSCORE COLOR=WHITE
+  STOP         AT 22,69
+  FIELD FOOTER AT 23,0 LEN 60 PROT COLOR=TURQUOISE         "ENTER=cmd  PF7=up  PF8=down  PF3=exit  HELP=cmds"
+  CURSOR AT CMD
+ENDMAP

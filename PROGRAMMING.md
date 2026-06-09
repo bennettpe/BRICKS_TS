@@ -4638,14 +4638,38 @@ Statements are separated by newlines or `;`. The parser does not
 require a terminator after the last statement of a block. Labels
 have the form `NAME:` and may appear at any statement position.
 
+### String literals
+
+A string is written in single or double quotes (`'…'` / `"…"`); a
+doubled quote inside is an escaped quote (`'it''s'`). A quoted string
+immediately followed by an `X` (hexadecimal) or `B` (binary) suffix —
+with no intervening blank — is a **hex / binary literal** whose value is
+the decoded bytes:
+
+| Literal | Value (bytes) |
+|---|---|
+| `'F3'X` | one byte `0xF3` |
+| `'F1F2'X` | `0xF1 0xF2` |
+| `'1'X` | `0x01` (an odd hex-digit count is left-padded with `0`) |
+| `'0110'B` | `0x06` (left-padded to a full byte, then bit-packed) |
+| `''X` / `''B` | the empty string |
+
+The suffix is recognised only when the `X` / `B` is a standalone letter:
+`'03'XY` is the string `'03'` followed by the symbol `XY` (juxtaposition),
+*not* a hex literal. Invalid digits (`'GG'X`, `'2'B`) raise a SYNTAX error.
+Decoded literals are ordinary byte strings — `C2X('F3'X)` is `'F3'`, and
+`X2C` / `D2C` / `B2X` round-trip them.
+
 ### Procedures
 
 A label followed by `PROCEDURE [EXPOSE list]` defines a procedure
 with its own variable scope. `EXPOSE` re-routes named variables to
 the caller's frame recursively. Both simple names and stem roots
-(trailing dot) are accepted in the EXPOSE list. CALL by name
-dispatches to the matching `PROCEDURE` body; the same name as a
-built-in function shadows the built-in.
+(trailing dot) are accepted in the EXPOSE list. A procedure is
+dispatched by name from both the `CALL` statement and the
+`NAME(args)` function form; a `PROCEDURE` whose name matches a
+built-in shadows it (internal routines are resolved first, per
+standard REXX).
 
 ```rexx
 CALL GREET 'Alice'
@@ -4663,6 +4687,27 @@ special variable `RESULT`; a bare `RETURN` or a fall-off-end
 drops `RESULT` so the caller's existing value is not silently
 masked. Recursion is permitted (the only ceiling is the
 interpreter's `MaxSteps` runaway guard).
+
+A procedure may be invoked either as a `CALL` statement or as a
+**function** in an expression — `Y = DOUBLE(21)`. In the function
+form the routine MUST `RETURN` a value; a bare `RETURN` or a
+fall-off-end raises a SYNTAX error ("function did not return data").
+`RETURN ''` counts as data. (As a `CALL` statement, a value-less
+return is fine and simply leaves `RESULT` unset.)
+
+The `NUMERIC` settings, the `ADDRESS` environment, and the
+`SIGNAL ON` / `CALL ON` condition traps are saved when a procedure is
+entered and restored on `RETURN`, so a routine may change them locally
+without leaking the change back to its caller.
+
+```rexx
+SAY DOUBLE(21)               /* 42 — internal routine called as a function */
+EXIT
+
+DOUBLE: PROCEDURE
+   PARSE ARG N
+   RETURN N * 2
+```
 
 ### `ADDRESS`
 
@@ -4876,7 +4921,10 @@ END
   function in statement position. Arguments are expressions,
   evaluated left-to-right and made visible to the callee via
   `ARG(n)`. A `CALL` to a built-in throws away the returned
-  value; a user procedure's `RETURN expr` populates `RESULT`.
+  value; a user procedure's `RETURN expr` populates `RESULT`. The
+  same routine can also be called as a function in expression
+  position (`x = name(args)`) — see
+  [Chapter 14](#chapter-14-rexx-program-structure).
 * `RETURN [expr]` — return from a procedure (or terminate a
   top-level program). When `expr` is present and the caller was
   `CALL`, the value lands in `RESULT`; without `expr`, `RESULT`
@@ -4953,7 +5001,7 @@ which variables.
 
 | Source | Input string |
 |---|---|
-| `VAR var` | Current value of the named variable. |
+| `VAR var` | Current value of the named variable. A compound name resolves its tail — `PARSE VAR airports.CODE …` parses the value of `airports.<CODE>`, not the literal name `AIRPORTS.CODE`. |
 | `VALUE expr WITH` | The result of evaluating `expr`. The literal `WITH` keyword separates the source expression from the template. |
 | `ARG [, ARG, …]` | The arguments the program (or procedure) was called with. Each comma-separated segment of the template is one argument, in order — `PARSE ARG H, W` peels `ARG(1)` into the first sub-template and `ARG(2)` into the second. |
 | `PULL` | The terminal-input queue, which in bricks is always empty. Use `EXEC CICS RECEIVE` for real input. |
@@ -4966,7 +5014,7 @@ parsing.
 
 | Element | Effect |
 |---|---|
-| Bare variable name | Consumes the next whitespace-delimited word. In a *run* of bare variables, all but the last get one word each; the last gets every remaining word/character up to the next anchor. |
+| Bare variable name | In a *run* of bare variables, all but the last get one blank-delimited word each (leading blanks skipped); the last variable gets the **verbatim** remainder, preserving internal and trailing blanks. A *single* variable with no following anchor receives the whole segment verbatim (leading blanks included). The word separator is the space character only. A dynamic compound target (`A.I`) resolves its tail at assignment time. |
 | `.` (period) | Placeholder — consumes one token without binding it. Useful as a "skip" in a variable run. |
 | `'literal'` | String anchor. Matches the next occurrence of `literal` in the source and splits there. The literal itself is discarded. |
 | `n` (positive integer) | Absolute column marker — jumps to column `n` (1-based) in the source. Variables before the marker get everything from the previous column up to column `n-1`. |
@@ -4998,6 +5046,16 @@ SELECT
    WHEN VERB = 'ADD'  THEN CALL ADD_HANDLER  REST
    OTHERWISE SAY 'unknown verb' VERB
 END
+
+/* Compound tail resolves on both sides.                       */
+I = 2
+A.2 = 'hello world'
+PARSE VAR A.I W1 W2            /* W1='hello', W2='world'        */
+
+/* Whitespace preserved: the final variable keeps the run of   */
+/* blanks between arg1 and arg2 (older PARSE collapsed them).   */
+LINE = 'CMD   arg1  arg2'
+PARSE VAR LINE VERB REST       /* VERB='CMD', REST='arg1  arg2' */
 ```
 
 ### Not supported
@@ -5078,9 +5136,11 @@ two styles can coexist.
 The bricks REXX interpreter ships with the functions listed
 below. A `CALL` to any of these in statement position throws
 away the return value; the same name in expression position
-returns the value. Built-in lookups are case-insensitive and
-take precedence over user-defined `PROCEDURE` names of the same
-spelling.
+returns the value. Built-in lookups are case-insensitive. Per
+standard REXX, a user-defined `PROCEDURE` of the same spelling
+**takes precedence** over the built-in (the internal routine
+shadows it) — for both the `CALL` statement and the `NAME(args)`
+function form.
 
 ### Length / index
 

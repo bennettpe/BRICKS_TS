@@ -1,0 +1,15 @@
+2026-05-31 09:14:02 INFO  bricks started; build=2.7.1 listen=:2300
+2026-05-31 09:14:03 INFO  loaded transactions.conf: 31 rows
+2026-05-31 09:14:03 INFO  loaded databases.conf: 2 rows (bricks, bank)
+2026-05-31 09:14:04 INFO  CSSN signed on user=admin term=T0001
+2026-05-31 09:14:18 INFO  CSSN signed on user=alice term=T0002
+2026-05-31 09:15:11 INFO  BANK transaction started user=alice term=T0002
+2026-05-31 09:15:11 INFO  EXEC SQL SELECT FROM accounts pool=bank ms=2
+2026-05-31 09:15:14 WARN  CECI dispatched user=admin term=T0001
+2026-05-31 09:16:02 INFO  CSSF LOGOFF user=alice term=T0002
+2026-05-31 09:18:33 INFO  STARTBR FILE=audit.log user=admin term=T0001
+2026-05-31 09:18:33 INFO  ESDS browse: rba=0 record returned
+2026-05-31 09:18:33 INFO  ESDS browse: rba=58 record returned
+2026-05-31 09:20:11 ERROR connection reset user=bob term=T0007
+2026-05-31 09:20:12 INFO  task rolled back; PA1 break-out
+2026-05-31 09:21:30 INFO  bricks shutting down; cleaning up 0 open browses
