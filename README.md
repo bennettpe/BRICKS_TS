@@ -11,13 +11,16 @@
 
 > Bricks follow the same approach*
 
-Chat with BRICKS developers and master operators [here](https://discord.gg/6NWE4Gp7kR)
+**Chat with BRICKS developers and master operators [here](https://discord.gg/6NWE4Gp7kR)**
 
-A Go implementation of an IBM CICS-compatible 3270 transaction server. Users
-dial in with a 3270 terminal emulator, sign on via a built-in CSSN screen, and
-run REXX or COBOL programs whose `EXEC CICS` commands are interpreted by
-built-in REXX and COBOL VMs (virtual machines)  with `EXEC CICS` handlers 
-backed by an on-disk record store.
+BRICKS TS is a drop-in transaction server compatible with CICS. It includes
+interpreters for COBOL and REXX languages and a the usual EXEC CICS, EXEC SQL,
+EXEC WEB calls. A good sized collection of transactions in COBOL and REXX is
+included to show-case all the capabilities of BRICKS TS. 
+
+BRICKS TS is written in Golang and blazing fast, having shown thruput of
+12,000 transactions per second on a simple 4 core virtual machine on a 2.4Ghz Xeon.
+Significantly more is possible with larger servers and even more so in a Multi-Region Operation setting.
 
 Both REXX and COBOL dialects, and their interpreter implementations, are designed
 by moshix and are not related to BREXX, Regina, or GNUCobol . The `EXEC CICS` surface is

@@ -5538,6 +5538,100 @@ MOVE 'KEY-A' TO K(1).
 MOVE 'KEY-B' TO K(I).
 ```
 
+### `REDEFINES`
+
+`REDEFINES` overlays a second description on storage that an
+earlier item already owns. No new bytes are allocated — the
+redefining item and the redefined item are two names for the
+same buffer slice, and a `MOVE` through either name is visible
+through the other immediately. The PIC of whichever name the
+statement references decides how the bytes are interpreted.
+
+```cobol
+level data-name-1 REDEFINES data-name-2 [PIC ...] [USAGE ...].
+```
+
+The clause must be the first thing after the data name. Rules
+bricks enforces at parse time (each mirrors the IBM Enterprise
+COBOL rule unless flagged):
+
+* `data-name-1` and `data-name-2` must carry the **same level
+  number** (01–49 or 77; never 88).
+* `data-name-2` must be the **immediately preceding** item at
+  that level under the same parent. Only other redefinitions of
+  the same item (with their subordinates and 88s) may sit
+  between them.
+* Multiple redefinitions all name the **original** item:
+  `B REDEFINES A` then `C REDEFINES A` — never `C REDEFINES B`.
+* The redefining item must **fit**: its storage may not exceed
+  the redefined item's. This holds at level 01 too — stricter
+  than IBM, which lets a non-EXTERNAL 01 redefiner grow the
+  area (deferred; see Chapter 27). A *shorter* redefiner is
+  fine and only overlays the leading bytes.
+* Neither item may carry `OCCURS` on its own entry, and neither
+  may live inside an `OCCURS` group. **Subordinates of the
+  redefining item may carry `OCCURS`** — that subordinate-table
+  shape is the main reason the clause exists.
+* No `VALUE` anywhere in the redefining item's subtree
+  (88-level condition VALUEs are fine). A `VALUE` on the
+  *redefined* item is visible through the overlay at startup.
+* `FILLER` may redefine (`05 FILLER REDEFINES D8.`); nothing
+  can redefine a `FILLER` (it has no referenceable name).
+  Likewise the auto-injected system items (`EIB*`, `SQLCA*`,
+  `DFHCOMMAREA`) cannot be redefinition targets — they don't
+  exist yet when the DATA DIVISION parses.
+
+**Dual view** — one set of bytes, two shapes:
+
+```cobol
+01 WS-DATE      PIC 9(8) VALUE 20260611.
+01 WS-DATE-R REDEFINES WS-DATE.
+   05 WD-YYYY   PIC 9(4).
+   05 WD-MM     PIC 9(2).
+   05 WD-DD     PIC 9(2).
+...
+DISPLAY WD-MM.              *> 06
+MOVE 12 TO WD-MM.
+DISPLAY WS-DATE.            *> 20261211
+```
+
+**Row table** — name the rows for the map, subscript them for
+the loop. This replaces the unrolled N-branch `EVALUATE`
+fan-out that older sample programs carry (see `esdc.cob`):
+
+```cobol
+01 SCR.
+   05 INFOLINE  PIC X(78).
+   05 ROWS-AREA.
+      10 ROW1   PIC X(76).
+      10 ROW2   PIC X(76).
+      10 ROW3   PIC X(76).
+   05 R-TAB REDEFINES ROWS-AREA.
+      10 ROWV   PIC X(76) OCCURS 3.
+...
+MOVE WS-LINE TO ROWV(WS-SLOT).
+EXEC CICS SEND MAP('ESDS') FROM(SCR) ERASE END-EXEC.
+```
+
+`SEND MAP FROM(SCR)` still finds `ROW1`–`ROW3`: map routing
+resolves qualified names through storage, and the redefinition
+shares their bytes, so whatever the loop wrote through
+`ROWV(n)` is what the map paints.
+
+**Storage caveat — signed DISPLAY fields.** bricks stores
+`PIC S9(n)` as **n+1 bytes**: byte 0 is a leading separate sign
+(`' '` positive, `'-'` negative), bytes 1..n the digits — in
+effect `SIGN IS LEADING SEPARATE`, with space standing in for
+`+`. IBM's default is n bytes with the sign overpunched into
+the trailing digit. A redefinition sees bricks's layout, not
+IBM's: the full alphanumeric view of `PIC S9(4)` is `X(5)`,
+and it reads `-0123`, sign first. Ported IBM copybooks that
+redefine signed DISPLAY fields must be widened by one byte.
+`PIC 9(n)`, `COMP` (big-endian two's complement, 2/4/8 bytes)
+and `COMP-3` (BCD, C/D/F sign nibble) overlays are byte-for-
+byte IBM-faithful — though a `PIC X` view of `COMP` bytes
+shows raw binary, exactly as it would on the mainframe.
+
 ### `FILLER`
 
 `FILLER` is a reserved name for anonymous storage. Multiple
@@ -5618,9 +5712,10 @@ string and parses it.
 
 **Other USAGE variants** — `COMP-1` (single-precision float) and
 `COMP-2` (double-precision float) are explicitly rejected at
-parse time with a "not yet supported" message. `REDEFINES`,
-`SYNC`, `INDEXED BY`, and `OCCURS DEPENDING ON` are also
-unsupported.
+parse time with a "not yet supported" message. `SYNC`,
+`INDEXED BY`, and `OCCURS DEPENDING ON` are also unsupported.
+(`REDEFINES` IS supported — see the [`REDEFINES`](#redefines)
+section above.)
 
 ### Level 88 condition-names
 
@@ -6888,7 +6983,7 @@ for the supported syntax.
 
 | Area | Specifics |
 |---|---|
-| DATA DIVISION | `REDEFINES`, `USAGE COMP-1` (single float), `USAGE COMP-2` (double float), `SYNC`, `INDEXED BY`, `OCCURS DEPENDING ON`, `66` / `78` levels, `BLANK WHEN ZERO`. `USAGE COMP` / `COMP-4` / `COMPUTATIONAL` / `BINARY` and `USAGE COMP-3` / `COMPUTATIONAL-3` / `PACKED-DECIMAL` ARE supported — see Chapter 21. |
+| DATA DIVISION | `USAGE COMP-1` (single float), `USAGE COMP-2` (double float), `SYNC`, `INDEXED BY`, `OCCURS DEPENDING ON`, `66` / `78` levels, `BLANK WHEN ZERO`, and IBM's extension allowing a level-01 redefiner *larger* than its target (bricks requires the redefining item to fit at every level). `USAGE COMP` / `COMP-4` / `COMPUTATIONAL` / `BINARY`, `USAGE COMP-3` / `COMPUTATIONAL-3` / `PACKED-DECIMAL`, and `REDEFINES` ARE supported — see Chapter 21. |
 | Edited PIC | Edit characters `+`, `-`, `CR`, `DB`, `B`, `0`, `/`. (`Z`, `.`, `,`, `$`, `*` are supported.) |
 | PROCEDURE DIVISION | `CALL` (external program), `SEARCH` / `SEARCH ALL`, `ALTER`, `INITIALIZE`, `ACCEPT`, in-line `PERFORM ... END-PERFORM` (only paragraph-targeted `PERFORM` works), `DIVIDE … REMAINDER`. |
 | Intrinsic functions | Only `UPPER-CASE`, `LOWER-CASE`, `LENGTH`, `NUMVAL`, `TRIM`, `REVERSE`, `POS` are implemented. The statistical / date / time families are not. `FUNCTION TRIM` does NOT accept the `LEADING` / `TRAILING` modifier. |

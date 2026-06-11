@@ -1,0 +1,53 @@
+* TOPX -- tsu BBS topic view (read posts). Model 2 (24x80).
+*
+* Read-only port of the tsu topic.go topicView screen. Same
+* field-name contract as the other model. ROWnn are flat 78-byte
+* content rows; topx.cob word-wraps post bodies at 78 and colours
+* author header lines via the ROWnn-C runtime override (BLUE).
+* RULER doubles as the error line: topx.cob paints the column
+* ruler normally, or the error text with RULER-C set to RED,
+* mirroring tsu painting errors over row 2.
+*
+* Deviations from tsu (all forced by bricks):
+*   - ruler is 78 chars, not 79 (col 79 untouched; see bookm2.map)
+*   - author header lines are BLUE but not BRIGHT (intensity is
+*     per-map-field; no runtime override exists)
+*   - First/Last Post reverse-video markers dropped (no runtime
+*     highlight override)
+*   - F1/F4/F5/F10/F13 keys dropped (read-only browser)
+MAP TOPV2 SIZE 24x80
+  FIELD VTOPL  AT 0,0   LEN 6  PROT BRIGHT COLOR=TURQUOISE "Topic:"
+  FIELD VTITLE AT 0,7   LEN 39 PROT BRIGHT COLOR=NEUTRAL
+  FIELD VCONFL AT 0,47  LEN 11 PROT BRIGHT COLOR=TURQUOISE "Conference:"
+  FIELD VCONF  AT 0,59  LEN 19 PROT BRIGHT COLOR=PINK
+  FIELD VBYL   AT 1,0   LEN 4  PROT COLOR=DEFAULT "By: "
+  FIELD VAUTH  AT 1,7   LEN 7  PROT BRIGHT COLOR=RED
+  FIELD VDATE  AT 1,17  LEN 16 PROT COLOR=DEFAULT
+  FIELD VREPL  AT 1,35  LEN 12 PROT BRIGHT COLOR=NEUTRAL
+  FIELD VVIEWS AT 1,48  LEN 11 PROT BRIGHT COLOR=TURQUOISE
+  FIELD VPAGE  AT 1,60  LEN 18 PROT BRIGHT COLOR=DEFAULT
+  FIELD RULER  AT 2,0   LEN 78 PROT COLOR=BLUE
+  FIELD ROW01  AT 3,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW02  AT 4,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW03  AT 5,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW04  AT 6,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW05  AT 7,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW06  AT 8,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW07  AT 9,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW08  AT 10,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW09  AT 11,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW10  AT 12,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW11  AT 13,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW12  AT 14,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW13  AT 15,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW14  AT 16,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW15  AT 17,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW16  AT 18,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW17  AT 19,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW18  AT 20,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD ROW19  AT 21,0  LEN 78 PROT COLOR=DEFAULT
+  FIELD VKEYS1 AT 22,0  LEN 44 PROT COLOR=TURQUOISE "F2=Oldest F12=Newest F14=HalfUp F15=HalfDn"
+  FIELD VKEYS2 AT 23,0  LEN 9  PROT COLOR=BLUE "F3=Topics"
+  FIELD VKEYS3 AT 23,37 LEN 14 PROT COLOR=BLUE "F7=Up  F8=Down"
+  CURSOR AT 22,1
+ENDMAP
