@@ -13,8 +13,8 @@
 
 **Chat with BRICKS developers and master operators [here](https://discord.gg/6NWE4Gp7kR)**
 
-BRICKS TS is a drop-in transaction server compatible with CICS. It includes
-interpreters for COBOL and REXX languages and a the usual EXEC CICS, EXEC SQL,
+BRICKS Transaction Server is a drop-in transaction server compatible with CICS. It includes
+interpreters for COBOL and REXX languages and all the usual EXEC CICS, EXEC SQL,
 EXEC WEB calls. A good sized collection of transactions in COBOL and REXX is
 included to show-case all the capabilities of BRICKS TS. 
 
@@ -22,15 +22,14 @@ BRICKS TS is written in Golang and blazing fast, having shown thruput of
 12,000 transactions per second on a simple 4 core virtual machine on a 2.4Ghz Xeon.
 Significantly more is possible with larger servers and even more so in a Multi-Region Operation setting.
 
-Both REXX and COBOL dialects, and their interpreter implementations, are designed
-by moshix and are not related to BREXX, Regina, or GNUCobol . The `EXEC CICS` surface is
-compatible with CICS, and the supported verb set is able to run
+Both REXX and COBOL dialects, and new, green-grass implementations their interpreter implementations.
+The `EXEC CICS` surface is compatible with CICS, and the supported verb set is able to run
 complex pseudo-conversational and conversational programs as usual.
 
-Bricks also features a built-in VSAM-style KSDS access method whose records
-are stored inside a single bbolt database for easy management and backup.
+Bricks also features a built-in VSAM-style KSDS access method compatible with CICS, along with the 
+usual IDCAMS cluster definition and REPRO capabilities . 
 
-As of v2 of BRICKS, SQL support thru EXEC SQL statements is available to the programmers. 
+SQL support thru EXEC SQL statements is available to the programmers. 
 ** The extensive SQL support is document [here](SQL_guide.md)**
 
 COBOL and REXX programs are parsed once and then cached, so repeat dispatches
@@ -67,8 +66,7 @@ c3270 -port 2300 localhost
 ```
 
 On connect you'll see the `bricks.logo` splash in blue. Press ENTER to reach
-the TRANSID prompt; type `CSSN` to sign on, then any defined TRANSID
-(e.g. `HELO`).
+the TRANSID prompt; type `CSSN` to sign on with admin/admin. 
 
 ---
 
