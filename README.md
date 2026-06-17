@@ -13,7 +13,7 @@
 
 **Chat with BRICKS developers and master operators [here](https://discord.gg/6NWE4Gp7kR)**
 
-BRICKS Transaction Server is a drop-in transaction server compatible with CICS. It includes
+BRICKS Transaction Server is a transaction server drop-in compatible with CICS. It includes
 interpreters for COBOL and REXX languages and all the usual EXEC CICS, EXEC SQL,
 EXEC WEB calls. A good sized collection of transactions in COBOL and REXX is
 included to show-case all the capabilities of BRICKS TS. 
