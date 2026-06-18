@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BRICKS TS</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>BRICKS TS 3.0.4</h1>
+    <p class="tag">Transaction server &mdash; static web server is live.</p>
+
+    <p>
+      This page is served by the bricks static web server from
+      <code>webserver_dir</code> (default <code>runtime/web</code>). Drop your
+      own HTML/CSS/JS here and it is served as-is.
+    </p>
+
+    <h2>Around the server</h2>
+    <ul class="links">
+      <!-- The web3270 terminal runs on its own port (web3270_port, default
+           9000) when start_web3270=yes. Adjust the port if you changed it. -->
+      <li><a href="http://localhost:9000/">3270 terminal</a> (web3270)</li>
+      <li><a href="/metrics">/metrics</a> (JSON snapshot, when enabled)</li>
+    </ul>
+
+    <h2>Static frontend + transaction backend</h2>
+    <p>
+      When WAPI is enabled, this server's listener also serves your static
+      files for any path that no transaction route matches (a CICS
+      <code>URIMAP USAGE(STATIC)</code>-style document). Your page can then
+      call <code>EXEC CICS WEB</code> transactions as its API:
+    </p>
+    <pre><code>fetch('/api/customers')        // -&gt; a TRANSID via web_routes.conf
+  .then(r =&gt; r.json())
+  .then(render);</code></pre>
+    <p>
+      Same origin, no CORS &mdash; the frontend and the transaction backend
+      are both bricks.
+    </p>
+
+    <p class="foot">Manage this server from <code>CEDA WEBSERVER</code>;
+    watch its counters on <code>CEMT MONITOR</code>.</p>
+  </main>
+</body>
+</html>

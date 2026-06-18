@@ -1,12 +1,19 @@
 # Multi-Region Operation (MRO)
 
-Multi-Region Operation lets several bricks regions cooperate. A transaction
-defined in one region can be **tagged** to run on a *different* region; bricks
+Multi-Region Operation lets several BRICKS TS regions cooperate. A transaction
+defined in one region can be **tagged** to run on a *different* region; BRICKS TS
 forwards it over an authenticated TLS link and splices the result back so the
 connected operator cannot tell it ran elsewhere. This lets you split
-responsibilities across regions — one region owns the Postgres connections,
+responsibilities across regions — one region owns the database connections,
 another owns outbound web access, a third owns a particular application — while
 any region can surface all of it from a single 3270 (or web3270) session.
+
+The other big advantage is increased availability. You can put a load balancer
+in front of several terminal owning regions, and this way, if one goes down, your
+users can still access the other. 
+
+Finally, there are very substantial scalability gains in running BRICKS in MRO mode, as
+you can put each region on its own server thus increasing overall transaction thruput. 
 
 - [Concept and trust model](#concept-and-trust-model)
 - [Configuring a region (`bricks.cnf`)](#configuring-a-region-brickscnf)
@@ -67,7 +74,7 @@ in `mro.conf`.
 | `mro_file`  | Path to the peer catalogue. Default `runtime/mro.conf`. |
 
 Validation is **non-fatal and all-or-nothing**: if the `mro_*` block is absent
-or wrongly configured (incomplete triple, bad port, mis-sized token), bricks
+or wrongly configured (incomplete triple, bad port, mis-sized token), BRICKS TS 
 logs one warning and runs as a **single region** — it never refuses to boot.
 `CEMT MONITOR` shows the resulting posture (`Single Region`, or `MRO` with the
 peer counts).
@@ -143,14 +150,30 @@ is still enforced by the origin before routing.
 ## How routing works
 
 1. The operator invokes a tagged transaction on the origin.
-2. The origin checks its **local ACL** (`GROUPS`), counts the routing, and
-   forwards to the peer named by the tag.
-3. The peer authenticates the origin's token, resolves the transaction in its
+2. The origin checks its **local ACL** (`GROUPS`), counts the routing, and opens
+   the link to the peer named by the tag.
+3. **Mutual-link gate.** During the handshake the peer independently dials the
+   origin back (from its own `mro.conf`) and authenticates. The origin forwards
+   the transaction **only if that reverse link succeeds** — i.e. both regions
+   can reach and authenticate each other. If it does not (the peer doesn't list
+   the origin, or its entry is wrong, or the origin's listener is unreachable
+   from it), the origin **refuses to forward**: the task ends with the short
+   message `MRO region X: link not mutual - forwarding refused` (a clean
+   config-error screen, not a program abend code) rather than running half a
+   conversation the peer can't splice back. This is the same check that drives
+   the ACK status.
+
+   *Cost:* the reverse verification is a second short TLS handshake the peer
+   makes back to the origin on **every** forward — including each
+   pseudo-conversational `RETURN TRANSID` turnaround, which re-routes. On a
+   healthy LAN link it is a few milliseconds; over a high-latency WAN budget for
+   the extra round-trip per routed turn.
+4. The peer authenticates the origin's token, resolves the transaction in its
    own table, re-checks **its** ACL against the supplied groups, and runs it.
-4. 3270 I/O is spliced live (or, for web, the request is run and the response
+5. 3270 I/O is spliced live (or, for web, the request is run and the response
    returned). `XCTL` chains continue on the peer; `LINK` runs on the peer;
    `EXEC SQL` uses the peer's database.
-5. When the task issues `RETURN` / `RETURN TRANSID`, the peer ships the next
+6. When the task issues `RETURN` / `RETURN TRANSID`, the peer ships the next
    transid + COMMAREA back. The **origin** re-routes that next transid against
    its *own* `transactions.conf` — so every pseudo-conversational turnaround is
    independently routed, and a `RETURN TRANSID` to a local menu lands locally.
@@ -170,15 +193,25 @@ counts **executions**. Under healthy operation they match.
   asterisks in the list and is a hidden field in the form; leave it blank on
   ALTER to keep the existing secret. Admin-only. Edits refresh the live router
   immediately (no restart).
-- **`CEMT INQUIRE MRO`** — a live health table: each render probes every peer
-  (bounded, short timeouts, no task is dispatched on the peer) and colours each
-  row by STATUS. A *positive* status requires a **mutual** link — the peer must
-  be reachable AND list this region back in its own `mro.conf`:
-  - **ACK** (green) — responding, and the peer can see us (mutual).
-  - **REACHABLE** (pink) — responding, but the peer does not list us back
-    (one-way; it can't route to us).
+- **`CEMT INQUIRE MRO`** and **`CEDA MRO`** — a live health table: each render
+  probes every peer (bounded, short timeouts, no task is dispatched on the peer)
+  and colours each row by STATUS. A *positive* status requires a
+  **mutually-verified** link. When this region probes a peer, the peer
+  **independently dials this region back** (from its own `mro.conf`) and
+  authenticates before answering; only if that reverse link succeeds does the
+  peer report that it sees us:
+  - **ACK** (green) — responding, and the peer independently established and
+    authenticated a link back to us (genuinely bidirectional).
+  - **REACHABLE** (pink) — responding, but the peer could **not** establish a
+    link back (it doesn't list us, or its `mro.conf` entry for us has the wrong
+    host/port/token, or our listener is unreachable from it). One-way.
   - **UNREACHABLE** (yellow) — probed but did not respond.
   - **Unknown** (turquoise) — not yet probed.
+
+  Because the check is bidirectional, the two regions agree: if A shows B as
+  ACK, B shows A as ACK. A one-way break makes **both** sides show the other as
+  REACHABLE (not ACK) — there is no longer an asymmetric "A says ACK while B
+  says UNREACHABLE".
 
   Columns: REGION, HOST, PORT, STATUS, LASTOK, RTT. The **CEDA MRO** list shows
   the same STATUS / RTT.
@@ -221,8 +254,13 @@ counts **executions**. Under healthy operation they match.
   turnaround against its own table; routing loops are detected and refused
   (`AZMR`).
 - **Screen geometry / codepage**: the peer renders at **Mod 2 (24×80)** with
-  the default codepage. This is the bricks screen-design target; alternate
+  the default codepage. This is the BRICKS  screen-design target; alternate
   screen sizes and non-default codepages are not forwarded across MRO in v1.
+- **Upgrade ordering**: because forwarding is now gated on a mutually-verified
+  link, a region must be upgraded to a build that performs the reverse
+  verification before its peers will forward to it — a peer that always answers
+  "cannot see you" is refused. Upgrade regions together (or peers-first) so no
+  origin is left refusing a link that would otherwise work.
 
 ---
 
@@ -321,5 +359,6 @@ CSGM:rexx:csgm.rexx:PUBLIC,USERS,ADMIN:[DBREG1]
 | Abend `AZMT` | The peer's `transactions.conf` doesn't define the transid. Define it (with its real program + database) on the peer. |
 | Abend `AZMA` | The peer's ACL rejects the operator's groups. Align the peer's `GROUPS`. |
 | STATUS shows **UNREACHABLE** (yellow) | The peer was probed but did not answer — not running, wrong host/port, or a firewall. |
-| STATUS shows **REACHABLE** (pink), never **ACK** | You can reach the peer, but it doesn't list this region in its own `mro.conf` (or this region has no `mro_name`), so the link is one-way. Add this region to the peer's `mro.conf` (and give this region an identity) for a mutual **ACK**. |
+| STATUS shows **REACHABLE** (pink), never **ACK** | You can reach the peer, but it could not establish a link **back** to this region during the probe: the peer doesn't list this region in its own `mro.conf`, OR its entry for this region has the wrong host/port/token, OR this region's `mro_port` listener is unreachable from the peer (or this region has no `mro_name`). Fix the peer's `mro.conf` entry for this region (and give this region an identity + reachable `mro_port`) for a mutual **ACK**. |
+| `link not mutual - forwarding refused` | The tagged transaction was refused (a clean message, not an abend code) because the peer could not authenticate a link back to this region (same cause as REACHABLE-never-ACK). Forwarding is gated on a mutually-verified link; fix the peer's `mro.conf` entry for this region so STATUS reaches **ACK**, then retry. |
 | RTT shows `-` after a successful transaction | The region was reached by routing but not yet probed — open `CEMT INQUIRE MRO` to probe. |
