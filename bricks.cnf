@@ -27,6 +27,10 @@ enable_wapi=yes
 wapi_port=8080
 wapi_tls_port=8443
 
+mro_name=term1
+mro_port=9999
+mro_token=123456789012345678901234
+
 
 # ── Sandbox for sequential file I/O
 # Directory used by REXX (LINEIN / LINEOUT / STREAM) and COBOL

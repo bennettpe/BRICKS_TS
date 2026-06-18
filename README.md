@@ -13,23 +13,25 @@
 
 **Chat with BRICKS developers and master operators [here](https://discord.gg/6NWE4Gp7kR)**
 
-BRICKS Transaction Server is a transaction server drop-in compatible with CICS. It includes
+BRICKS is a drop-in transaction server compatible with CICS. It includes
 interpreters for COBOL and REXX languages and all the usual EXEC CICS, EXEC SQL,
 EXEC WEB calls. A good sized collection of transactions in COBOL and REXX is
 included to show-case all the capabilities of BRICKS TS. 
 
+Multiple BRICKS regions can be linked so a transaction tagged for another
+region runs there transparently — one region can own the database, another the
+web access, and any region can surface all of it. **See [MRO.md](MRO.md) for
+Multi-Region Operation.**
+
 BRICKS TS is written in Golang and blazing fast, having shown thruput of
 12,000 transactions per second on a simple 4 core virtual machine on a 2.4Ghz Xeon.
-Significantly more is possible with larger servers and even more so in a Multi-Region Operation setting.
+Multiples more is possible with larger servers and even more so in MRO mode. 
 
-Both REXX and COBOL dialects, and new, green-grass implementations their interpreter implementations.
 The `EXEC CICS` surface is compatible with CICS, and the supported verb set is able to run
 complex pseudo-conversational and conversational programs as usual.
 
 Bricks also features a built-in VSAM-style KSDS access method compatible with CICS, along with the 
-usual IDCAMS cluster definition and REPRO capabilities . 
-
-SQL support thru EXEC SQL statements is available to the programmers. 
+usual IDCAMS cluster definition and REPRO capabilities . Also, SQL support thru EXEC SQL statements is available to the programmers.  
 ** The extensive SQL support is document [here](SQL_guide.md)**
 
 COBOL and REXX programs are parsed once and then cached, so repeat dispatches
@@ -162,6 +164,10 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `db_max_conns`               | `8`                           | Per-database connection pool cap (`SetMaxOpenConns` on the `*sql.DB`). |
 | `db_stmt_timeout`            | `30s`                         | Per-statement wall-clock cap, enforced **from the bricks client side**. The cap counts every millisecond from the moment bricks sends the SQL to the moment the last result byte arrives — round-trip time on the wire is bounded, not just the server's CPU time. (PG's own `statement_timeout` is server-side only and would miss a network-bound stall; bricks layers both, so either side firing produces SQLSTATE 57014 → SQLCODE -952 / `SQL-TIMEOUT`.) Accepts a Go duration (`5s`, `100ms`, `1m30s`), a bare integer (seconds), or `0`/`off`/`none` to disable. Cursors are exempt — only single-shot statements (SELECT INTO, INSERT, UPDATE, DELETE) get the per-statement deadline; FETCH iteration is bounded only by PG's server-side timer. |
 | `databases_file`             | `runtime/databases.conf`      | Catalogue of Postgres databases bricks knows about (CEDA-managed). First row is the default database for transactions that don't bind to a specific one. See [`databases.conf`](#databasesconf). |
+| `mro_name`                   | (none)                        | **Multi-Region Operation (MRO).** This region's 1–8 alphanumeric identifier — the name peers use to reach it. Required (together with `mro_port` and `mro_token`) to run an MRO listener so other regions can route transactions here. Leave all three empty for a single-region server (or a pure client that only routes outward). A missing/incomplete/invalid `mro_*` block degrades to single-region operation — bricks logs one warning and keeps running (never a boot failure). See [MRO.md](MRO.md). |
+| `mro_port`                   | (none)                        | TCP port (1025–65535) for this region's MRO TLS listener. See [MRO.md](MRO.md). |
+| `mro_token`                  | (none)                        | Shared secret other regions present (over TLS) to contact this region: **8 to 24 alphanumeric** characters. Stored and compared in clear text; **never logged or echoed in any error or screen.** See [MRO.md](MRO.md). |
+| `mro_file`                   | `runtime/mro.conf`            | Catalogue of reachable peer regions (CEDA-managed via `CEDA MRO`). One row per peer: `name:host:port:token[:pin]`. See [MRO.md](MRO.md). |
 
 Command-line flags (in addition to `--conf`):
 
