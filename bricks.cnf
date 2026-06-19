@@ -18,6 +18,10 @@ start_web3270=yes
 web3270_port=9000
 max_conns_per_ip=16
 
+# internal web server port
+webserver_port=8000
+
+
 # how many most frequently used maps should be kept in memory 
 map_cache = 128
 

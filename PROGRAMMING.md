@@ -93,7 +93,7 @@ This publication is organised into nine parts, an appendix series, and a quick-r
 
 * [Chapter 4. Terminal I/O commands](#chapter-4-terminal-io-commands) — `SEND MAP`, `RECEIVE MAP`, `CONVERSE`, `SEND TEXT`, `RECEIVE`
 * [Chapter 5. Program control commands](#chapter-5-program-control-commands) — `RETURN`, `XCTL`, `LINK`, `ABEND`, `START`, `RETRIEVE`
-* [Chapter 6. System services](#chapter-6-system-services) — `ASSIGN`, `ASKTIME`, `FORMATTIME`, `QUERY SECURITY`, `VERIFY PASSWORD`, `INQUIRE SYSTEM`
+* [Chapter 6. System services](#chapter-6-system-services) — `ASSIGN`, `ASKTIME`, `FORMATTIME`, `QUERY SECURITY`, `VERIFY PASSWORD`, `INQUIRE SYSTEM`, `ADDRESS`, `GETMAIN`/`FREEMAIN`, `INQUIRE`/`SET` (FILE/TASK/TRANSACTION/TERMINAL/PROGRAM)
 * [Chapter 10. Recovery and condition handling](#chapter-10-recovery-and-condition-handling) — `SYNCPOINT`, `SYNCPOINT ROLLBACK`, `HANDLE CONDITION`, `IGNORE CONDITION`, `HANDLE AID`, `HANDLE ABEND`
 * [Chapter 11. The Execute Interface Block (EIB)](#chapter-11-the-execute-interface-block-eib)
 * [Chapter 12. Response codes](#chapter-12-response-codes)
@@ -1358,7 +1358,9 @@ the value.
 | `EIBAID(t)` | Single-byte AID character of the most recent `SEND MAP` / `RECEIVE MAP`. Compare with `C2X(EIBAID) = 'F3'` (REXX) or `EIBAID = X'F3'` (COBOL) to detect PF3, etc. |
 | `EIBCPOSN(t)` | 1-based cursor position from the most recent map response. |
 | `EIBCALEN(t)` | Length of `DFHCOMMAREA` flowed in from the caller. |
-| `TWALENG(t)` / `TCTUALENG(t)` | Always `0` (bricks does not allocate a TWA / TCTUA). |
+| `CWALENG(t)` | Byte length of the region Common Work Area — the `wrkarea=` value from `bricks.cnf`. `0` when no CWA is configured. See [EXEC CICS ADDRESS](#address--exec-cics-address). |
+| `TWALENG(t)` | Byte length of this task's Transaction Work Area — the `TWASIZE` 6th field of the transaction's `transactions.conf` row. `0` when no TWA is configured. See [EXEC CICS ADDRESS](#address--exec-cics-address). |
+| `TCTUALENG(t)` | Always `0` (bricks does not model a TCTUA). |
 | `SCREENHT(t)` / `SCREENWD(t)` | Negotiated terminal rows / columns. |
 | `ALTSCRNHT(t)` / `ALTSCRNWD(t)` | Same values; bricks does not distinguish primary and alternate sizes. |
 | `CONNECTED(t)` / `CONNTIME(t)` | Wall-clock connect timestamp `YYYY-MM-DD HH:MM:SS`. |
@@ -2061,6 +2063,304 @@ gmtext="Sample bank -- production"   # max 256 bytes, EBCDIC-037 printable only
 Defaults to `"Welcome to bricks"` when the line is absent or empty.
 See [Configuration — `bricks.cnf`](README.md#configuration--brickscnf)
 in the README for the full knob reference.
+
+---
+
+### ADDRESS — `EXEC CICS ADDRESS`
+
+> **Storage addressing.** `ADDRESS` hands a program a pointer to a
+> CICS-owned storage area — the COMMAREA, the EIB, the region CWA,
+> or the per-task TWA. It is the front half of the bricks COBOL
+> pointer model: the handle `ADDRESS` writes into a `USAGE POINTER`
+> item is later mapped onto a based LINKAGE 01 with
+> [`SET ADDRESS OF`](#cobol-pointer-model-usage-pointer--set-address-of). See
+> [Chapter 22 — pointers](#cobol-pointer-model-usage-pointer--set-address-of)
+> for the COBOL surface.
+
+#### Format
+
+```
+EXEC CICS ADDRESS
+    [COMMAREA(ptr)] [EIB(ptr)] [CWA(ptr)] [TWA(ptr)]
+    [TCTUA(ptr)] [ACEE(ptr)]
+    [RESP(rc)] [RESP2(rc2)]
+END-EXEC
+```
+
+#### Description
+
+Each named option's `ptr` operand (a `USAGE POINTER` item in COBOL)
+is set to an opaque **handle** addressing the requested area.
+A COBOL program then maps a based LINKAGE 01 onto those bytes with
+`SET ADDRESS OF L TO ptr`. The handles are not displayable machine
+addresses — there is **no pointer arithmetic** (`SET ptr UP/DOWN BY n`
+is unsupported).
+
+In **REXX** `ADDRESS` is accept-and-no-op: every operand is set to
+`0` (NULL) and `NORMAL` is returned. REXX has no pointers — the data
+a REXX program needs (COMMAREA, EIB fields) is already injected as
+variables — so the verb exists only for source compatibility.
+
+#### Options
+
+| Option | Handle addresses | Notes |
+|---|---|---|
+| `COMMAREA(ptr)` | `DFHCOMMAREA` | Always a non-NULL handle (the based `DFHCOMMAREA` default buffer always exists). `EIBCALEN` tells you whether a caller actually flowed bytes in. |
+| `EIB(ptr)` | `DFHEIB` | Always non-NULL. Maps the real `01 DFHEIB` block (children `EIBRESP`, `EIBAID`, `EIBCALEN`, …). |
+| `CWA(ptr)` | region Common Work Area | NULL (handle `0`) **when `wrkarea=0`** in `bricks.cnf`. One slice shared by every task; writes are visible region-wide (unsynchronised). Length via `ASSIGN CWALENG`. |
+| `TWA(ptr)` | per-task Transaction Work Area | NULL when the transaction's `TWASIZE` (`transactions.conf` 6th field) is `0`. Fresh per task. Length via `ASSIGN TWALENG`. |
+| `TCTUA(ptr)` | terminal user area | **Always NULL** — not modelled in bricks. |
+| `ACEE(ptr)` | security ACEE | **Always NULL** — not modelled in bricks. |
+
+`CSA` and `TCTTE` are **not** accepted (both obsolete as addressable
+areas in modern CICS); naming them — or any other option — returns
+`INVREQ`.
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | The named areas were addressed. NULL is still NORMAL — a NULL handle for an unconfigured CWA / TWA (or for TCTUA / ACEE) is the documented outcome, not an error. |
+| INVREQ | 16 | An option other than the accepted set was named (e.g. `CSA`, `TCTTE`). The diagnostic names the option. |
+
+#### Bricks deviations (loud)
+
+> **Bricks deviation — TCTUA and ACEE are always NULL.**
+> Neither the per-terminal user area nor the security ACEE is
+> modelled. `ADDRESS TCTUA(p)` / `ADDRESS ACEE(p)` return `NORMAL`
+> with `p` set to `0`; a program that dereferences either gets a
+> clean NULL-pointer abend, not silent garbage.
+
+> **Bricks deviation — `ADDRESS CWA` is NULL unless `wrkarea>0`.**
+> A region with no configured CWA (the default `wrkarea=0`) yields
+> a NULL CWA handle — exactly as real CICS does on a region with no
+> CWA. Set `wrkarea=` in `bricks.cnf` to allocate one.
+
+> **The CWA is unsynchronized — serialize updates with `ENQ`/`DEQ`.**
+> The region CWA is a single byte slice shared by reference into every
+> concurrent task; bricks does **not** auto-serialize access (neither
+> does real CICS). Concurrent unsynchronized writes from different tasks
+> are undefined — guard CWA updates with `EXEC CICS ENQ` / `DEQ`, as on
+> real CICS.
+
+#### Example (COBOL)
+
+```cobol
+01 WS-CPTR  USAGE POINTER.
+...
+EXEC CICS ADDRESS COMMAREA(WS-CPTR) END-EXEC.
+IF EIBCALEN = 0 THEN
+    DISPLAY 'no commarea flowed in'
+END-IF.
+SET ADDRESS OF DFHCOMMAREA TO WS-CPTR.
+```
+
+The shipped `runtime/cobol/gmpt.cob` (TRANSID `GMPT`) exercises
+`ADDRESS COMMAREA` and `ADDRESS EIB` alongside GETMAIN.
+
+---
+
+### GETMAIN / FREEMAIN — `EXEC CICS GETMAIN`, `EXEC CICS FREEMAIN`
+
+> **Dynamic task storage.** `GETMAIN` allocates a buffer from the
+> task heap and writes a pointer to it into a `USAGE POINTER` item;
+> `FREEMAIN` releases it. Together with
+> [`SET ADDRESS OF`](#cobol-pointer-model-usage-pointer--set-address-of) they let a
+> COBOL program build and address records whose size or count isn't
+> known at compile time.
+
+#### Format
+
+```
+EXEC CICS GETMAIN SET(ptr)
+    {FLENGTH(n) | LENGTH(n)}
+    [INITIMG(byte)] [SHARED] [NOSUSPEND]
+    [USERDATAKEY | CICSDATAKEY]
+    [RESP(rc)] [RESP2(rc2)]
+END-EXEC
+
+EXEC CICS FREEMAIN {DATA(area) | DATAPOINTER(ptr)}
+    [RESP(rc)] [RESP2(rc2)]
+END-EXEC
+```
+
+#### Description
+
+`GETMAIN` allocates `n` bytes (`FLENGTH` preferred, `LENGTH`
+accepted as a synonym), fills every byte with `INITIMG` (first byte
+of the operand; default `0x00`), and writes the buffer's handle into
+the `SET` pointer. `n ≤ 0` is `LENGERR`. A program then maps a based
+LINKAGE 01 onto the buffer with `SET ADDRESS OF L TO ptr` and
+reads / writes through the based item.
+
+`FREEMAIN` resolves its operand to a GETMAIN handle and releases the
+buffer. `DATAPOINTER(ptr)` names a pointer variable holding the
+handle directly; `DATA(area)` names the based data area whose
+current address is the handle. Freeing an address that was **not**
+obtained by GETMAIN (e.g. `ADDRESS OF` a declared item, or a stale /
+zero handle) is `INVREQ`.
+
+In **REXX** both verbs are accept-and-no-op: `GETMAIN` still
+validates the length (`LENGERR` on `≤ 0`) and writes a non-zero
+dummy handle so control flow is preserved, but no real bytes back
+it; `FREEMAIN` returns `NORMAL` with nothing to free.
+
+#### Options
+
+| Option | Verb | Effect |
+|---|---|---|
+| `SET(ptr)` | GETMAIN | **Required.** Receives the buffer handle. |
+| `FLENGTH(n)` / `LENGTH(n)` | GETMAIN | Allocation size in bytes; `FLENGTH` wins if both appear. |
+| `INITIMG(byte)` | GETMAIN | Fill byte (first byte of the operand). Default `0x00`. |
+| `SHARED` | GETMAIN | Accepted for source compatibility — **see the loud deviation below; NOT region-scoped in bricks.** |
+| `NOSUSPEND` | GETMAIN | Accepted no-op (bricks never suspends a GETMAIN). |
+| `USERDATAKEY` / `CICSDATAKEY` | GETMAIN | Accepted no-ops (bricks has no storage-key model). |
+| `DATA(area)` / `DATAPOINTER(ptr)` | FREEMAIN | Identifies the buffer to release. |
+
+#### Conditions
+
+| Condition | EIBRESP | Cause |
+|---|---:|---|
+| NORMAL | 0 | GETMAIN allocated and wrote the handle; FREEMAIN released the buffer. |
+| LENGERR | 22 | GETMAIN length ≤ 0. |
+| NOSTG | 42 | GETMAIN length exceeds the 16 MiB region storage limit — no buffer is allocated. |
+| INVREQ | 16 | GETMAIN with no `SET`; or FREEMAIN of an address not obtained by GETMAIN (including a zero / NULL handle). |
+
+#### Bricks deviations (loud)
+
+> **Bricks deviation — `SHARED` GETMAIN is NOT region-scoped.**
+> Real CICS `SHARED` storage survives the allocating task and is
+> reachable region-wide. Bricks frees **every** task GETMAIN buffer
+> (SHARED or not) when the task's storage is dropped at task end —
+> there is no region-scoped storage pool yet. The `SHARED` flag is
+> accepted so ports compile, but a program relying on cross-task
+> SHARED storage will not see it persist. **Use a TS queue or the
+> CWA (`ADDRESS CWA`, `wrkarea=`) for genuinely cross-task data.**
+
+> **Bricks deviation — no pointer arithmetic.**
+> GETMAIN handles are opaque. `SET ptr UP BY n` / `DOWN BY n` is
+> unsupported; a buffer is addressed only as a whole, by mapping a
+> based 01 onto it with `SET ADDRESS OF`.
+
+#### Example (COBOL)
+
+```cobol
+01 WS-PTR  USAGE POINTER.
+LINKAGE SECTION.
+01 GM-AREA BASED.
+   05 GM-TEXT PIC X(16).
+PROCEDURE DIVISION.
+    EXEC CICS GETMAIN SET(WS-PTR) FLENGTH(16) INITIMG(' ') END-EXEC.
+    SET ADDRESS OF GM-AREA TO WS-PTR.
+    MOVE 'POINTER-OK' TO GM-TEXT.        *> writes into the GETMAIN buffer
+    EXEC CICS FREEMAIN DATAPOINTER(WS-PTR) END-EXEC.
+```
+
+The shipped `runtime/cobol/gmpt.cob` (TRANSID `GMPT`) runs exactly
+this round-trip and paints the read-back via `SEND TEXT`.
+
+---
+
+### INQUIRE / SET resources — `FILE`, `TASK`, `TRANSACTION`, `TERMINAL`, `PROGRAM`
+
+> **Resource inquiry.** Beyond `INQUIRE SYSTEM` (SIT values), bricks
+> honours `INQUIRE` / `SET` for five resource classes, in both the
+> direct and browse access shapes. Status attributes return the IBM
+> happy-path defaults; sizes and counts bricks actually tracks are
+> real.
+
+#### Format
+
+```
+Direct:  EXEC CICS INQUIRE <class>(name) <attr(var)>... [RESP(rc)] END-EXEC
+
+Browse:  EXEC CICS STARTBROWSE <class> [RESP(rc)] END-EXEC
+         EXEC CICS INQUIRE <class>(area) NEXT <attr(var)>... RESP(rc) END-EXEC   (repeat)
+         EXEC CICS ENDBROWSE <class> END-EXEC
+
+Set:     EXEC CICS SET <class>(name) <attr(value)>... [RESP(rc)] END-EXEC
+```
+
+`<class>` is one of `FILE`, `TASK`, `TRANSACTION`, `TERMINAL`,
+`PROGRAM`.
+
+#### Description
+
+**Direct** reads one named resource's attributes into host
+variables. **Browse** freezes the resource-name list at
+`STARTBROWSE` and walks it one resource per `INQUIRE … NEXT`: the
+class option (`INQUIRE FILE(area) NEXT`) receives the current
+resource's name and the attribute options receive its values; the
+cursor advances each call and returns `END` at exhaustion. One
+browse per class per task. **SET** validates the named resource
+exists and returns `NORMAL` — see the loud deviation: it does **not**
+persist a state change.
+
+#### Attribute accept-lists per class
+
+| Class | `INQUIRE` attributes | Real vs. default |
+|---|---|---|
+| `FILE(name)` | `ENABLESTATUS` `OPENSTATUS` `RECORDSIZE` `KEYLENGTH` `KEYPOSITION` `RECORDFORMAT` `ACCESSMETHOD` `BASEDSNAME` | `RECORDSIZE`/`KEYLENGTH`/`BASEDSNAME` are **real** (store catalog). `ENABLESTATUS=ENABLED`, `OPENSTATUS=OPEN`, `KEYPOSITION=0`, `RECORDFORMAT=VARIABLE`, `ACCESSMETHOD=VSAM` are defaults. |
+| `TASK(id)` | `TRANSACTION` `FACILITY` `USERID` `RUNSTATUS` `PRIORITY` | `TRANSACTION`/`FACILITY`/`USERID` are **real**. `RUNSTATUS=RUNNING`, `PRIORITY=1` are defaults. `id` is the numeric `EIBTASKN` form. |
+| `TRANSACTION(name)` | `STATUS` `PROGRAM` `PRIORITY` `TWASIZE` `PROFILE` | `PROGRAM`/`TWASIZE` are **real**. `STATUS=ENABLED`, `PRIORITY=1`, `PROFILE=DFHCICST` are defaults. |
+| `TERMINAL(id)` | `ACQSTATUS` `SERVSTATUS` `USERID` `NETNAME` | `USERID`/`NETNAME` are **real**. `ACQSTATUS=ACQUIRED`, `SERVSTATUS=INSERVICE` are defaults. |
+| `PROGRAM(name)` | `STATUS` `LANGUAGE` `PROGTYPE` `RESCOUNT` `USECOUNT` `LENGTH` | `LANGUAGE` (`COBOL`/`REXX`) and `USECOUNT` are **real**. `STATUS=ENABLED`, `PROGTYPE=PROGRAM`, `RESCOUNT=0`, `LENGTH=0` are defaults. |
+
+`SET <class>(name)` accepts the same class option and the documented
+mutation attributes (e.g. `SET FILE('x') OPENSTATUS(CLOSED)`,
+`SET TRANSACTION('x') STATUS(DISABLED)`).
+
+#### Conditions
+
+| Condition | EIBRESP | Where |
+|---|---:|---|
+| NORMAL | 0 | Direct INQUIRE / SET succeeded; `INQUIRE … NEXT` returned a resource; STARTBROWSE / ENDBROWSE succeeded. |
+| END | 83 | `INQUIRE <class> NEXT` after the last resource — the browse is exhausted. |
+| NOTFND | 13 | Direct INQUIRE / SET named a resource that doesn't exist. |
+| INVREQ | 16 | Unknown resource class; an unknown attribute keyword; a direct INQUIRE with no resource name and no `NEXT`; `ENDBROWSE` with no open browse. |
+| ILLOGIC | 21 | `INQUIRE <class> NEXT` with no `STARTBROWSE` active for that class. |
+
+#### Bricks deviations (loud)
+
+> **Bricks deviation — status attributes are IBM defaults, not live
+> state.** Bricks has no persistent resource-state model. Every
+> status field (`OPENSTATUS`, `ENABLESTATUS`, `RUNSTATUS`,
+> `ACQSTATUS`, `SERVSTATUS`, transaction / program `STATUS`) returns
+> the IBM happy-path default. A program must not rely on `INQUIRE`
+> to discover that a file is CLOSED or a transaction DISABLED — that
+> state is never modelled. The attributes bricks genuinely tracks
+> (`RECORDSIZE`, `KEYLENGTH`, `LANGUAGE`, `USECOUNT`, `TWASIZE`,
+> `PROGRAM`, `USERID`, `TRANSACTION`, …) are real.
+
+> **Bricks deviation — `SET` is acknowledge-only.** `SET FILE(…)
+> OPENSTATUS(CLOSED)`, `SET TRANSACTION(…) STATUS(DISABLED)`, etc.
+> validate that the named resource exists (`NOTFND` if not) and
+> return `NORMAL`, but **do not persist** the change — the very next
+> `INQUIRE` would otherwise contradict the SET. This is deliberate:
+> bricks fails honestly rather than faking a state transition it
+> can't keep.
+
+#### Example (REXX) — direct + browse
+
+```rexx
+ADDRESS CICS
+
+/* Direct: this task's own attributes. */
+EXEC CICS ASSIGN EIBTASKN(MYTASK) END-EXEC
+EXEC CICS INQUIRE TASK(MYTASK) RUNSTATUS(RS) TRANSACTION(TR) RESP(RC) END-EXEC
+
+/* Browse: walk every FILE. RC goes non-zero (END) at exhaustion. */
+EXEC CICS STARTBROWSE FILE RESP(RC) END-EXEC
+DO WHILE RC = 0
+  FN = ''
+  EXEC CICS INQUIRE FILE(FN) NEXT OPENSTATUS(OS) RECORDSIZE(RZ) RESP(RC) END-EXEC
+  IF RC = 0 THEN SAY FN OS RZ
+END
+EXEC CICS ENDBROWSE FILE END-EXEC
+```
+
+The shipped `runtime/rexx/inqr.rexx` (TRANSID `INQR`) runs this
+direct-plus-browse pattern and paints the result with `SEND TEXT`.
 
 ---
 
@@ -5649,6 +5949,7 @@ Numeric items have three storage layouts:
 | `DISPLAY` (default) | — | One byte per digit; signed PICs reserve byte 0 for the sign character (`' '` / `'-'`). The historical bricks layout. |
 | `COMP` | `COMPUTATIONAL`, `COMP-4`, `BINARY` | Big-endian two's-complement signed integer packed into 2, 4, or 8 bytes based on the total digit count. |
 | `COMP-3` | `COMPUTATIONAL-3`, `PACKED-DECIMAL` | Packed decimal: two BCD digits per byte (high nibble first), with the last byte's low nibble carrying the sign. |
+| `POINTER` | `USAGE IS POINTER` | An opaque 4-byte pointer handle, declared **without** a `PIC` clause: `01 WS-PTR USAGE POINTER.`. Holds a CICS storage handle from `EXEC CICS ADDRESS` / `GETMAIN` or an `ADDRESS OF` value. See the [COBOL pointer model](#cobol-pointer-model-usage-pointer--set-address-of) in Chapter 22. |
 
 The `USAGE` keyword is optional — `PIC S9(8) COMP.` and
 `PIC S9(8) USAGE IS COMP.` both work. `USAGE` may appear before
@@ -5747,12 +6048,46 @@ data item is rejected at parse time.
 
 ### LINKAGE SECTION
 
-`LINKAGE SECTION` is parsed but minimal: bricks auto-injects
-`DFHCOMMAREA PIC X(2000)` when the program doesn't declare it,
-so a sub-program can `MOVE DFHCOMMAREA TO key` immediately. The
-dispatcher strips trailing space when reading the COBOL frame's
-`DFHCOMMAREA` back out, so a fixed-width buffer round-trips
-cleanly across an inter-language `EXEC CICS LINK`.
+The `LINKAGE SECTION` declares records that are addressed through a
+pointer rather than allocated their own storage. Bricks supports
+both the classic auto-injected `DFHCOMMAREA` and operator-declared
+**based** records redirected with `SET ADDRESS OF`.
+
+**`DFHCOMMAREA`.** Bricks auto-injects `DFHCOMMAREA PIC X(2000)`
+when the program doesn't declare it, so a sub-program can
+`MOVE DFHCOMMAREA TO key` immediately. The dispatcher strips
+trailing space when reading the COBOL frame's `DFHCOMMAREA` back
+out, so a fixed-width buffer round-trips cleanly across an
+inter-language `EXEC CICS LINK`. `DFHCOMMAREA` is itself a **based**
+01 with a default buffer: a program can `MOVE … TO DFHCOMMAREA`
+out of the box, *and* redirect it onto another area's bytes with
+`SET ADDRESS OF DFHCOMMAREA TO ptr`.
+
+**`DFHEIB`.** The Execute Interface Block is a real `01 DFHEIB`
+based block; its children keep the bare IBM names (`EIBRESP`,
+`EIBAID`, `EIBCALEN`, `EIBTRMID`, `EIBCPOSN`, …) so a program
+references them unqualified exactly as on z/OS. `EXEC CICS ADDRESS
+EIB(ptr)` hands back a handle addressing it.
+
+**Based records — `BASED`.** A LINKAGE 01 declared `BASED` owns no
+storage of its own:
+
+```cobol
+LINKAGE SECTION.
+01 CUST-REC BASED.
+   05 CUST-NO   PIC X(8).
+   05 CUST-NAME PIC X(30).
+```
+
+Until the program points it somewhere with
+[`SET ADDRESS OF`](#cobol-pointer-model-usage-pointer--set-address-of),
+`CUST-REC` is NULL — any read or write through it is a clean
+NULL-pointer abend (`ASRA`-style), never a crash. After
+`SET ADDRESS OF CUST-REC TO ptr` (where `ptr` came from `GETMAIN`,
+`ADDRESS`, or `ADDRESS OF` another item), every reference to
+`CUST-NO` / `CUST-NAME` reads and writes the addressed bytes. See
+the [COBOL pointer model](#cobol-pointer-model-usage-pointer--set-address-of)
+in Chapter 22 for the full surface.
 
 ### Cross-group name collisions — `OF` / `IN` qualification
 
@@ -6174,6 +6509,105 @@ above).
 `EVALUATE FALSE` is rejected at parse time with a hint to rewrite as
 `IF/ELSE` — those forms (and `WHEN ... THRU ...` ranges,
 multi-subject `ALSO` clauses, condition-name arms) are deferred.
+
+---
+
+### COBOL pointer model: `USAGE POINTER` / `SET ADDRESS OF`
+
+Bricks implements the IBM COBOL/CICS pointer surface so a program
+can address dynamically allocated or CICS-owned storage. **Pointers
+are opaque handles, not machine addresses** — there is no pointer
+arithmetic and they are not displayable numbers.
+
+#### `USAGE POINTER` items
+
+Declared with no `PIC` clause:
+
+```cobol
+01 WS-PTR  USAGE POINTER.        *> 'USAGE IS POINTER' also accepted
+```
+
+A pointer occupies a 4-byte fullword slot and starts **NULL**. Its
+value comes from `EXEC CICS ADDRESS` / `GETMAIN`, from
+`ADDRESS OF identifier`, or from another pointer; it can be compared
+against `NULL` and against `ADDRESS OF X`, and moved like any other
+item. (Internally a pointer's value is a small integer handle; the
+program never sees or depends on the integer.)
+
+#### `ADDRESS OF identifier`
+
+`ADDRESS OF X` is the address of data item `X` — usable on the right
+of `SET`, and in an equality test:
+
+```cobol
+SET WS-PTR TO ADDRESS OF WS-REC.
+IF WS-PTR = ADDRESS OF WS-REC THEN DISPLAY 'same' END-IF.
+```
+
+`ADDRESS OF` of the same item always compares equal (handles are
+interned), so pointer equality is meaningful.
+
+#### `NULL` / `NULLS`
+
+The figurative `NULL` (synonym `NULLS`) is the null pointer:
+
+```cobol
+SET WS-PTR TO NULL.
+IF WS-PTR = NULL THEN DISPLAY 'unset' END-IF.
+```
+
+A freshly declared `USAGE POINTER` item, and any based 01 that has
+not been pointed anywhere, are NULL.
+
+#### `SET P TO {ADDRESS OF X | NULL | ptr}`
+
+Assigns a pointer variable: to the address of an item, to NULL, or
+to the value of another pointer.
+
+#### `SET ADDRESS OF L TO {ptr | ADDRESS OF X | NULL}`
+
+Redirects a **based** LINKAGE 01 onto bytes. After the SET, every
+reference to `L`'s children reads / writes the addressed storage:
+
+```cobol
+LINKAGE SECTION.
+01 GM-AREA BASED.
+   05 GM-TEXT PIC X(16).
+PROCEDURE DIVISION.
+    EXEC CICS GETMAIN SET(WS-PTR) FLENGTH(16) END-EXEC.
+    SET ADDRESS OF GM-AREA TO WS-PTR.    *> map the record onto the buffer
+    MOVE 'POINTER-OK' TO GM-TEXT.        *> writes into the GETMAIN bytes
+```
+
+`SET ADDRESS OF L TO NULL` un-addresses `L`; a subsequent read or
+write through `L` raises a **clean NULL-pointer abend** — the task
+ends with a diagnostic, the server never crashes. The same applies
+to a based 01 that was never SET, and to dereferencing through a
+pointer whose GETMAIN buffer was already `FREEMAIN`-ed.
+
+#### Based LINKAGE 01s, `DFHEIB`, `DFHCOMMAREA`
+
+`DFHCOMMAREA` and `DFHEIB` are themselves based 01s.
+`DFHCOMMAREA` ships with a default buffer (so a plain
+`MOVE … TO DFHCOMMAREA` works without any SET) yet can be
+redirected: `SET ADDRESS OF DFHCOMMAREA TO ADDRESS OF WS-NEW`.
+`DFHEIB`'s children keep the bare IBM names so `EIBRESP`,
+`EIBCALEN`, etc. are referenced unqualified. See
+[LINKAGE SECTION](#linkage-section) in Chapter 21.
+
+#### Limitation — no pointer arithmetic
+
+`SET ptr UP BY n` / `SET ptr DOWN BY n` are **not supported**.
+Pointers are opaque handles, not displayable addresses; a buffer is
+addressed only as a whole by mapping a based 01 onto it. To address
+the *N*th element of an array inside a GETMAIN buffer, declare the
+based 01 with an `OCCURS` table and subscript the table, rather than
+advancing a pointer.
+
+See [`EXEC CICS ADDRESS`](#address--exec-cics-address) and
+[`GETMAIN` / `FREEMAIN`](#getmain--freemain--exec-cics-getmain-exec-cics-freemain)
+in Chapter 6 for the verbs that produce pointer handles, and
+`runtime/cobol/gmpt.cob` (TRANSID `GMPT`) for a worked example.
 
 ---
 
@@ -7032,6 +7466,7 @@ for the supported syntax.
 | `TIMC` | `runtime/cobol/timc.cob` | Timed-reminder demo: exercises `CONVERSE`, `START` (with `INTERVAL` + `FROM`), and `RETRIEVE` end-to-end. Shares `tim1.map` + `tim2.map` with `TIMR`. |
 | `SQLD` | `runtime/cobol/sqld.cob` | Embedded-SQL demo: `EXEC SQL SELECT name INTO :NM FROM customers_sql WHERE id = :CUSTID`. Renders the row + SQLCODE / SQLSTATE / SQLERRMC. Requires Postgres seeded with the schema shown in [Chapter 26](#chapter-26-embedded-sql-cobol). |
 | `SQLR` | `runtime/rexx/sqlr.rexx` | REXX twin of `SQLD`. Shares the `customers_sql` table; demonstrates how REXX accesses the same EXEC SQL surface (SQLCODE / SQLSTATE / SQLERRMC arrive as plain REXX variables). |
+| `GMPT` | `runtime/cobol/gmpt.cob` | COBOL pointer / storage demo: `EXEC CICS GETMAIN SET(WS-PTR) FLENGTH(16)`, `SET ADDRESS OF` a based LINKAGE 01 onto the buffer, write-and-read through it, then `EXEC CICS ADDRESS COMMAREA` / `ADDRESS EIB`. Result painted with `SEND TEXT` (no map). See [`GETMAIN`/`FREEMAIN`](#getmain--freemain--exec-cics-getmain-exec-cics-freemain) and the [COBOL pointer model](#cobol-pointer-model-usage-pointer--set-address-of). |
 
 All five non-trivial COBOL samples (`QAGC`, `GUST`, `GUSL`,
 `ORDR`, `EXAM`) `COPY DFHAID` and/or `COPY DFHRESP` instead of
@@ -7051,6 +7486,7 @@ of them as living examples of the named-constant idiom from
 | `QAGE` / `QAGR` | `runtime/rexx/qage.rexx` / `qagr.rexx` | Pseudo-conversational chain; `QAGE` prompts for a birthdate and chains to `QAGR` to render the result. |
 | `PROD` / `CONS` | `runtime/rexx/prod.rexx` / `cons.rexx` | TS queue producer / consumer pair. Conversational; PF3 to exit. |
 | `GETC` | `runtime/rexx/getc.rexx` | `RECEIVE` of command-line + `READ FILE` + `SEND TEXT` (no map). |
+| `INQR` | `runtime/rexx/inqr.rexx` | `EXEC CICS INQUIRE` demo: direct `INQUIRE TASK` on this task plus a `STARTBROWSE FILE` / `INQUIRE FILE NEXT` / `ENDBROWSE` loop listing every file's OPEN/ENABLE status and record/key sizes. Result painted with `SEND TEXT` (no map). See [INQUIRE / SET resources](#inquire--set-resources--file-task-transaction-terminal-program). |
 | `TIMR` | `runtime/rexx/timr.rexx` | REXX twin of `TIMC`: `START` schedules a reminder; `RETRIEVE` discriminates cold vs scheduled entry. Shares `tim1.map` + `tim2.map` with `TIMC`. |
 | `CHAT` | `runtime/rexx/chat.rexx` | Real-time multi-user chat. Self-refreshes every 2 seconds via `EXEC CICS START TRANSID('CHAT') INTERVAL(000002)`; the tick handler does `SEND MAP ... DATAONLY` so the operator's in-progress typing at the bottom of the screen is **not** clobbered by the refresh. Messages persist in the auto-created KSDS file `CHATLOG` (one record per message, key shape `YYYYMMDDHHMMSS-NNNN-TTTT` for lexicographic / chronological sort). Adapts between Model 2 (16 history rows, `chatm2.map`) and Model 4 (35 history rows, `chatm4.map`) via `EXEC CICS ASSIGN SCREENHT`. F3 exits cleanly — no further tick is scheduled, the self-refresh chain dies on its own. Colours mirror the original `tsu/chat.go` palette: BLUE/BRIGHT title, TURQUOISE clock + footer, YELLOW topic, RED status line, GREEN history rows + prompt, WHITE underscored input. |
 
