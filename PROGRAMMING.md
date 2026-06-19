@@ -2093,8 +2093,9 @@ Each named option's `ptr` operand (a `USAGE POINTER` item in COBOL)
 is set to an opaque **handle** addressing the requested area.
 A COBOL program then maps a based LINKAGE 01 onto those bytes with
 `SET ADDRESS OF L TO ptr`. The handles are not displayable machine
-addresses — there is **no pointer arithmetic** (`SET ptr UP/DOWN BY n`
-is unsupported).
+addresses, but `SET ptr UP/DOWN BY n` arithmetic *is* supported — it
+adjusts the offset **within the pointer's current target buffer** (see
+the [COBOL pointer model](#cobol-pointer-model-usage-pointer--set-address-of)).
 
 In **REXX** `ADDRESS` is accept-and-no-op: every operand is set to
 `0` (NULL) and `NORMAL` is returned. REXX has no pointers — the data
@@ -2237,10 +2238,14 @@ it; `FREEMAIN` returns `NORMAL` with nothing to free.
 > SHARED storage will not see it persist. **Use a TS queue or the
 > CWA (`ADDRESS CWA`, `wrkarea=`) for genuinely cross-task data.**
 
-> **Bricks deviation — no pointer arithmetic.**
-> GETMAIN handles are opaque. `SET ptr UP BY n` / `DOWN BY n` is
-> unsupported; a buffer is addressed only as a whole, by mapping a
-> based 01 onto it with `SET ADDRESS OF`.
+> **Bricks note — pointer arithmetic is per-buffer.**
+> GETMAIN handles are opaque interned `(buffer, offset)` pairs.
+> `SET ptr UP BY n` / `DOWN BY n` adjusts the offset **within the same
+> buffer** the pointer already addresses; it does not walk across
+> separate allocations. A past-end offset is allowed until
+> dereferenced (then a clean abend); below `0` or on a NULL pointer the
+> `SET` itself diagnoses cleanly. See the
+> [COBOL pointer model](#cobol-pointer-model-usage-pointer--set-address-of).
 
 #### Example (COBOL)
 
@@ -6595,14 +6600,40 @@ redirected: `SET ADDRESS OF DFHCOMMAREA TO ADDRESS OF WS-NEW`.
 `EIBCALEN`, etc. are referenced unqualified. See
 [LINKAGE SECTION](#linkage-section) in Chapter 21.
 
-#### Limitation — no pointer arithmetic
+#### `SET ptr UP BY n` / `SET ptr DOWN BY n` — pointer arithmetic
 
-`SET ptr UP BY n` / `SET ptr DOWN BY n` are **not supported**.
-Pointers are opaque handles, not displayable addresses; a buffer is
-addressed only as a whole by mapping a based 01 onto it. To address
-the *N*th element of an array inside a GETMAIN buffer, declare the
-based 01 with an `OCCURS` table and subscript the table, rather than
-advancing a pointer.
+`SET ptr UP BY n` advances a `USAGE POINTER` item by `n` bytes;
+`SET ptr DOWN BY n` moves it back. `n` is a **non-negative integer**
+displacement — a literal, a data item, or an arithmetic expression that
+evaluates to a whole number (the same evaluator `COMPUTE` uses). A
+non-integer (e.g. `1.5`) or a negative amount is rejected at `SET` time;
+`UP`/`DOWN` carry the direction, so use `DOWN BY n` rather than `UP BY -n`:
+
+```cobol
+01 WS-REC PIC X(10) VALUE 'AAAAAAAAAA'.
+01 P      USAGE POINTER.
+01 L BASED.
+   05 L-FLD PIC X(6).
+...
+    SET P TO ADDRESS OF WS-REC.
+    SET P UP BY 4.                 *> P now addresses byte 4 of WS-REC
+    SET ADDRESS OF L TO P.
+    MOVE 'XXXXXX' TO L-FLD.        *> writes WS-REC bytes 4..9
+    SET P DOWN BY 4.               *> back to the start of WS-REC
+```
+
+**Nuance — arithmetic stays within the pointer's current target
+buffer.** Bricks pointers are interned `(buffer, offset)` handles, not
+flat region addresses, so `UP`/`DOWN BY` adjusts the offset *inside the
+same buffer* the pointer already names; it does not let you walk across
+unrelated allocations. Moving a pointer past the end of its buffer is
+allowed at `SET` time (the address is interned, never validated), but a
+**dereference** through it raises a clean bounds abend — exactly as with
+any out-of-range based access. Moving below offset `0`, or arithmetic on
+a NULL/never-set pointer, raises a clean diagnostic at `SET` time. To
+walk an array inside a GETMAIN buffer you may still prefer a based 01
+with an `OCCURS` table and subscript it, which keeps the bounds check
+per element.
 
 See [`EXEC CICS ADDRESS`](#address--exec-cics-address) and
 [`GETMAIN` / `FREEMAIN`](#getmain--freemain--exec-cics-getmain-exec-cics-freemain)
