@@ -55,6 +55,16 @@
           88 WARM-START VALUE 'Y'.
           88 COLD-START VALUE 'N'.
 
+      *> SQL health for the current task, plus the fatal-abort signal.
+      *> A failed query trips QRY-BAD; PAINT-LIST / PAINT-VIEW then paint
+      *> a one-line SEND TEXT and raise WS-FATAL so MAIN ends the task
+      *> instead of shipping a map full of empty rows.
+       01 WS-SQLOK      PIC X(1)  VALUE 'Y'.
+          88 QRY-OK     VALUE 'Y'.
+          88 QRY-BAD    VALUE 'N'.
+       01 WS-FATAL      PIC X(1)  VALUE 'N'.
+       01 WS-ERRSCR     PIC X(78) VALUE SPACES.
+
       *> what terminal model (recomputed every task)
        01 WS-SH    PIC 9(4) VALUE 0.
        01 WS-LMAP  PIC X(8) VALUE 'TOPL2'.
@@ -64,8 +74,10 @@
        01 WS-HALF  PIC 9(2) VALUE 9.
 
       *> LIST screen IO group (maps TOPL2 / TOPL4)
-      *> Flat on purpose: bricks routes MAP fields to direct 05
-      *> children of the FROM/INTO group by name. TITnn-C are the
+      *> Each column is a named <X>-AREA group (the SEND/RECEIVE MAP
+      *> contract -- routing resolves SCRL.TIT01 etc. through storage)
+      *> with a <X>-TAB REDEFINES overlay giving the fill loop one
+      *> OCCURS view (T-*). TITnn-C / the T-TITROW colour cell are the
       *> per-row colour overrides driven by topics.color.
        01 SCRL.
           05 LTITLE  PIC X(58).
@@ -73,302 +85,325 @@
           05 SEARCH  PIC X(22).
           05 ERRMSG  PIC X(36).
           05 FKEYS   PIC X(30).
-          05 SEL01   PIC X(1).
-          05 SEL02   PIC X(1).
-          05 SEL03   PIC X(1).
-          05 SEL04   PIC X(1).
-          05 SEL05   PIC X(1).
-          05 SEL06   PIC X(1).
-          05 SEL07   PIC X(1).
-          05 SEL08   PIC X(1).
-          05 SEL09   PIC X(1).
-          05 SEL10   PIC X(1).
-          05 SEL11   PIC X(1).
-          05 SEL12   PIC X(1).
-          05 SEL13   PIC X(1).
-          05 SEL14   PIC X(1).
-          05 SEL15   PIC X(1).
-          05 SEL16   PIC X(1).
-          05 SEL17   PIC X(1).
-          05 SEL18   PIC X(1).
-          05 SEL19   PIC X(1).
-          05 SEL20   PIC X(1).
-          05 SEL21   PIC X(1).
-          05 SEL22   PIC X(1).
-          05 SEL23   PIC X(1).
-           05 SEL24   PIC X(1).
-          05 SEL25   PIC X(1).
-          05 SEL26   PIC X(1).
-          05 SEL27   PIC X(1).
-          05 SEL28   PIC X(1).
-          05 SEL29   PIC X(1).
-          05 SEL30   PIC X(1).
-          05 SEL31   PIC X(1).
-          05 SEL32   PIC X(1).
-          05 SEL33   PIC X(1).
-          05 SEL34   PIC X(1).
-            05 SEL35   PIC X(1).
-          05 SEL36   PIC X(1).
-          05 SEL37   PIC X(1).
-          05 TIT01   PIC X(41).
-          05 TIT01-C PIC X(9).
-          05 TIT02   PIC X(41).
-          05 TIT02-C PIC X(9).
-          05 TIT03   PIC X(41).
-          05 TIT03-C PIC X(9).
-          05 TIT04   PIC X(41).
-          05 TIT04-C PIC X(9).
-          05 TIT05   PIC X(41).
-          05 TIT05-C PIC X(9).
-          05 TIT06   PIC X(41).
-          05 TIT06-C PIC X(9).
-          05 TIT07   PIC X(41).
-          05 TIT07-C PIC X(9).
-          05 TIT08   PIC X(41).
-          05 TIT08-C PIC X(9).
-          05 TIT09   PIC X(41).
-          05 TIT09-C PIC X(9).
-          05 TIT10   PIC X(41).
-          05 TIT10-C PIC X(9).
-          05 TIT11   PIC X(41).
-          05 TIT11-C PIC X(9).
-          05 TIT12   PIC X(41).
-          05 TIT12-C PIC X(9).
-          05 TIT13   PIC X(41).
-          05 TIT13-C PIC X(9).
-          05 TIT14   PIC X(41).
-          05 TIT14-C PIC X(9).
-          05 TIT15   PIC X(41).
-          05 TIT15-C PIC X(9).
-          05 TIT16   PIC X(41).
-          05 TIT16-C PIC X(9).
-          05 TIT17   PIC X(41).
-          05 TIT17-C PIC X(9).
-          05 TIT18   PIC X(41).
-          05 TIT18-C PIC X(9).
-          05 TIT19   PIC X(41).
-          05 TIT19-C PIC X(9).
-          05 TIT20   PIC X(41).
-          05 TIT20-C PIC X(9).
-          05 TIT21   PIC X(41).
-          05 TIT21-C PIC X(9).
-          05 TIT22   PIC X(41).
-          05 TIT22-C PIC X(9).
-          05 TIT23   PIC X(41).
-          05 TIT23-C PIC X(9).
-          05 TIT24   PIC X(41).
-          05 TIT24-C PIC X(9).
-          05 TIT25   PIC X(41).
-          05 TIT25-C PIC X(9).
-          05 TIT26   PIC X(41).
-          05 TIT26-C PIC X(9).
-          05 TIT27   PIC X(41).
-          05 TIT27-C PIC X(9).
-          05 TIT28   PIC X(41).
-          05 TIT28-C PIC X(9).
-          05 TIT29   PIC X(41).
-          05 TIT29-C PIC X(9).
-          05 TIT30   PIC X(41).
-          05 TIT30-C PIC X(9).
-          05 TIT31   PIC X(41).
-          05 TIT31-C PIC X(9).
-          05 TIT32   PIC X(41).
-          05 TIT32-C PIC X(9).
-          05 TIT33   PIC X(41).
-          05 TIT33-C PIC X(9).
-          05 TIT34   PIC X(41).
-          05 TIT34-C PIC X(9).
-          05 TIT35   PIC X(41).
-          05 TIT35-C PIC X(9).
-          05 TIT36   PIC X(41).
-          05 TIT36-C PIC X(9).
-          05 TIT37   PIC X(41).
-          05 TIT37-C PIC X(9).
-          05 AUT01   PIC X(7).
-          05 AUT02   PIC X(7).
-          05 AUT03   PIC X(7).
-          05 AUT04   PIC X(7).
-          05 AUT05   PIC X(7).
-          05 AUT06   PIC X(7).
-          05 AUT07   PIC X(7).
-          05 AUT08   PIC X(7).
-          05 AUT09   PIC X(7).
-          05 AUT10   PIC X(7).
-          05 AUT11   PIC X(7).
-          05 AUT12   PIC X(7).
-          05 AUT13   PIC X(7).
-          05 AUT14   PIC X(7).
-          05 AUT15   PIC X(7).
-          05 AUT16   PIC X(7).
-          05 AUT17   PIC X(7).
-          05 AUT18   PIC X(7).
-          05 AUT19   PIC X(7).
-          05 AUT20   PIC X(7).
-          05 AUT21   PIC X(7).
-          05 AUT22   PIC X(7).
-          05 AUT23   PIC X(7).
-          05 AUT24   PIC X(7).
-          05 AUT25   PIC X(7).
-          05 AUT26   PIC X(7).
-          05 AUT27   PIC X(7).
-          05 AUT28   PIC X(7).
-          05 AUT29   PIC X(7).
-          05 AUT30   PIC X(7).
-          05 AUT31   PIC X(7).
-          05 AUT32   PIC X(7).
-          05 AUT33   PIC X(7).
-          05 AUT34   PIC X(7).
-          05 AUT35   PIC X(7).
-          05 AUT36   PIC X(7).
-          05 AUT37   PIC X(7).
-          05 PST01   PIC X(5).
-          05 PST02   PIC X(5).
-          05 PST03   PIC X(5).
-          05 PST04   PIC X(5).
-          05 PST05   PIC X(5).
-          05 PST06   PIC X(5).
-          05 PST07   PIC X(5).
-          05 PST08   PIC X(5).
-          05 PST09   PIC X(5).
-          05 PST10   PIC X(5).
-          05 PST11   PIC X(5).
-          05 PST12   PIC X(5).
-          05 PST13   PIC X(5).
-          05 PST14   PIC X(5).
-          05 PST15   PIC X(5).
-          05 PST16   PIC X(5).
-          05 PST17   PIC X(5).
-          05 PST18   PIC X(5).
-          05 PST19   PIC X(5).
-          05 PST20   PIC X(5).
-          05 PST21   PIC X(5).
-          05 PST22   PIC X(5).
-          05 PST23   PIC X(5).
-          05 PST24   PIC X(5).
-          05 PST25   PIC X(5).
-          05 PST26   PIC X(5).
-          05 PST27   PIC X(5).
-          05 PST28   PIC X(5).
-          05 PST29   PIC X(5).
-          05 PST30   PIC X(5).
-          05 PST31   PIC X(5).
-          05 PST32   PIC X(5).
-          05 PST33   PIC X(5).
-          05 PST34   PIC X(5).
-          05 PST35   PIC X(5).
-          05 PST36   PIC X(5).
-          05 PST37   PIC X(5).
-          05 VWS01   PIC X(5).
-          05 VWS02   PIC X(5).
-          05 VWS03   PIC X(5).
-          05 VWS04   PIC X(5).
-          05 VWS05   PIC X(5).
-          05 VWS06   PIC X(5).
-          05 VWS07   PIC X(5).
-          05 VWS08   PIC X(5).
-          05 VWS09   PIC X(5).
-          05 VWS10   PIC X(5).
-          05 VWS11   PIC X(5).
-          05 VWS12   PIC X(5).
-          05 VWS13   PIC X(5).
-          05 VWS14   PIC X(5).
-          05 VWS15   PIC X(5).
-          05 VWS16   PIC X(5).
-          05 VWS17   PIC X(5).
-          05 VWS18   PIC X(5).
-          05 VWS19   PIC X(5).
-          05 VWS20   PIC X(5).
-          05 VWS21   PIC X(5).
-          05 VWS22   PIC X(5).
-          05 VWS23   PIC X(5).
-          05 VWS24   PIC X(5).
-          05 VWS25   PIC X(5).
-          05 VWS26   PIC X(5).
-          05 VWS27   PIC X(5).
-          05 VWS28   PIC X(5).
-          05 VWS29   PIC X(5).
-          05 VWS30   PIC X(5).
-          05 VWS31   PIC X(5).
-          05 VWS32   PIC X(5).
-          05 VWS33   PIC X(5).
-          05 VWS34   PIC X(5).
-          05 VWS35   PIC X(5).
-          05 VWS36   PIC X(5).
-          05 VWS37   PIC X(5).
-          05 LIK01   PIC X(5).
-          05 LIK02   PIC X(5).
-          05 LIK03   PIC X(5).
-          05 LIK04   PIC X(5).
-          05 LIK05   PIC X(5).
-          05 LIK06   PIC X(5).
-          05 LIK07   PIC X(5).
-          05 LIK08   PIC X(5).
-          05 LIK09   PIC X(5).
-          05 LIK10   PIC X(5).
-          05 LIK11   PIC X(5).
-          05 LIK12   PIC X(5).
-          05 LIK13   PIC X(5).
-          05 LIK14   PIC X(5).
-          05 LIK15   PIC X(5).
-          05 LIK16   PIC X(5).
-          05 LIK17   PIC X(5).
-          05 LIK18   PIC X(5).
-          05 LIK19   PIC X(5).
-          05 LIK20   PIC X(5).
-          05 LIK21   PIC X(5).
-          05 LIK22   PIC X(5).
-          05 LIK23   PIC X(5).
-          05 LIK24   PIC X(5).
-          05 LIK25   PIC X(5).
-          05 LIK26   PIC X(5).
-          05 LIK27   PIC X(5).
-          05 LIK28   PIC X(5).
-          05 LIK29   PIC X(5).
-          05 LIK30   PIC X(5).
-          05 LIK31   PIC X(5).
-          05 LIK32   PIC X(5).
-          05 LIK33   PIC X(5).
-          05 LIK34   PIC X(5).
-          05 LIK35   PIC X(5).
-          05 LIK36   PIC X(5).
-          05 LIK37   PIC X(5).
-          05 DAT01   PIC X(7).
-          05 DAT02   PIC X(7).
-          05 DAT03   PIC X(7).
-          05 DAT04   PIC X(7).
-          05 DAT05   PIC X(7).
-          05 DAT06   PIC X(7).
-          05 DAT07   PIC X(7).
-          05 DAT08   PIC X(7).
-          05 DAT09   PIC X(7).
-          05 DAT10   PIC X(7).
-          05 DAT11   PIC X(7).
-          05 DAT12   PIC X(7).
-          05 DAT13   PIC X(7).
-          05 DAT14   PIC X(7).
-          05 DAT15   PIC X(7).
-          05 DAT16   PIC X(7).
-          05 DAT17   PIC X(7).
-          05 DAT18   PIC X(7).
-          05 DAT19   PIC X(7).
-          05 DAT20   PIC X(7).
-          05 DAT21   PIC X(7).
-          05 DAT22   PIC X(7).
-          05 DAT23   PIC X(7).
-          05 DAT24   PIC X(7).
-          05 DAT25   PIC X(7).
-          05 DAT26   PIC X(7).
-          05 DAT27   PIC X(7).
-          05 DAT28   PIC X(7).
-          05 DAT29   PIC X(7).
-          05 DAT30   PIC X(7).
-          05 DAT31   PIC X(7).
-          05 DAT32   PIC X(7).
-          05 DAT33   PIC X(7).
-          05 DAT34   PIC X(7).
-          05 DAT35   PIC X(7).
-          05 DAT36   PIC X(7).
-          05 DAT37   PIC X(7).
+          05 SEL-AREA.
+             10 SEL01   PIC X(1).
+             10 SEL02   PIC X(1).
+             10 SEL03   PIC X(1).
+             10 SEL04   PIC X(1).
+             10 SEL05   PIC X(1).
+             10 SEL06   PIC X(1).
+             10 SEL07   PIC X(1).
+             10 SEL08   PIC X(1).
+             10 SEL09   PIC X(1).
+             10 SEL10   PIC X(1).
+             10 SEL11   PIC X(1).
+             10 SEL12   PIC X(1).
+             10 SEL13   PIC X(1).
+             10 SEL14   PIC X(1).
+             10 SEL15   PIC X(1).
+             10 SEL16   PIC X(1).
+             10 SEL17   PIC X(1).
+             10 SEL18   PIC X(1).
+             10 SEL19   PIC X(1).
+             10 SEL20   PIC X(1).
+             10 SEL21   PIC X(1).
+             10 SEL22   PIC X(1).
+             10 SEL23   PIC X(1).
+             10 SEL24   PIC X(1).
+             10 SEL25   PIC X(1).
+             10 SEL26   PIC X(1).
+             10 SEL27   PIC X(1).
+             10 SEL28   PIC X(1).
+             10 SEL29   PIC X(1).
+             10 SEL30   PIC X(1).
+             10 SEL31   PIC X(1).
+             10 SEL32   PIC X(1).
+             10 SEL33   PIC X(1).
+             10 SEL34   PIC X(1).
+             10 SEL35   PIC X(1).
+             10 SEL36   PIC X(1).
+             10 SEL37   PIC X(1).
+          05 SEL-TAB REDEFINES SEL-AREA.
+             10 T-SEL   PIC X(1) OCCURS 37.
+          05 TIT-AREA.
+             10 TIT01   PIC X(41).
+             10 TIT01-C PIC X(9).
+             10 TIT02   PIC X(41).
+             10 TIT02-C PIC X(9).
+             10 TIT03   PIC X(41).
+             10 TIT03-C PIC X(9).
+             10 TIT04   PIC X(41).
+             10 TIT04-C PIC X(9).
+             10 TIT05   PIC X(41).
+             10 TIT05-C PIC X(9).
+             10 TIT06   PIC X(41).
+             10 TIT06-C PIC X(9).
+             10 TIT07   PIC X(41).
+             10 TIT07-C PIC X(9).
+             10 TIT08   PIC X(41).
+             10 TIT08-C PIC X(9).
+             10 TIT09   PIC X(41).
+             10 TIT09-C PIC X(9).
+             10 TIT10   PIC X(41).
+             10 TIT10-C PIC X(9).
+             10 TIT11   PIC X(41).
+             10 TIT11-C PIC X(9).
+             10 TIT12   PIC X(41).
+             10 TIT12-C PIC X(9).
+             10 TIT13   PIC X(41).
+             10 TIT13-C PIC X(9).
+             10 TIT14   PIC X(41).
+             10 TIT14-C PIC X(9).
+             10 TIT15   PIC X(41).
+             10 TIT15-C PIC X(9).
+             10 TIT16   PIC X(41).
+             10 TIT16-C PIC X(9).
+             10 TIT17   PIC X(41).
+             10 TIT17-C PIC X(9).
+             10 TIT18   PIC X(41).
+             10 TIT18-C PIC X(9).
+             10 TIT19   PIC X(41).
+             10 TIT19-C PIC X(9).
+             10 TIT20   PIC X(41).
+             10 TIT20-C PIC X(9).
+             10 TIT21   PIC X(41).
+             10 TIT21-C PIC X(9).
+             10 TIT22   PIC X(41).
+             10 TIT22-C PIC X(9).
+             10 TIT23   PIC X(41).
+             10 TIT23-C PIC X(9).
+             10 TIT24   PIC X(41).
+             10 TIT24-C PIC X(9).
+             10 TIT25   PIC X(41).
+             10 TIT25-C PIC X(9).
+             10 TIT26   PIC X(41).
+             10 TIT26-C PIC X(9).
+             10 TIT27   PIC X(41).
+             10 TIT27-C PIC X(9).
+             10 TIT28   PIC X(41).
+             10 TIT28-C PIC X(9).
+             10 TIT29   PIC X(41).
+             10 TIT29-C PIC X(9).
+             10 TIT30   PIC X(41).
+             10 TIT30-C PIC X(9).
+             10 TIT31   PIC X(41).
+             10 TIT31-C PIC X(9).
+             10 TIT32   PIC X(41).
+             10 TIT32-C PIC X(9).
+             10 TIT33   PIC X(41).
+             10 TIT33-C PIC X(9).
+             10 TIT34   PIC X(41).
+             10 TIT34-C PIC X(9).
+             10 TIT35   PIC X(41).
+             10 TIT35-C PIC X(9).
+             10 TIT36   PIC X(41).
+             10 TIT36-C PIC X(9).
+             10 TIT37   PIC X(41).
+             10 TIT37-C PIC X(9).
+          05 TIT-TAB REDEFINES TIT-AREA.
+             10 T-TITROW OCCURS 37.
+                15 T-TIT  PIC X(41).
+                15 T-TITC PIC X(9).
+          05 AUT-AREA.
+             10 AUT01   PIC X(7).
+             10 AUT02   PIC X(7).
+             10 AUT03   PIC X(7).
+             10 AUT04   PIC X(7).
+             10 AUT05   PIC X(7).
+             10 AUT06   PIC X(7).
+             10 AUT07   PIC X(7).
+             10 AUT08   PIC X(7).
+             10 AUT09   PIC X(7).
+             10 AUT10   PIC X(7).
+             10 AUT11   PIC X(7).
+             10 AUT12   PIC X(7).
+             10 AUT13   PIC X(7).
+             10 AUT14   PIC X(7).
+             10 AUT15   PIC X(7).
+             10 AUT16   PIC X(7).
+             10 AUT17   PIC X(7).
+             10 AUT18   PIC X(7).
+             10 AUT19   PIC X(7).
+             10 AUT20   PIC X(7).
+             10 AUT21   PIC X(7).
+             10 AUT22   PIC X(7).
+             10 AUT23   PIC X(7).
+             10 AUT24   PIC X(7).
+             10 AUT25   PIC X(7).
+             10 AUT26   PIC X(7).
+             10 AUT27   PIC X(7).
+             10 AUT28   PIC X(7).
+             10 AUT29   PIC X(7).
+             10 AUT30   PIC X(7).
+             10 AUT31   PIC X(7).
+             10 AUT32   PIC X(7).
+             10 AUT33   PIC X(7).
+             10 AUT34   PIC X(7).
+             10 AUT35   PIC X(7).
+             10 AUT36   PIC X(7).
+             10 AUT37   PIC X(7).
+          05 AUT-TAB REDEFINES AUT-AREA.
+             10 T-AUT   PIC X(7) OCCURS 37.
+          05 PST-AREA.
+             10 PST01   PIC X(5).
+             10 PST02   PIC X(5).
+             10 PST03   PIC X(5).
+             10 PST04   PIC X(5).
+             10 PST05   PIC X(5).
+             10 PST06   PIC X(5).
+             10 PST07   PIC X(5).
+             10 PST08   PIC X(5).
+             10 PST09   PIC X(5).
+             10 PST10   PIC X(5).
+             10 PST11   PIC X(5).
+             10 PST12   PIC X(5).
+             10 PST13   PIC X(5).
+             10 PST14   PIC X(5).
+             10 PST15   PIC X(5).
+             10 PST16   PIC X(5).
+             10 PST17   PIC X(5).
+             10 PST18   PIC X(5).
+             10 PST19   PIC X(5).
+             10 PST20   PIC X(5).
+             10 PST21   PIC X(5).
+             10 PST22   PIC X(5).
+             10 PST23   PIC X(5).
+             10 PST24   PIC X(5).
+             10 PST25   PIC X(5).
+             10 PST26   PIC X(5).
+             10 PST27   PIC X(5).
+             10 PST28   PIC X(5).
+             10 PST29   PIC X(5).
+             10 PST30   PIC X(5).
+             10 PST31   PIC X(5).
+             10 PST32   PIC X(5).
+             10 PST33   PIC X(5).
+             10 PST34   PIC X(5).
+             10 PST35   PIC X(5).
+             10 PST36   PIC X(5).
+             10 PST37   PIC X(5).
+          05 PST-TAB REDEFINES PST-AREA.
+             10 T-PST   PIC X(5) OCCURS 37.
+          05 VWS-AREA.
+             10 VWS01   PIC X(5).
+             10 VWS02   PIC X(5).
+             10 VWS03   PIC X(5).
+             10 VWS04   PIC X(5).
+             10 VWS05   PIC X(5).
+             10 VWS06   PIC X(5).
+             10 VWS07   PIC X(5).
+             10 VWS08   PIC X(5).
+             10 VWS09   PIC X(5).
+             10 VWS10   PIC X(5).
+             10 VWS11   PIC X(5).
+             10 VWS12   PIC X(5).
+             10 VWS13   PIC X(5).
+             10 VWS14   PIC X(5).
+             10 VWS15   PIC X(5).
+             10 VWS16   PIC X(5).
+             10 VWS17   PIC X(5).
+             10 VWS18   PIC X(5).
+             10 VWS19   PIC X(5).
+             10 VWS20   PIC X(5).
+             10 VWS21   PIC X(5).
+             10 VWS22   PIC X(5).
+             10 VWS23   PIC X(5).
+             10 VWS24   PIC X(5).
+             10 VWS25   PIC X(5).
+             10 VWS26   PIC X(5).
+             10 VWS27   PIC X(5).
+             10 VWS28   PIC X(5).
+             10 VWS29   PIC X(5).
+             10 VWS30   PIC X(5).
+             10 VWS31   PIC X(5).
+             10 VWS32   PIC X(5).
+             10 VWS33   PIC X(5).
+             10 VWS34   PIC X(5).
+             10 VWS35   PIC X(5).
+             10 VWS36   PIC X(5).
+             10 VWS37   PIC X(5).
+          05 VWS-TAB REDEFINES VWS-AREA.
+             10 T-VWS   PIC X(5) OCCURS 37.
+          05 LIK-AREA.
+             10 LIK01   PIC X(5).
+             10 LIK02   PIC X(5).
+             10 LIK03   PIC X(5).
+             10 LIK04   PIC X(5).
+             10 LIK05   PIC X(5).
+             10 LIK06   PIC X(5).
+             10 LIK07   PIC X(5).
+             10 LIK08   PIC X(5).
+             10 LIK09   PIC X(5).
+             10 LIK10   PIC X(5).
+             10 LIK11   PIC X(5).
+             10 LIK12   PIC X(5).
+             10 LIK13   PIC X(5).
+             10 LIK14   PIC X(5).
+             10 LIK15   PIC X(5).
+             10 LIK16   PIC X(5).
+             10 LIK17   PIC X(5).
+             10 LIK18   PIC X(5).
+             10 LIK19   PIC X(5).
+             10 LIK20   PIC X(5).
+             10 LIK21   PIC X(5).
+             10 LIK22   PIC X(5).
+             10 LIK23   PIC X(5).
+             10 LIK24   PIC X(5).
+             10 LIK25   PIC X(5).
+             10 LIK26   PIC X(5).
+             10 LIK27   PIC X(5).
+             10 LIK28   PIC X(5).
+             10 LIK29   PIC X(5).
+             10 LIK30   PIC X(5).
+             10 LIK31   PIC X(5).
+             10 LIK32   PIC X(5).
+             10 LIK33   PIC X(5).
+             10 LIK34   PIC X(5).
+             10 LIK35   PIC X(5).
+             10 LIK36   PIC X(5).
+             10 LIK37   PIC X(5).
+          05 LIK-TAB REDEFINES LIK-AREA.
+             10 T-LIK   PIC X(5) OCCURS 37.
+          05 DAT-AREA.
+             10 DAT01   PIC X(7).
+             10 DAT02   PIC X(7).
+             10 DAT03   PIC X(7).
+             10 DAT04   PIC X(7).
+             10 DAT05   PIC X(7).
+             10 DAT06   PIC X(7).
+             10 DAT07   PIC X(7).
+             10 DAT08   PIC X(7).
+             10 DAT09   PIC X(7).
+             10 DAT10   PIC X(7).
+             10 DAT11   PIC X(7).
+             10 DAT12   PIC X(7).
+             10 DAT13   PIC X(7).
+             10 DAT14   PIC X(7).
+             10 DAT15   PIC X(7).
+             10 DAT16   PIC X(7).
+             10 DAT17   PIC X(7).
+             10 DAT18   PIC X(7).
+             10 DAT19   PIC X(7).
+             10 DAT20   PIC X(7).
+             10 DAT21   PIC X(7).
+             10 DAT22   PIC X(7).
+             10 DAT23   PIC X(7).
+             10 DAT24   PIC X(7).
+             10 DAT25   PIC X(7).
+             10 DAT26   PIC X(7).
+             10 DAT27   PIC X(7).
+             10 DAT28   PIC X(7).
+             10 DAT29   PIC X(7).
+             10 DAT30   PIC X(7).
+             10 DAT31   PIC X(7).
+             10 DAT32   PIC X(7).
+             10 DAT33   PIC X(7).
+             10 DAT34   PIC X(7).
+             10 DAT35   PIC X(7).
+             10 DAT36   PIC X(7).
+             10 DAT37   PIC X(7).
+          05 DAT-TAB REDEFINES DAT-AREA.
+             10 T-DAT   PIC X(7) OCCURS 37.
       *>  wow, this was tedious and error prone... 
 
 
@@ -386,107 +421,88 @@
           05 VPAGE   PIC X(18).
           05 RULER   PIC X(78).
           05 RULER-C PIC X(9).
-          05 ROW01   PIC X(78).
-          05 ROW01-C PIC X(9).
-          05 ROW02   PIC X(78).
-          05 ROW02-C PIC X(9).
-          05 ROW03   PIC X(78).
-          05 ROW03-C PIC X(9).
-          05 ROW04   PIC X(78).
-          05 ROW04-C PIC X(9).
-          05 ROW05   PIC X(78).
-          05 ROW05-C PIC X(9).
-          05 ROW06   PIC X(78).
-          05 ROW06-C PIC X(9).
-          05 ROW07   PIC X(78).
-          05 ROW07-C PIC X(9).
-          05 ROW08   PIC X(78).
-          05 ROW08-C PIC X(9).
-          05 ROW09   PIC X(78).
-          05 ROW09-C PIC X(9).
-          05 ROW10   PIC X(78).
-          05 ROW10-C PIC X(9).
-          05 ROW11   PIC X(78).
-          05 ROW11-C PIC X(9).
-          05 ROW12   PIC X(78).
-          05 ROW12-C PIC X(9).
-          05 ROW13   PIC X(78).
-          05 ROW13-C PIC X(9).
-          05 ROW14   PIC X(78).
-          05 ROW14-C PIC X(9).
-          05 ROW15   PIC X(78).
-          05 ROW15-C PIC X(9).
-          05 ROW16   PIC X(78).
-          05 ROW16-C PIC X(9).
-          05 ROW17   PIC X(78).
-          05 ROW17-C PIC X(9).
-          05 ROW18   PIC X(78).
-          05 ROW18-C PIC X(9).
-          05 ROW19   PIC X(78).
-          05 ROW19-C PIC X(9).
-          05 ROW20   PIC X(78).
-          05 ROW20-C PIC X(9).
-          05 ROW21   PIC X(78).
-          05 ROW21-C PIC X(9).
-          05 ROW22   PIC X(78).
-          05 ROW22-C PIC X(9).
-          05 ROW23   PIC X(78).
-          05 ROW23-C PIC X(9).
-          05 ROW24   PIC X(78).
-          05 ROW24-C PIC X(9).
-          05 ROW25   PIC X(78).
-          05 ROW25-C PIC X(9).
-          05 ROW26   PIC X(78).
-          05 ROW26-C PIC X(9).
-          05 ROW27   PIC X(78).
-          05 ROW27-C PIC X(9).
-          05 ROW28   PIC X(78).
-          05 ROW28-C PIC X(9).
-          05 ROW29   PIC X(78).
-          05 ROW29-C PIC X(9).
-          05 ROW30   PIC X(78).
-          05 ROW30-C PIC X(9).
-          05 ROW31   PIC X(78).
-          05 ROW31-C PIC X(9).
-          05 ROW32   PIC X(78).
-          05 ROW32-C PIC X(9).
-          05 ROW33   PIC X(78).
-          05 ROW33-C PIC X(9).
-          05 ROW34   PIC X(78).
-          05 ROW34-C PIC X(9).
-          05 ROW35   PIC X(78).
-          05 ROW35-C PIC X(9).
-          05 ROW36   PIC X(78).
-          05 ROW36-C PIC X(9).
-          05 ROW37   PIC X(78).
-          05 ROW37-C PIC X(9).
-          05 ROW38   PIC X(78).
-          05 ROW38-C PIC X(9).
+          05 ROW-AREA.
+             10 ROW01   PIC X(78).
+             10 ROW01-C PIC X(9).
+             10 ROW02   PIC X(78).
+             10 ROW02-C PIC X(9).
+             10 ROW03   PIC X(78).
+             10 ROW03-C PIC X(9).
+             10 ROW04   PIC X(78).
+             10 ROW04-C PIC X(9).
+             10 ROW05   PIC X(78).
+             10 ROW05-C PIC X(9).
+             10 ROW06   PIC X(78).
+             10 ROW06-C PIC X(9).
+             10 ROW07   PIC X(78).
+             10 ROW07-C PIC X(9).
+             10 ROW08   PIC X(78).
+             10 ROW08-C PIC X(9).
+             10 ROW09   PIC X(78).
+             10 ROW09-C PIC X(9).
+             10 ROW10   PIC X(78).
+             10 ROW10-C PIC X(9).
+             10 ROW11   PIC X(78).
+             10 ROW11-C PIC X(9).
+             10 ROW12   PIC X(78).
+             10 ROW12-C PIC X(9).
+             10 ROW13   PIC X(78).
+             10 ROW13-C PIC X(9).
+             10 ROW14   PIC X(78).
+             10 ROW14-C PIC X(9).
+             10 ROW15   PIC X(78).
+             10 ROW15-C PIC X(9).
+             10 ROW16   PIC X(78).
+             10 ROW16-C PIC X(9).
+             10 ROW17   PIC X(78).
+             10 ROW17-C PIC X(9).
+             10 ROW18   PIC X(78).
+             10 ROW18-C PIC X(9).
+             10 ROW19   PIC X(78).
+             10 ROW19-C PIC X(9).
+             10 ROW20   PIC X(78).
+             10 ROW20-C PIC X(9).
+             10 ROW21   PIC X(78).
+             10 ROW21-C PIC X(9).
+             10 ROW22   PIC X(78).
+             10 ROW22-C PIC X(9).
+             10 ROW23   PIC X(78).
+             10 ROW23-C PIC X(9).
+             10 ROW24   PIC X(78).
+             10 ROW24-C PIC X(9).
+             10 ROW25   PIC X(78).
+             10 ROW25-C PIC X(9).
+             10 ROW26   PIC X(78).
+             10 ROW26-C PIC X(9).
+             10 ROW27   PIC X(78).
+             10 ROW27-C PIC X(9).
+             10 ROW28   PIC X(78).
+             10 ROW28-C PIC X(9).
+             10 ROW29   PIC X(78).
+             10 ROW29-C PIC X(9).
+             10 ROW30   PIC X(78).
+             10 ROW30-C PIC X(9).
+             10 ROW31   PIC X(78).
+             10 ROW31-C PIC X(9).
+             10 ROW32   PIC X(78).
+             10 ROW32-C PIC X(9).
+             10 ROW33   PIC X(78).
+             10 ROW33-C PIC X(9).
+             10 ROW34   PIC X(78).
+             10 ROW34-C PIC X(9).
+             10 ROW35   PIC X(78).
+             10 ROW35-C PIC X(9).
+             10 ROW36   PIC X(78).
+             10 ROW36-C PIC X(9).
+             10 ROW37   PIC X(78).
+             10 ROW37-C PIC X(9).
+             10 ROW38   PIC X(78).
+             10 ROW38-C PIC X(9).
+          05 ROW-TAB REDEFINES ROW-AREA.
+             10 V-ROWGRP OCCURS 38.
+                15 V-ROW  PIC X(78).
+                15 V-ROWC PIC X(9).
 
-      *>shdow OCCURS tables
-      *> FETCH loops fill these
-      *> by subscript and an unrolled fan-out copies slot n into
-      *> the individually-named map field (esdc.cob idiom).
-       01 SHL.
-          05 T-SEL  PIC X(1)  OCCURS 37.
-       01 SHT.
-          05 T-TIT  PIC X(41) OCCURS 37.
-       01 SHTC.
-          05 T-TITC PIC X(9)  OCCURS 37.
-       01 SHA.
-          05 T-AUT  PIC X(7)  OCCURS 37.
-       01 SHP.
-          05 T-PST  PIC X(5)  OCCURS 37.
-       01 SHV.
-          05 T-VWS  PIC X(5)  OCCURS 37.
-       01 SHK.
-          05 T-LIK  PIC X(5)  OCCURS 37.
-       01 SHD.
-          05 T-DAT  PIC X(7)  OCCURS 37.
-       01 SHR.
-          05 V-ROW  PIC X(78) OCCURS 38.
-       01 SHRC.
-          05 V-ROWC PIC X(9)  OCCURS 38.
 
       *> SQL host variables 
        01 WS-PAT     PIC X(26) VALUE '%'.
@@ -597,6 +613,15 @@
                WHEN OTHER PERFORM PAINT-LIST
            END-EVALUATE.
 
+      *> A failed query already painted its SEND TEXT message and waited
+      *> for an AID; end the pseudo-conversation (drop to CICS) instead
+      *> of re-driving TOPX straight back into the same error.
+           IF WS-FATAL = 'Y' THEN
+               MOVE SPACES TO DFHCOMMAREA
+               EXEC CICS RETURN END-EXEC
+               STOP RUN
+           END-IF.
+
            MOVE STATE TO DFHCOMMAREA.
            EXEC CICS RETURN TRANSID('TOPX')
                             COMMAREA(STATE) END-EXEC.
@@ -667,47 +692,10 @@
                PERFORM GATHER-SELECTORS
            END-IF.
 
-      *> GATHER-SELECTORS -- first non-blank selector wins.
-      *> took me a minute to remember that. The
-      *> SELnn fan-in is unrolled because bricks has no REDEFINES.
+      *> GATHER-SELECTORS -- first non-blank selector wins. T-SEL is the
+      *> OCCURS overlay REDEFINES'd onto SEL01..SEL37, so the RECEIVE MAP
+      *> bytes are already subscriptable -- no fan-in copy needed.
        GATHER-SELECTORS.
-           MOVE SEL01 TO T-SEL(1).
-           MOVE SEL02 TO T-SEL(2).
-           MOVE SEL03 TO T-SEL(3).
-           MOVE SEL04 TO T-SEL(4).
-           MOVE SEL05 TO T-SEL(5).
-           MOVE SEL06 TO T-SEL(6).
-           MOVE SEL07 TO T-SEL(7).
-           MOVE SEL08 TO T-SEL(8).
-           MOVE SEL09 TO T-SEL(9).
-           MOVE SEL10 TO T-SEL(10).
-           MOVE SEL11 TO T-SEL(11).
-           MOVE SEL12 TO T-SEL(12).
-           MOVE SEL13 TO T-SEL(13).
-           MOVE SEL14 TO T-SEL(14).
-           MOVE SEL15 TO T-SEL(15).
-           MOVE SEL16 TO T-SEL(16).
-           MOVE SEL17 TO T-SEL(17).
-           MOVE SEL18 TO T-SEL(18).
-           MOVE SEL19 TO T-SEL(19).
-           MOVE SEL20 TO T-SEL(20).
-           MOVE SEL21 TO T-SEL(21).
-           MOVE SEL22 TO T-SEL(22).
-           MOVE SEL23 TO T-SEL(23).
-           MOVE SEL24 TO T-SEL(24).
-           MOVE SEL25 TO T-SEL(25).
-           MOVE SEL26 TO T-SEL(26).
-           MOVE SEL27 TO T-SEL(27).
-           MOVE SEL28 TO T-SEL(28).
-           MOVE SEL29 TO T-SEL(29).
-           MOVE SEL30 TO T-SEL(30).
-           MOVE SEL31 TO T-SEL(31).
-           MOVE SEL32 TO T-SEL(32).
-           MOVE SEL33 TO T-SEL(33).
-           MOVE SEL34 TO T-SEL(34).
-           MOVE SEL35 TO T-SEL(35).
-           MOVE SEL36 TO T-SEL(36).
-           MOVE SEL37 TO T-SEL(37).
            MOVE 0 TO WS-FOUND.
            PERFORM SCAN-ONE-SEL VARYING WS-I FROM 1 BY 1
                UNTIL WS-I > WS-LNVIS OR WS-FOUND > 0.
@@ -779,8 +767,8 @@
       *> next page exists (tsu hasNextPage).
       *> 
        PAINT-LIST.
+           MOVE 'Y' TO WS-SQLOK.
            MOVE SPACES TO SCRL.
-           MOVE SPACES TO SHL SHT SHTC SHA SHP SHV SHK SHD.
            PERFORM CLEAR-TID VARYING WS-I FROM 1 BY 1
                UNTIL WS-I > 37.
            MOVE 0   TO ST-TIDCNT.
@@ -803,9 +791,15 @@
            ELSE
                PERFORM RUN-LIST-ACTIVITY
            END-IF.
-           PERFORM FAN-OUT-LIST.
-           PERFORM COMPOSE-LIST-CHROME.
-           EXEC CICS SEND MAP(WS-LMAP) FROM(SCRL) ERASE END-EXEC.
+      *> ADD-TOPIC-ROW wrote each fetched row straight through the
+      *> T-* OCCURS overlay, which shares storage with TIT01..DAT37 --
+      *> so the map fields are already populated, no fan-out copy.
+           IF QRY-BAD THEN
+               PERFORM SEND-SQL-ERROR
+           ELSE
+               PERFORM COMPOSE-LIST-CHROME
+               EXEC CICS SEND MAP(WS-LMAP) FROM(SCRL) ERASE END-EXEC
+           END-IF.
 
        RUN-LIST-CREATED.
            EXEC SQL DECLARE TLC CURSOR FOR
@@ -838,7 +832,7 @@
            END-EXEC.
            EXEC SQL OPEN TLC END-EXEC.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
            PERFORM FETCH-TLC UNTIL SQLCODE NOT = 0.
            EXEC SQL CLOSE TLC END-EXEC.
@@ -851,7 +845,7 @@
                PERFORM ADD-TOPIC-ROW
            END-IF.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
 
        RUN-LIST-ACTIVITY.
@@ -889,7 +883,7 @@
            END-EXEC.
            EXEC SQL OPEN TLA END-EXEC.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
            PERFORM FETCH-TLA UNTIL SQLCODE NOT = 0.
            EXEC SQL CLOSE TLA END-EXEC.
@@ -902,7 +896,7 @@
                PERFORM ADD-TOPIC-ROW
            END-IF.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
 
       *> ADD-TOPIC-ROW -- slot a fetched topic into the shadow
@@ -943,268 +937,6 @@
                    MOVE 'WHITE' TO T-TITC(WS-SLOT)
            END-EVALUATE.
 
-      *> FAN-OUT-LIST -- unrolled shadow-to-map copy (no REDEFINES
-      *> in bricks COBOL; see esdc.cob PLACE-ROW for the idiom).
-       FAN-OUT-LIST.
-           MOVE T-TIT(1) TO TIT01.
-           MOVE T-TITC(1) TO TIT01-C.
-           MOVE T-AUT(1) TO AUT01.
-           MOVE T-PST(1) TO PST01.
-           MOVE T-VWS(1) TO VWS01.
-           MOVE T-LIK(1) TO LIK01.
-           MOVE T-DAT(1) TO DAT01.
-           MOVE T-TIT(2) TO TIT02.
-           MOVE T-TITC(2) TO TIT02-C.
-           MOVE T-AUT(2) TO AUT02.
-           MOVE T-PST(2) TO PST02.
-           MOVE T-VWS(2) TO VWS02.
-           MOVE T-LIK(2) TO LIK02.
-           MOVE T-DAT(2) TO DAT02.
-           MOVE T-TIT(3) TO TIT03.
-           MOVE T-TITC(3) TO TIT03-C.
-           MOVE T-AUT(3) TO AUT03.
-           MOVE T-PST(3) TO PST03.
-           MOVE T-VWS(3) TO VWS03.
-           MOVE T-LIK(3) TO LIK03.
-           MOVE T-DAT(3) TO DAT03.
-           MOVE T-TIT(4) TO TIT04.
-           MOVE T-TITC(4) TO TIT04-C.
-           MOVE T-AUT(4) TO AUT04.
-           MOVE T-PST(4) TO PST04.
-           MOVE T-VWS(4) TO VWS04.
-           MOVE T-LIK(4) TO LIK04.
-           MOVE T-DAT(4) TO DAT04.
-           MOVE T-TIT(5) TO TIT05.
-           MOVE T-TITC(5) TO TIT05-C.
-           MOVE T-AUT(5) TO AUT05.
-           MOVE T-PST(5) TO PST05.
-           MOVE T-VWS(5) TO VWS05.
-           MOVE T-LIK(5) TO LIK05.
-           MOVE T-DAT(5) TO DAT05.
-           MOVE T-TIT(6) TO TIT06.
-           MOVE T-TITC(6) TO TIT06-C.
-           MOVE T-AUT(6) TO AUT06.
-           MOVE T-PST(6) TO PST06.
-           MOVE T-VWS(6) TO VWS06.
-           MOVE T-LIK(6) TO LIK06.
-           MOVE T-DAT(6) TO DAT06.
-           MOVE T-TIT(7) TO TIT07.
-           MOVE T-TITC(7) TO TIT07-C.
-           MOVE T-AUT(7) TO AUT07.
-           MOVE T-PST(7) TO PST07.
-           MOVE T-VWS(7) TO VWS07.
-           MOVE T-LIK(7) TO LIK07.
-           MOVE T-DAT(7) TO DAT07.
-           MOVE T-TIT(8) TO TIT08.
-           MOVE T-TITC(8) TO TIT08-C.
-           MOVE T-AUT(8) TO AUT08.
-           MOVE T-PST(8) TO PST08.
-           MOVE T-VWS(8) TO VWS08.
-           MOVE T-LIK(8) TO LIK08.
-           MOVE T-DAT(8) TO DAT08.
-           MOVE T-TIT(9) TO TIT09.
-           MOVE T-TITC(9) TO TIT09-C.
-           MOVE T-AUT(9) TO AUT09.
-           MOVE T-PST(9) TO PST09.
-           MOVE T-VWS(9) TO VWS09.
-           MOVE T-LIK(9) TO LIK09.
-           MOVE T-DAT(9) TO DAT09.
-           MOVE T-TIT(10) TO TIT10.
-           MOVE T-TITC(10) TO TIT10-C.
-           MOVE T-AUT(10) TO AUT10.
-           MOVE T-PST(10) TO PST10.
-           MOVE T-VWS(10) TO VWS10.
-           MOVE T-LIK(10) TO LIK10.
-           MOVE T-DAT(10) TO DAT10.
-           MOVE T-TIT(11) TO TIT11.
-           MOVE T-TITC(11) TO TIT11-C.
-           MOVE T-AUT(11) TO AUT11.
-           MOVE T-PST(11) TO PST11.
-           MOVE T-VWS(11) TO VWS11.
-           MOVE T-LIK(11) TO LIK11.
-           MOVE T-DAT(11) TO DAT11.
-           MOVE T-TIT(12) TO TIT12.
-           MOVE T-TITC(12) TO TIT12-C.
-           MOVE T-AUT(12) TO AUT12.
-           MOVE T-PST(12) TO PST12.
-           MOVE T-VWS(12) TO VWS12.
-           MOVE T-LIK(12) TO LIK12.
-           MOVE T-DAT(12) TO DAT12.
-           MOVE T-TIT(13) TO TIT13.
-           MOVE T-TITC(13) TO TIT13-C.
-           MOVE T-AUT(13) TO AUT13.
-           MOVE T-PST(13) TO PST13.
-           MOVE T-VWS(13) TO VWS13.
-           MOVE T-LIK(13) TO LIK13.
-           MOVE T-DAT(13) TO DAT13.
-           MOVE T-TIT(14) TO TIT14.
-           MOVE T-TITC(14) TO TIT14-C.
-           MOVE T-AUT(14) TO AUT14.
-           MOVE T-PST(14) TO PST14.
-           MOVE T-VWS(14) TO VWS14.
-           MOVE T-LIK(14) TO LIK14.
-           MOVE T-DAT(14) TO DAT14.
-           MOVE T-TIT(15) TO TIT15.
-           MOVE T-TITC(15) TO TIT15-C.
-           MOVE T-AUT(15) TO AUT15.
-           MOVE T-PST(15) TO PST15.
-           MOVE T-VWS(15) TO VWS15.
-           MOVE T-LIK(15) TO LIK15.
-           MOVE T-DAT(15) TO DAT15.
-           MOVE T-TIT(16) TO TIT16.
-           MOVE T-TITC(16) TO TIT16-C.
-           MOVE T-AUT(16) TO AUT16.
-           MOVE T-PST(16) TO PST16.
-           MOVE T-VWS(16) TO VWS16.
-           MOVE T-LIK(16) TO LIK16.
-           MOVE T-DAT(16) TO DAT16.
-           MOVE T-TIT(17) TO TIT17.
-           MOVE T-TITC(17) TO TIT17-C.
-           MOVE T-AUT(17) TO AUT17.
-           MOVE T-PST(17) TO PST17.
-           MOVE T-VWS(17) TO VWS17.
-           MOVE T-LIK(17) TO LIK17.
-           MOVE T-DAT(17) TO DAT17.
-           MOVE T-TIT(18) TO TIT18.
-           MOVE T-TITC(18) TO TIT18-C.
-           MOVE T-AUT(18) TO AUT18.
-           MOVE T-PST(18) TO PST18.
-           MOVE T-VWS(18) TO VWS18.
-           MOVE T-LIK(18) TO LIK18.
-           MOVE T-DAT(18) TO DAT18.
-           MOVE T-TIT(19) TO TIT19.
-           MOVE T-TITC(19) TO TIT19-C.
-           MOVE T-AUT(19) TO AUT19.
-           MOVE T-PST(19) TO PST19.
-           MOVE T-VWS(19) TO VWS19.
-           MOVE T-LIK(19) TO LIK19.
-           MOVE T-DAT(19) TO DAT19.
-           MOVE T-TIT(20) TO TIT20.
-           MOVE T-TITC(20) TO TIT20-C.
-           MOVE T-AUT(20) TO AUT20.
-           MOVE T-PST(20) TO PST20.
-           MOVE T-VWS(20) TO VWS20.
-           MOVE T-LIK(20) TO LIK20.
-           MOVE T-DAT(20) TO DAT20.
-           MOVE T-TIT(21) TO TIT21.
-           MOVE T-TITC(21) TO TIT21-C.
-           MOVE T-AUT(21) TO AUT21.
-           MOVE T-PST(21) TO PST21.
-           MOVE T-VWS(21) TO VWS21.
-           MOVE T-LIK(21) TO LIK21.
-           MOVE T-DAT(21) TO DAT21.
-           MOVE T-TIT(22) TO TIT22.
-           MOVE T-TITC(22) TO TIT22-C.
-           MOVE T-AUT(22) TO AUT22.
-           MOVE T-PST(22) TO PST22.
-           MOVE T-VWS(22) TO VWS22.
-           MOVE T-LIK(22) TO LIK22.
-           MOVE T-DAT(22) TO DAT22.
-           MOVE T-TIT(23) TO TIT23.
-           MOVE T-TITC(23) TO TIT23-C.
-           MOVE T-AUT(23) TO AUT23.
-           MOVE T-PST(23) TO PST23.
-           MOVE T-VWS(23) TO VWS23.
-           MOVE T-LIK(23) TO LIK23.
-           MOVE T-DAT(23) TO DAT23.
-           MOVE T-TIT(24) TO TIT24.
-           MOVE T-TITC(24) TO TIT24-C.
-           MOVE T-AUT(24) TO AUT24.
-           MOVE T-PST(24) TO PST24.
-           MOVE T-VWS(24) TO VWS24.
-           MOVE T-LIK(24) TO LIK24.
-           MOVE T-DAT(24) TO DAT24.
-           MOVE T-TIT(25) TO TIT25.
-           MOVE T-TITC(25) TO TIT25-C.
-           MOVE T-AUT(25) TO AUT25.
-           MOVE T-PST(25) TO PST25.
-           MOVE T-VWS(25) TO VWS25.
-           MOVE T-LIK(25) TO LIK25.
-           MOVE T-DAT(25) TO DAT25.
-           MOVE T-TIT(26) TO TIT26.
-           MOVE T-TITC(26) TO TIT26-C.
-           MOVE T-AUT(26) TO AUT26.
-           MOVE T-PST(26) TO PST26.
-           MOVE T-VWS(26) TO VWS26.
-           MOVE T-LIK(26) TO LIK26.
-           MOVE T-DAT(26) TO DAT26.
-           MOVE T-TIT(27) TO TIT27.
-           MOVE T-TITC(27) TO TIT27-C.
-           MOVE T-AUT(27) TO AUT27.
-           MOVE T-PST(27) TO PST27.
-           MOVE T-VWS(27) TO VWS27.
-           MOVE T-LIK(27) TO LIK27.
-           MOVE T-DAT(27) TO DAT27.
-           MOVE T-TIT(28) TO TIT28.
-           MOVE T-TITC(28) TO TIT28-C.
-           MOVE T-AUT(28) TO AUT28.
-           MOVE T-PST(28) TO PST28.
-           MOVE T-VWS(28) TO VWS28.
-           MOVE T-LIK(28) TO LIK28.
-           MOVE T-DAT(28) TO DAT28.
-           MOVE T-TIT(29) TO TIT29.
-           MOVE T-TITC(29) TO TIT29-C.
-           MOVE T-AUT(29) TO AUT29.
-           MOVE T-PST(29) TO PST29.
-           MOVE T-VWS(29) TO VWS29.
-           MOVE T-LIK(29) TO LIK29.
-           MOVE T-DAT(29) TO DAT29.
-           MOVE T-TIT(30) TO TIT30.
-           MOVE T-TITC(30) TO TIT30-C.
-           MOVE T-AUT(30) TO AUT30.
-           MOVE T-PST(30) TO PST30.
-           MOVE T-VWS(30) TO VWS30.
-           MOVE T-LIK(30) TO LIK30.
-           MOVE T-DAT(30) TO DAT30.
-           MOVE T-TIT(31) TO TIT31.
-           MOVE T-TITC(31) TO TIT31-C.
-           MOVE T-AUT(31) TO AUT31.
-           MOVE T-PST(31) TO PST31.
-           MOVE T-VWS(31) TO VWS31.
-           MOVE T-LIK(31) TO LIK31.
-           MOVE T-DAT(31) TO DAT31.
-           MOVE T-TIT(32) TO TIT32.
-           MOVE T-TITC(32) TO TIT32-C.
-           MOVE T-AUT(32) TO AUT32.
-           MOVE T-PST(32) TO PST32.
-           MOVE T-VWS(32) TO VWS32.
-           MOVE T-LIK(32) TO LIK32.
-           MOVE T-DAT(32) TO DAT32.
-           MOVE T-TIT(33) TO TIT33.
-           MOVE T-TITC(33) TO TIT33-C.
-           MOVE T-AUT(33) TO AUT33.
-           MOVE T-PST(33) TO PST33.
-           MOVE T-VWS(33) TO VWS33.
-           MOVE T-LIK(33) TO LIK33.
-           MOVE T-DAT(33) TO DAT33.
-           MOVE T-TIT(34) TO TIT34.
-           MOVE T-TITC(34) TO TIT34-C.
-           MOVE T-AUT(34) TO AUT34.
-           MOVE T-PST(34) TO PST34.
-           MOVE T-VWS(34) TO VWS34.
-           MOVE T-LIK(34) TO LIK34.
-           MOVE T-DAT(34) TO DAT34.
-           MOVE T-TIT(35) TO TIT35.
-           MOVE T-TITC(35) TO TIT35-C.
-           MOVE T-AUT(35) TO AUT35.
-           MOVE T-PST(35) TO PST35.
-           MOVE T-VWS(35) TO VWS35.
-           MOVE T-LIK(35) TO LIK35.
-           MOVE T-DAT(35) TO DAT35.
-           MOVE T-TIT(36) TO TIT36.
-           MOVE T-TITC(36) TO TIT36-C.
-           MOVE T-AUT(36) TO AUT36.
-           MOVE T-PST(36) TO PST36.
-           MOVE T-VWS(36) TO VWS36.
-           MOVE T-LIK(36) TO LIK36.
-           MOVE T-DAT(36) TO DAT36.
-           MOVE T-TIT(37) TO TIT37.
-           MOVE T-TITC(37) TO TIT37-C.
-           MOVE T-AUT(37) TO AUT37.
-           MOVE T-PST(37) TO PST37.
-           MOVE T-VWS(37) TO VWS37.
-           MOVE T-LIK(37) TO LIK37.
-           MOVE T-DAT(37) TO DAT37.
 
       *> COMPOSE-LIST-CHROME -- title, page number, legend, search
       *> echo and message line (verbatim tsu literals).
@@ -1264,6 +996,22 @@
                END-STRING
            END-IF.
 
+      *> MARK-SQL-ERROR -- a query came back with a negative SQLCODE.
+      *> Trip QRY-BAD so the caller skips the map, and keep a short
+      *> ST-MSG for the log. The detail is already in the bricks log.
+       MARK-SQL-ERROR.
+           MOVE 'N' TO WS-SQLOK.
+           MOVE 'SQL error - see bricks log' TO ST-MSG.
+
+      *> SEND-SQL-ERROR -- paint a single free-form line (no map, so no
+      *> empty rows) and arm WS-FATAL. SEND TEXT waits for an AID, so
+      *> the operator reads the error before MAIN drops them to CICS.
+       SEND-SQL-ERROR.
+           MOVE 'TOPX - database error. See bricks log. Press ENTER.'
+               TO WS-ERRSCR.
+           EXEC CICS SEND TEXT FROM(WS-ERRSCR) ERASE END-EXEC.
+           MOVE 'Y' TO WS-FATAL.
+
       *> ===========================================================
       *> PAINT-VIEW -- header SELECT INTO, then the flat-line model:
       *> every post contributes a header line, wrapped body lines
@@ -1271,31 +1019,43 @@
       *> line. A vanished topic bounces back to the list.
       *> ===========================================================
        PAINT-VIEW.
+           MOVE 'Y' TO WS-SQLOK.
            MOVE SPACES TO SCRV.
            MOVE ST-TOPIC TO WS-TOPIC.
            PERFORM GET-TOPIC-HEADER.
-           IF WS-HDROK = 'N' THEN
-               MOVE 'L' TO ST-SCREEN
-      *> SQLCODE 100 -> the topic vanished; a negative SQLCODE
-      *> already left its own message in ST-MSG above.
-               IF ST-MSG = SPACES THEN
-                   MOVE 'Topic not found' TO ST-MSG
-               END-IF
-               PERFORM PAINT-LIST
+      *> A negative SQLCODE in the header is a real failure, not an
+      *> empty result: message and bail before painting empty rows.
+           IF QRY-BAD THEN
+               PERFORM SEND-SQL-ERROR
            ELSE
-               PERFORM BUILD-PASS
+               IF WS-HDROK = 'N' THEN
+                   MOVE 'L' TO ST-SCREEN
+      *> SQLCODE 100 -> the topic vanished (not an error); bounce to
+      *> the list with a note rather than a blank view.
+                   IF ST-MSG = SPACES THEN
+                       MOVE 'Topic not found' TO ST-MSG
+                   END-IF
+                   PERFORM PAINT-LIST
+               ELSE
+                   PERFORM BUILD-PASS
+                   IF QRY-BAD THEN
+                       PERFORM SEND-SQL-ERROR
+                   ELSE
       *> Posts shrank since the last task and the offset now
       *> points past the end: clamp to the last page, rebuild.
-               IF ST-OFF >= ST-TOTL AND ST-TOTL > 0 THEN
-                   COMPUTE WS-TMP = ST-TOTL - 1
-                   DIVIDE WS-TMP BY WS-VNVIS GIVING WS-TMP2
-                   COMPUTE ST-OFF = WS-TMP2 * WS-VNVIS
-                   PERFORM BUILD-PASS
+                       IF ST-OFF >= ST-TOTL AND ST-TOTL > 0 THEN
+                           COMPUTE WS-TMP = ST-TOTL - 1
+                           DIVIDE WS-TMP BY WS-VNVIS GIVING WS-TMP2
+                           COMPUTE ST-OFF = WS-TMP2 * WS-VNVIS
+                           PERFORM BUILD-PASS
+                       END-IF
+      *> EMIT-LINE wrote each visible row through the V-ROW OCCURS
+      *> overlay onto ROW01..ROW38, so the map is already filled.
+                       PERFORM COMPOSE-VIEW-CHROME
+                       EXEC CICS SEND MAP(WS-VMAP) FROM(SCRV) ERASE
+                            END-EXEC
+                   END-IF
                END-IF
-               PERFORM FAN-OUT-VIEW
-               PERFORM COMPOSE-VIEW-CHROME
-               EXEC CICS SEND MAP(WS-VMAP) FROM(SCRV) ERASE
-                    END-EXEC
            END-IF.
 
        GET-TOPIC-HEADER.
@@ -1323,7 +1083,7 @@
                MOVE 'N' TO WS-HDROK
            END-IF.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
 
       *> BUILD-PASS -- walk every post line of the topic through
@@ -1334,7 +1094,7 @@
            MOVE 0 TO WS-SHOWN.
            MOVE 0 TO WS-PREVPID.
            MOVE 0 TO WS-PNUM.
-           MOVE SPACES TO SHR SHRC.
+           MOVE SPACES TO ROW-AREA.
            IF ORDER-OLDEST THEN
                PERFORM SCAN-POSTS-OLD
            ELSE
@@ -1367,7 +1127,7 @@
            END-EXEC.
            EXEC SQL OPEN PLO END-EXEC.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
            PERFORM FETCH-PLO UNTIL SQLCODE NOT = 0.
            EXEC SQL CLOSE PLO END-EXEC.
@@ -1379,7 +1139,7 @@
                PERFORM PROCESS-POST-LINE
            END-IF.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
 
        SCAN-POSTS-NEW.
@@ -1407,7 +1167,7 @@
            END-EXEC.
            EXEC SQL OPEN PLN END-EXEC.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
            PERFORM FETCH-PLN UNTIL SQLCODE NOT = 0.
            EXEC SQL CLOSE PLN END-EXEC.
@@ -1419,7 +1179,7 @@
                PERFORM PROCESS-POST-LINE
            END-IF.
            IF SQLCODE < 0 THEN
-               MOVE 'SQL error - see bricks log' TO ST-MSG
+               PERFORM MARK-SQL-ERROR
            END-IF.
 
       *> PROCESS-POST-LINE -- emit the author header (YELLOW) and a
@@ -1550,83 +1310,6 @@
                MOVE WS-EMITC TO V-ROWC(WS-SHOWN)
            END-IF.
 
-       FAN-OUT-VIEW.
-           MOVE V-ROW(1) TO ROW01.
-           MOVE V-ROWC(1) TO ROW01-C.
-           MOVE V-ROW(2) TO ROW02.
-           MOVE V-ROWC(2) TO ROW02-C.
-           MOVE V-ROW(3) TO ROW03.
-           MOVE V-ROWC(3) TO ROW03-C.
-           MOVE V-ROW(4) TO ROW04.
-           MOVE V-ROWC(4) TO ROW04-C.
-           MOVE V-ROW(5) TO ROW05.
-           MOVE V-ROWC(5) TO ROW05-C.
-           MOVE V-ROW(6) TO ROW06.
-           MOVE V-ROWC(6) TO ROW06-C.
-           MOVE V-ROW(7) TO ROW07.
-           MOVE V-ROWC(7) TO ROW07-C.
-           MOVE V-ROW(8) TO ROW08.
-           MOVE V-ROWC(8) TO ROW08-C.
-           MOVE V-ROW(9) TO ROW09.
-           MOVE V-ROWC(9) TO ROW09-C.
-           MOVE V-ROW(10) TO ROW10.
-           MOVE V-ROWC(10) TO ROW10-C.
-           MOVE V-ROW(11) TO ROW11.
-           MOVE V-ROWC(11) TO ROW11-C.
-           MOVE V-ROW(12) TO ROW12.
-           MOVE V-ROWC(12) TO ROW12-C.
-           MOVE V-ROW(13) TO ROW13.
-           MOVE V-ROWC(13) TO ROW13-C.
-           MOVE V-ROW(14) TO ROW14.
-           MOVE V-ROWC(14) TO ROW14-C.
-           MOVE V-ROW(15) TO ROW15.
-           MOVE V-ROWC(15) TO ROW15-C.
-           MOVE V-ROW(16) TO ROW16.
-           MOVE V-ROWC(16) TO ROW16-C.
-           MOVE V-ROW(17) TO ROW17.
-           MOVE V-ROWC(17) TO ROW17-C.
-           MOVE V-ROW(18) TO ROW18.
-           MOVE V-ROWC(18) TO ROW18-C.
-           MOVE V-ROW(19) TO ROW19.
-           MOVE V-ROWC(19) TO ROW19-C.
-           MOVE V-ROW(20) TO ROW20.
-           MOVE V-ROWC(20) TO ROW20-C.
-           MOVE V-ROW(21) TO ROW21.
-           MOVE V-ROWC(21) TO ROW21-C.
-           MOVE V-ROW(22) TO ROW22.
-           MOVE V-ROWC(22) TO ROW22-C.
-           MOVE V-ROW(23) TO ROW23.
-           MOVE V-ROWC(23) TO ROW23-C.
-           MOVE V-ROW(24) TO ROW24.
-           MOVE V-ROWC(24) TO ROW24-C.
-           MOVE V-ROW(25) TO ROW25.
-           MOVE V-ROWC(25) TO ROW25-C.
-           MOVE V-ROW(26) TO ROW26.
-           MOVE V-ROWC(26) TO ROW26-C.
-           MOVE V-ROW(27) TO ROW27.
-           MOVE V-ROWC(27) TO ROW27-C.
-           MOVE V-ROW(28) TO ROW28.
-           MOVE V-ROWC(28) TO ROW28-C.
-           MOVE V-ROW(29) TO ROW29.
-           MOVE V-ROWC(29) TO ROW29-C.
-           MOVE V-ROW(30) TO ROW30.
-           MOVE V-ROWC(30) TO ROW30-C.
-           MOVE V-ROW(31) TO ROW31.
-           MOVE V-ROWC(31) TO ROW31-C.
-           MOVE V-ROW(32) TO ROW32.
-           MOVE V-ROWC(32) TO ROW32-C.
-           MOVE V-ROW(33) TO ROW33.
-           MOVE V-ROWC(33) TO ROW33-C.
-           MOVE V-ROW(34) TO ROW34.
-           MOVE V-ROWC(34) TO ROW34-C.
-           MOVE V-ROW(35) TO ROW35.
-           MOVE V-ROWC(35) TO ROW35-C.
-           MOVE V-ROW(36) TO ROW36.
-           MOVE V-ROWC(36) TO ROW36-C.
-           MOVE V-ROW(37) TO ROW37.
-           MOVE V-ROWC(37) TO ROW37-C.
-           MOVE V-ROW(38) TO ROW38.
-           MOVE V-ROWC(38) TO ROW38-C.
 
       *> COMPOSE-VIEW-CHROME -- header strip, ruler / error line
       *> and 'Page X of Y' (verbatim tsu literals and formats).
