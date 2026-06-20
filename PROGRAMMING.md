@@ -988,6 +988,19 @@ the dispatcher invokes that TRANSID next, with the supplied
 `COMMAREA` available to the new task as `DFHCOMMAREA` and its length
 as `EIBCALEN`.
 
+> **COBOL program termination & the end-of-task syncpoint.**
+> `EXEC CICS RETURN` is the canonical way a CICS program ends, and the only
+> one that carries the pseudo-conversational `TRANSID` / `COMMAREA` handoff.
+> `STOP RUN`, `GOBACK`, `EXIT PROGRAM`, and running off the end of the
+> PROCEDURE DIVISION also end the task cleanly (bricks tolerates them
+> LE-style), and bricks runs the **implicit end-of-task syncpoint** — which
+> commits the task's `EXEC SQL` unit of work — for those paths too, so a
+> program that mutates SQL and then `STOP RUN`s does **not** lose the update.
+> `STOP RUN` is nonetheless the CICS anti-pattern: it carries no
+> pseudo-conversational handoff and, in a CALLed sub-program, would terminate
+> the whole run unit. Use `EXEC CICS RETURN` in CICS code (with `GOBACK`, not
+> `STOP RUN`, as the unreachable post-`RETURN` terminator the compiler wants).
+
 #### Options
 
 **TRANSID(id)**
