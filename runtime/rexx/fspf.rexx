@@ -25,14 +25,20 @@ EXEC CICS IGNORE CONDITION MAPFAIL PGMIDERR END-EXEC
 
 /* Query the system for various bits of information. */
 EXEC CICS ASSIGN
-  USERID(SYSUSR)
+  USERID(SYSUSER)
   TERMID(SYSTERM)
   CONNECTED(SYSCONNECTED)
 END-EXEC
 
-EXEC CICS INQUIRE SYSTEM GMMTEXT(GMMTEXT) END-EXEC
+EXEC CICS INQUIRE SYSTEM
+  GMMTEXT(GMMTEXT)
+END-EXEC
 
-EXEC CICS QUERY SECURITY RESOURCE('FSPF') READ(CANREAD) UPDATE(CANUPDATE) END-EXEC
+EXEC CICS QUERY SECURITY
+  RESOURCE('FSPF')
+  READ(CANREAD)
+  UPDATE(CANUPDATE)
+END-EXEC
 
 /* Initialize variables. */
 FRAME.          = ''      /* Frames from the database. */
@@ -52,7 +58,7 @@ LOOKUP.LINK.    = ''      /* Lookup a Frame Name and Link ID to the LINK.FRAME.I
 LOOKUP.FRAME.   = ''      /* Lookup a Frame ID to the FRAME.NAME. */
 
 SCR.            = ''      /* Screen interface. */
-SCR.USRID       = SYSUSR
+SCR.USRID       = SYSUSER
 SCR.WELCOMEA    = CENTER('Welcome to BRICKS Transaction Server', 50)
 SCR.WELCOMEB    = CENTER(GMMTEXT, 50)
 PARSE VAR SYSCONNECTED SCR.CONDATE SCR.CONTIME
@@ -65,7 +71,6 @@ SET.USERFILE    = 'FSPFUSER'
 SET.POSITION    = 1       /* Position in the Frame Links list. */
 SET.WELCOMEB    = GMMTEXT
 SET.BCOLOR      = 'BLUE'  /* The default color of the per-frame welcome message. */
-SET.USR         = SYSUSR
 SET.LASTINPUT   = ''      /* The last input from the user. Used for PF6 to recall input. */
 SET.ISAUTH      = 'NO'    /* The user is authenticated. Not PUBLIC. */
 SET.ISADMIN     = 'NO'    /* The user has admin access. */
@@ -143,6 +148,11 @@ DO FOREVER
         CALL CLOCK_STOP
         EXEC CICS LINK PROGRAM('ESPF') END-EXEC
         CALL CLOCK_START
+
+        /* Go ahead and reload. The user might have changed something. */
+        CALL DATA_LOAD
+        CALL LINK_PARSE
+        CALL FRAME_POPULATE
       END
       ELSE DO
         SCR.MSG = 'Not authorized to make changes.'
@@ -530,6 +540,8 @@ LINK_PARSE: PROCEDURE EXPOSE FRAME. LINK. SCR. SET.
     IF START > (LINKS - SET.SCROLL) THEN
       START = LINKS - SET.SCROLL
   END
+  IF START < 1 THEN
+    START = 1
 
   DO SCR_ROW = 1 TO SET.LINKCOUNT
     ROW_ID = START + SCR_ROW - 1
@@ -539,7 +551,7 @@ LINK_PARSE: PROCEDURE EXPOSE FRAME. LINK. SCR. SET.
         ROW_ID     '~',
         ROW_IDC    '~',
         ROW_ORDER  '~',
-        ROW_FRAME   '~',
+        ROW_FRAME  '~',
         ROW_SUBM   '~',
         ROW_TRANS  '~',
         ROW_TRANSC '~',
@@ -596,17 +608,17 @@ LINK_PARSE: PROCEDURE EXPOSE FRAME. LINK. SCR. SET.
     SET.POSITION = LINKS
 
   IF SET.POSITION > 1 THEN
-    SCR.MORETOP = CENTER('*** Press PF7 for more links ***', 40)
+    SCR.MORETOP = CENTER('*** Press PF7 for more Links ***', 40)
   ELSE
     SCR.MORETOP = ''
 
   IF SET.POSITION - 1 < (LINKS - SET.LINKCOUNT) & LINKS > SET.LINKCOUNT THEN
-    SCR.MOREBOT = CENTER('*** Press PF8 for more links ***', 40)
+    SCR.MOREBOT = CENTER('*** Press PF8 for more Links ***', 40)
   ELSE
     SCR.MOREBOT = ''
   RETURN
 
-/* Populate the frame list in the lower right. */
+/* Populate the Frame list in the lower right. */
 FRAME_POPULATE: PROCEDURE EXPOSE FRAME. LINK. SCR. SET.
   DO SCR_ROW = 1 TO SET.FRAMECOUNT
     IF SCR_ROW <= FRAME.COUNT THEN DO
@@ -684,7 +696,7 @@ RECORD_WRITE: PROCEDURE
   KEY  = ARG(2)
   REC  = ARG(3)
   EXEC CICS WRITE FILE(FILE) FROM(REC) RIDFLD(KEY) END-EXEC
-  RETURN REC
+  RETURN EIBRESP
 
 /* ----~~~~====####    KSDS Cursor interface    ####====~~~~---- */
 
@@ -941,6 +953,10 @@ DEBUG_CONSOLE: PROCEDURE EXPOSE FRAME. LINK. LOOKUP. SCR. SET.
           PARSE VAR ARGS VARIABLE VALUE
           CALL VALUE VARIABLE, VALUE
           DEBUG_SCR.MSG = VARIABLE '=' VALUE
+        END
+        /* Quit */
+        WHEN UPPER(COMMAND) = 'QUIT' THEN DO
+          RETURN
         END
         /* Search for text. */
         WHEN UPPER(COMMAND) = 'RELOAD' THEN DO
