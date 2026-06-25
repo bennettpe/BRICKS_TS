@@ -97,6 +97,9 @@ IF EIBCALEN = 0 THEN DO
   QROUTE = ''
   CAND.0 = 0
   HIST.0 = 0
+  /* Swissair boot splash -- scroll the embedded logo up from the bottom
+   * once, BEFORE the READY prompt is painted. */
+  CALL LOGO_INTRO
   CALL APPEND 'SABRE CRS READY. SIGN IN WITH SIA*nnnnn  (HELP for cmds)'
   CALL SERIALIZE
   CALL PAINT 'ERASE'
@@ -143,8 +146,24 @@ SELECT
   WHEN AID = 'F8' THEN CALL SCROLL_DOWN
   OTHERWISE DO                                 /* ENTER (0x7D) and others */
     IF CMDIN \= '' THEN DO
-      CALL APPEND '> ' || CMDIN
-      CALL DISPATCH CMDIN
+      /* SABRE-style combinability: a single line may hold several entries
+       * separated by ',' -- run each in turn (no command uses a comma). */
+      REMAIN = CMDIN
+      DO WHILE REMAIN \= '' & ENDFLAG = 0
+        CP = POS(',', REMAIN)
+        IF CP = 0 THEN DO
+          PART   = STRIP(REMAIN)
+          REMAIN = ''
+        END
+        ELSE DO
+          PART   = STRIP(LEFT(REMAIN, CP - 1))
+          REMAIN = SUBSTR(REMAIN, CP + 1)
+        END
+        IF PART \= '' THEN DO
+          CALL APPEND '> ' || PART
+          CALL DISPATCH PART
+        END
+      END
       OFFS = 0
     END
   END
@@ -239,6 +258,70 @@ POPULATE_ROWS: PROCEDURE EXPOSE NVIS OFFS HIST. SCR.
       CALL VALUE ROWNAME, LEFT(LINE, 78)
     END
     ELSE CALL VALUE ROWNAME, ''
+  END
+  RETURN
+
+/* Cold-start splash: scroll the Swissair logo up from the bottom of the
+ * screen, once, before the welcome paint. The logo art is EMBEDDED here
+ * (never read from disk -- logo.swissair is unavailable at run time).
+ *
+ * Frames are painted with SEND MAP ... DATAONLY: that is the only
+ * fire-and-forget form (a plain SEND MAP blocks waiting for an AID). Each
+ * frame sets every body row to a full 78-byte value so the partial paint
+ * fully overwrites the previous frame (no ghosting), and blanks the chrome
+ * fields so only the logo shows. DELAY FOR MILLISECS paces it. */
+LOGO_INTRO: PROCEDURE EXPOSE MAPNAME NVIS HIST.
+  LOGO.1  = ' '
+  LOGO.2  = ' A27APR ZRHFRA 1900 SWISS'
+  LOGO.3  = '                 SSAI'
+  LOGO.4  = '                 AIRSWI'
+  LOGO.5  = '                 SAIRSWI'
+  LOGO.6  = '                 RSWISSAIR'
+  LOGO.7  = '                 WISSWISAIRS                $'
+  LOGO.8  = '     AIRSWISSAIRSWISSAIRSWISSAIRSWISSAIRSWISS   S   S'
+  LOGO.9  = '     AIRSWISSAIRSWISSAIRSWISSAIRSWISSAIRSWISS   S   S'
+  LOGO.10 = '                 SWISWISSAIR                $'
+  LOGO.11 = '                 IRSWISSAI'
+  LOGO.12 = '                 SAIRSWI                   S W I S S A I R'
+  LOGO.13 = '                 ISSAIR              RESERVATION AND TICKETING SYSTEM'
+  LOGO.14 = '                 SWISS                   '
+  LOGO.0  = 14
+  DLY = 55                                       /* ms per frame -- gentle    */
+  /* Blank the chrome once (these stay set across the DATAONLY frames). */
+  SCR. = ''
+  SCR.TITLE  = LEFT('', 30)
+  SCR.CLOCK  = LEFT('', 8)
+  SCR.AGTLBL = LEFT('', 6)
+  SCR.AGTID  = LEFT('', 18)
+  SCR.STATUS = LEFT('', 78)
+  SCR.PROMPT = LEFT('', 4)
+  SCR.CMD    = LEFT('', 62)
+  SCR.FOOTER = LEFT('', 60)
+  /* Strip = NVIS blank rows then the logo. Slide the NVIS-row window DOWN
+   * the strip so the logo rises UP the screen. STOP with the logo
+   * BOTTOM-aligned -- exactly where it will sit in the transcript once the
+   * logo lines (+ the READY line beneath) are appended below. Stopping
+   * there means the welcome paint keeps the logo in place instead of
+   * moving it. Screen row J shows logo line (P + J - NVIS); at P = LOGO.0+1
+   * the last logo line lands on the row just above the (future) READY line. */
+  PSTOP = LOGO.0 + 1
+  DO P = 0 TO PSTOP
+    DO J = 1 TO NVIS
+      ROWNAME = 'SCR.ROW' || RIGHT(J, 2, '0')
+      LIDX = (P + J) - NVIS                       /* logo line if 1..LOGO.0    */
+      IF LIDX >= 1 & LIDX <= LOGO.0 THEN,
+        CALL VALUE ROWNAME, LEFT(LOGO.LIDX, 78)
+      ELSE CALL VALUE ROWNAME, LEFT('', 78)       /* 78 spaces -> overwrite    */
+    END
+    EXEC CICS SEND MAP(MAPNAME) FROM(SCR.) DATAONLY END-EXEC
+    EXEC CICS DELAY FOR MILLISECS(DLY) END-EXEC
+  END
+  /* Brief beat on the settled logo, then COMMIT it to the transcript so it
+   * STAYS on screen when the welcome/prompt paints over the splash (it then
+   * scrolls away naturally as the operator works, like any banner). */
+  EXEC CICS DELAY FOR MILLISECS(1000) END-EXEC
+  DO I = 1 TO LOGO.0
+    CALL APPEND LOGO.I
   END
   RETURN
 
@@ -351,7 +434,8 @@ APPEND: PROCEDURE EXPOSE HIST.
 DISPATCH: PROCEDURE EXPOSE AGENT AUTH CURPNR NCAND QDATE QROUTE,
           CAND. HIST. ENDFLAG USR TRM SCRH,
           airports. eqDesc. eqSeats. seatConfig. airlines.,
-          flightNumRange. fareTypes. paxTypes.
+          flightNumRange. fareTypes. paxTypes.,
+          cityCode. aptRegion. airlineName. routeMiles. regionMiles.
   PARSE ARG RAW
   CMD = STRIP(TRANSLATE(RAW))                  /* uppercase + trim */
   IF CMD = '' THEN RETURN
@@ -408,6 +492,52 @@ DISPATCH: PROCEDURE EXPOSE AGENT AUTH CURPNR NCAND QDATE QROUTE,
     CALL DO_WEQ CMD
     RETURN
   END
+  /* W/ -- encode/decode reference (must follow W/EQ above). */
+  IF LEFT(CMD,2) = 'W/' THEN DO
+    CALL DO_W CMD
+    RETURN
+  END
+  /* DD<citypair> -- mileage and elapsed flying time. */
+  IF LEFT(CMD,2) = 'DD' & LENGTH(CMD) >= 8 THEN DO
+    CALL DO_DD CMD
+    RETURN
+  END
+  /* S<date><citypair> -- schedule/timetable (digit after S guards
+   * against SO* / SIA* / SELL, whose 2nd char is a letter). */
+  IF LEFT(CMD,1) = 'S' & LENGTH(CMD) >= 7,
+     & DATATYPE(SUBSTR(CMD,2,1),'W') THEN DO
+    CALL DO_SCHED CMD
+    RETURN
+  END
+  /* Canonical city-pair availability 1<date><pair>[time][-mods].
+   * WORDS=1 keeps the friendly '18OCT JFK ZRH' (3 words) on the
+   * fall-through path to DO_AVAIL below. */
+  IF LEFT(CMD,1) = '1' & WORDS(CMD) = 1 & LENGTH(CMD) >= 9 THEN DO
+    CALL DO_AVAIL1 CMD
+    RETURN
+  END
+  /* Canonical sell 0<line><class>[seg], e.g. 01Y1. */
+  IF LEFT(CMD,1) = '0' & WORDS(CMD) = 1 & LENGTH(CMD) >= 2 THEN DO
+    CALL DO_SELL0 CMD
+    RETURN
+  END
+  /* PNR mandatory-field entries (annotate the active PNR). */
+  IF LEFT(CMD,1) = '-' THEN DO
+    CALL DO_NAMEDASH CMD
+    RETURN
+  END
+  IF LEFT(CMD,1) = '9' & LENGTH(CMD) > 1 THEN DO
+    CALL DO_PHONE CMD
+    RETURN
+  END
+  IF LEFT(CMD,1) = '7' THEN DO
+    CALL DO_TKT CMD
+    RETURN
+  END
+  IF LEFT(CMD,1) = '6' THEN DO
+    CALL DO_RCVD CMD
+    RETURN
+  END
 
   /* FIRST-token commands. */
   PARSE VAR CMD FIRST REST
@@ -431,6 +561,10 @@ DISPATCH: PROCEDURE EXPOSE AGENT AUTH CURPNR NCAND QDATE QROUTE,
     CALL DO_LIST
     RETURN
   END
+  IF FIRST = 'TTP' THEN DO
+    CALL DO_TTP REST
+    RETURN
+  END
 
   /* OTHERWISE -- treat the whole line as an availability query. */
   CALL DO_AVAIL CMD
@@ -447,14 +581,25 @@ DO_HELP: PROCEDURE EXPOSE HIST.
   CALL APPEND 'PNR <loc>            Display booking details'
   CALL APPEND 'LIST                 List all PNRs on file'
   CALL APPEND 'CANCEL <loc>         Cancel a booking (soft)'
-  CALL APPEND 'W/EQ*<code>          Filter flights by equipment'
+  CALL APPEND 'TTP [<loc>]          Ticket the PNR (status A -> T)'
+  CALL APPEND 'W/*<code>            Decode airport(3) or airline(2)'
+  CALL APPEND 'W/-CC<city>          Encode city name to airport code'
+  CALL APPEND 'W/EQ*<code>          Decode aircraft equipment type'
+  CALL APPEND 'S<date><frto>        Flight schedule (e.g. S13JUNJFKZRH)'
+  CALL APPEND '1<date><frto><tm>    Avail entry (e.g. 113JUNJFKZRH9A)'
+  CALL APPEND '0<n><cls>            Sell line n in class (e.g. 01Y1)'
+  CALL APPEND 'DD<frto>             Miles + flying time (e.g. DDJFKZRH)'
+  CALL APPEND '-LAST/FIRST TITLE    PNR name field (e.g. -SMITH/JOHN MR)'
+  CALL APPEND '9<phone>-<H/B/T>     PNR phone field (e.g. 9203555121-B)'
+  CALL APPEND '7TAW<date>/          PNR ticketing field (e.g. 7TAW15JUN/)'
+  CALL APPEND '6<name>              PNR received-from field (e.g. 6SMITH)'
   CALL APPEND 'FF<loc>              Display FF numbers for PNR'
   CALL APPEND 'FF<loc>/<num>        Add FF number to PNR'
   CALL APPEND 'FF<loc>/*            Delete FF numbers from PNR'
   CALL APPEND 'Q/C                  Display queue counts'
   CALL APPEND 'Q/P/<n>/<loc>        Place PNR in queue n'
   CALL APPEND 'WP/NI                Display alternate fare options'
-  CALL APPEND 'WP/NCB <seg>         Price/book lowest fare for seg'
+  CALL APPEND 'WP/NCB <seg>         Price lowest fare (seg default 1)'
   CALL APPEND 'N/ADD-<seg> L/F TYP  Add passenger name to PNR'
   CALL APPEND 'N/CHG-<seg> L/F      Change passenger name'
   CALL APPEND '4G<n>*               Display seat map for segment n'
@@ -476,7 +621,7 @@ DO_SIGNIN: PROCEDURE EXPOSE AGENT AUTH HIST.
 
 /* --- Availability search: DATE FROM TO [TIME] ------------------- */
 DO_AVAIL: PROCEDURE EXPOSE NCAND QDATE QROUTE CAND. HIST.,
-          airports. eqDesc. eqSeats. airlines. flightNumRange.
+          airports. eqDesc. eqSeats. airlines. flightNumRange. aptRegion.
   PARSE ARG CMD
   PARSE VAR CMD QDT QFR QTO QTM
   IF QDT = '' | QFR = '' | QTO = '' THEN DO
@@ -659,6 +804,62 @@ DO_CANCEL: PROCEDURE EXPOSE CURPNR HIST.
     RETURN
   END
   CALL APPEND 'CANCELLED ' || STRIP(LOC) || ' (status X, still listed)'
+  RETURN
+
+/* --- TTP [<loc>]: Ticket The PNR -- issue e-ticket, status A -> T. */
+DO_TTP: PROCEDURE EXPOSE CURPNR HIST. fareTypes.
+  PARSE ARG REST
+  LOC = STRIP(REST)
+  IF LOC = '' THEN LOC = STRIP(CURPNR)
+  IF LOC = '' THEN DO
+    CALL APPEND '*** NO ACTIVE PNR - DISPLAY (PNR <loc>) OR SELL FIRST'
+    RETURN
+  END
+  CALL NORMLOC LEFT(LOC, 6)
+  LOC = RESULT
+  PKEY = 'P' || LOC || '00'
+  EXEC CICS READ FILE('sabre') INTO(REC) RIDFLD(PKEY) UPDATE END-EXEC
+  RR = EIBRESP                                 /* 0 NORMAL, 13 NOTFND */
+  IF RR = 13 THEN DO
+    CALL APPEND '*** PNR ' || STRIP(LOC) || ' not found.'
+    RETURN
+  END
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Ticket read failed RESP=' || RR
+    RETURN
+  END
+  ST = SUBSTR(REC, 1, 1)
+  IF ST = 'X' THEN DO
+    CALL APPEND '*** PNR ' || STRIP(LOC) || ' is cancelled - cannot ticket'
+    EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+    RETURN
+  END
+  IF ST = 'T' THEN DO
+    CALL APPEND '*** PNR ' || STRIP(LOC) || ' is already ticketed'
+    EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+    RETURN
+  END
+  PAX = STRIP(SUBSTR(REC, 8, 24), 'T')
+  IF PAX = '' | PAX = '/TBD' THEN DO
+    CALL APPEND '*** Add a passenger name first (-LAST/FIRST or N/ADD-1)'
+    EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+    RETURN
+  END
+  REC = OVERLAY('T', REC, 1, 1)                 /* STATUS = T (ticketed) */
+  EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+  RR = EIBRESP                                 /* 0 NORMAL, 16 INVREQ */
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Ticket rewrite failed RESP=' || RR
+    RETURN
+  END
+  CURPNR = LOC
+  FCLS = STRIP(SUBSTR(REC, 68, 1), 'T')
+  FAMT = STRIP(SUBSTR(REC, 69, 7))
+  IF FCLS = '' THEN,
+    CALL APPEND 'ETKT ISSUED ' || STRIP(LOC) || ' - ' || PAX,
+                || ' (unpriced - WP/NCB to fare)'
+  ELSE CALL APPEND 'ETKT ISSUED ' || STRIP(LOC) || ' - ' || PAX || '  ',
+                || FCLS || ' (' || fareTypes.FCLS || ') $' || FAMT || '.00'
   RETURN
 
 /* Hard purge: delete the header + cascade-delete FF and seg bands. */
@@ -1038,6 +1239,7 @@ DO_WP: PROCEDURE EXPOSE CURPNR HIST. fareTypes.
     RETURN
   END
   IF PCMD = 'NCB' THEN DO
+    IF REST = '' THEN REST = '1'              /* default to segment 1 */
     IF \DATATYPE(REST,'W') THEN DO
       CALL APPEND '*** Invalid segment number'
       RETURN
@@ -1163,6 +1365,342 @@ DO_WEQ: PROCEDURE EXPOSE HIST. eqDesc. eqSeats.
   END
   RETURN
 
+/* --- W/ encode & decode reference ------------------------------- */
+DO_W: PROCEDURE EXPOSE HIST. airports. cityCode. airlineName.
+  PARSE ARG CMD
+  BODY = SUBSTR(CMD, 3)                          /* text after 'W/' */
+  IF LEFT(BODY,1) = '*' THEN DO                  /* decode code -> name */
+    KEY = STRIP(SUBSTR(BODY, 2))
+    IF LENGTH(KEY) = 3 THEN DO                   /* 3 chars -> airport */
+      CALL GETAIRPORTNAME KEY
+      NM = RESULT
+      IF NM = '' THEN CALL APPEND '*** Unknown airport code: ' || KEY
+      ELSE CALL APPEND KEY || '  ' || NM
+      RETURN
+    END
+    IF LENGTH(KEY) = 2 THEN DO                   /* 2 chars -> airline */
+      CALL LOADAIRLINES
+      CALL DECODE_AIRLINE KEY
+      RETURN
+    END
+    CALL APPEND '*** W/* needs a 3-letter airport or 2-letter airline'
+    RETURN
+  END
+  IF LEFT(BODY,3) = '-CC' THEN DO                /* encode city -> code */
+    RAWCITY = STRIP(SUBSTR(BODY, 4))
+    KEY = SPACE(TRANSLATE(RAWCITY), 0)           /* uppercase, drop spaces */
+    IF KEY = '' THEN DO
+      CALL APPEND '*** Usage: W/-CC<city name>'
+      RETURN
+    END
+    CODES = VALUE('cityCode.' || KEY)
+    IF CODES = 'CITYCODE.' || KEY THEN,
+      CALL APPEND '*** No airport on file for city: ' || RAWCITY
+    ELSE CALL APPEND RAWCITY || ' = ' || CODES
+    RETURN
+  END
+  CALL APPEND '*** Use W/*<code> to decode or W/-CC<city> to encode'
+  RETURN
+
+DECODE_AIRLINE: PROCEDURE EXPOSE HIST. airlineName.
+  PARSE ARG AL
+  NM = VALUE('airlineName.' || AL)
+  IF NM = 'AIRLINENAME.' || AL THEN,
+    CALL APPEND '*** Unknown airline code: ' || AL
+  ELSE CALL APPEND AL || '  ' || NM
+  RETURN
+
+/* --- DD<citypair> mileage and elapsed flying time --------------- */
+DO_DD: PROCEDURE EXPOSE HIST. airports. aptRegion. routeMiles. regionMiles.
+  PARSE ARG CMD
+  PAIR = STRIP(SUBSTR(CMD, 3))
+  IF LENGTH(PAIR) \= 6 THEN DO
+    CALL APPEND '*** Usage: DD<from><to> (e.g. DDJFKZRH)'
+    RETURN
+  END
+  QFR = LEFT(PAIR, 3)
+  QTO = SUBSTR(PAIR, 4, 3)
+  CALL ISVALIDAIRPORT QFR
+  IF \RESULT THEN DO
+    CALL APPEND '*** Invalid airport code: ' || QFR
+    RETURN
+  END
+  CALL ISVALIDAIRPORT QTO
+  IF \RESULT THEN DO
+    CALL APPEND '*** Invalid airport code: ' || QTO
+    RETURN
+  END
+  IF QFR = QTO THEN DO
+    CALL APPEND '*** Airports must differ'
+    RETURN
+  END
+  /* Curated route first, then the reverse pair. If both are unset MI
+   * still holds the unset-tail literal -- the DATATYPE test below treats
+   * that as "no curated distance" and drops to the region fallback. */
+  MI = VALUE('routeMiles.' || QFR || QTO)
+  IF MI = 'ROUTEMILES.' || QFR || QTO THEN,
+    MI = VALUE('routeMiles.' || QTO || QFR)
+  IF \DATATYPE(MI,'W') THEN DO                   /* region-pair fallback */
+    CALL GETAIRPORTREGION QFR
+    R1 = RESULT
+    CALL GETAIRPORTREGION QTO
+    R2 = RESULT
+    MI = VALUE('regionMiles.' || R1 || R2)
+    IF \DATATYPE(MI,'W') THEN MI = VALUE('regionMiles.' || R2 || R1)
+    IF \DATATYPE(MI,'W') THEN MI = 3000
+  END
+  MINS = TRUNC(MI / 500 * 60)                    /* 500 mph avg, no trig */
+  HRS = MINS % 60
+  MM  = MINS // 60
+  CALL APPEND QFR || '/' || QTO || '  ' || MI || ' MILES  EFT ',
+              || HRS || 'H' || RIGHT(MM, 2, '0') || 'M'
+  RETURN
+
+/* --- S<date><citypair> schedule/timetable ----------------------- */
+DO_SCHED: PROCEDURE EXPOSE HIST. airports. aptRegion. FLIGHTS.,
+          airlines. flightNumRange. eqSeats.
+  PARSE ARG CMD
+  REST = SUBSTR(CMD, 2)                          /* text after 'S' */
+  IF LENGTH(REST) < 7 THEN DO
+    CALL APPEND '*** Usage: S<date><from><to> (e.g. S13JUNJFKZRH)'
+    RETURN
+  END
+  PAIR = RIGHT(REST, 6)
+  DT   = LEFT(REST, LENGTH(REST) - 6)
+  QFR  = LEFT(PAIR, 3)
+  QTO  = SUBSTR(PAIR, 4, 3)
+  CALL ISVALIDAIRPORT QFR
+  IF \RESULT THEN DO
+    CALL APPEND '*** Invalid departure airport code: ' || QFR
+    RETURN
+  END
+  CALL ISVALIDAIRPORT QTO
+  IF \RESULT THEN DO
+    CALL APPEND '*** Invalid arrival airport code: ' || QTO
+    RETURN
+  END
+  IF QFR = QTO THEN DO
+    CALL APPEND '*** Departure and arrival airports cannot be the same'
+    RETURN
+  END
+  CALL GENERATEFLIGHTS DT, QFR, QTO, ''
+  CALL APPEND 'SCHEDULE ' || DT || '  ' || QFR || '/' || QTO || '  DAILY'
+  CALL APPEND 'ARLN FLT  DEP    ARR    EQ    DAYS'
+  IF FLIGHTS.0 = 0 THEN DO
+    CALL APPEND 'NO SCHEDULED SERVICE'
+    RETURN
+  END
+  DO I = 1 TO FLIGHTS.0
+    FLROW = FLIGHTS.I
+    PARSE VAR FLROW AIR FLT DEPC DEPD DEPT ARRT ARRC AVST EQMT
+    OUT = LEFT(AIR,4) || ' ' || LEFT(FLT,4) || ' ' || LEFT(DEPT,6),
+          || ' ' || LEFT(ARRT,6) || ' ' || LEFT(EQMT,5) || ' 1234567'
+    CALL APPEND LEFT(OUT, 78)
+  END
+  CALL APPEND FLIGHTS.0 || ' flight(s) scheduled.'
+  RETURN
+
+/* --- 1<date><pair><tm><-carr><-cls> canonical availability ------ */
+DO_AVAIL1: PROCEDURE EXPOSE NCAND QDATE QROUTE CAND. HIST.,
+           airports. eqDesc. eqSeats. airlines. flightNumRange. aptRegion.
+  PARSE ARG CMD
+  BODY = SUBSTR(CMD, 2)                          /* drop leading '1' */
+  CLS  = ''
+  CARR = ''
+  DO WHILE POS('-', BODY) > 0                    /* peel -carr / -cls */
+    P   = LASTPOS('-', BODY)
+    MOD = SUBSTR(BODY, P + 1)
+    BODY = LEFT(BODY, P - 1)
+    IF LENGTH(MOD) = 1 THEN CLS = MOD
+    ELSE CARR = MOD
+  END
+  QTM = ''
+  LCH = RIGHT(BODY, 1)
+  IF LCH = 'A' | LCH = 'P' THEN DO               /* trailing <digits>A/P */
+    I = LENGTH(BODY) - 1
+    DO WHILE I >= 1 & DATATYPE(SUBSTR(BODY, I, 1), 'W')
+      I = I - 1
+    END
+    IF I <= LENGTH(BODY) - 2 THEN DO
+      QTM  = SUBSTR(BODY, I + 1)
+      BODY = LEFT(BODY, I)
+    END
+  END
+  IF LENGTH(BODY) < 7 THEN DO
+    CALL APPEND '*** Invalid availability entry (use 113JUNJFKZRH)'
+    RETURN
+  END
+  PAIR = RIGHT(BODY, 6)
+  DT   = LEFT(BODY, LENGTH(BODY) - 6)
+  QFR  = LEFT(PAIR, 3)
+  QTO  = SUBSTR(PAIR, 4, 3)
+  IF CLS  \= '' THEN CALL APPEND 'Class of service requested: ' || CLS
+  IF CARR \= '' THEN CALL APPEND 'Preferred carrier: ' || CARR
+  QSTR = DT QFR QTO QTM
+  CALL DO_AVAIL QSTR
+  RETURN
+
+/* --- 0<line><class>[seg] canonical sell ------------------------- */
+DO_SELL0: PROCEDURE EXPOSE AGENT CURPNR NCAND CAND. HIST. TRM,
+          seatConfig. eqDesc.
+  PARSE ARG CMD
+  BODY = SUBSTR(CMD, 2)                          /* drop leading '0' */
+  I = 1
+  DO WHILE I <= LENGTH(BODY) & DATATYPE(SUBSTR(BODY, I, 1), 'W')
+    I = I + 1
+  END
+  LINE = LEFT(BODY, I - 1)
+  CLS  = SUBSTR(BODY, I, 1)
+  IF LINE = '' THEN DO
+    CALL APPEND '*** Usage: 0<line><class>  (e.g. 01Y1)'
+    RETURN
+  END
+  PREV = CURPNR
+  CALL DO_SELL LINE
+  /* Only stamp class when DO_SELL actually minted a NEW PNR. */
+  IF CLS \= '' & CURPNR \= '' & CURPNR \= PREV THEN DO
+    PKEY = 'P' || CURPNR || '00'
+    EXEC CICS READ FILE('sabre') INTO(REC) RIDFLD(PKEY) UPDATE END-EXEC
+    IF EIBRESP = 0 THEN DO
+      REC = OVERLAY(CLS, REC, 68, 1)
+      EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+    END
+  END
+  RETURN
+
+/* --- -LAST/FIRST TITLE  PNR name field -------------------------- */
+DO_NAMEDASH: PROCEDURE EXPOSE CURPNR HIST.
+  PARSE ARG CMD
+  BODY = STRIP(SUBSTR(CMD, 2))                   /* text after '-' */
+  PARSE VAR BODY LASTNM '/' FIRSTNM
+  LASTNM  = STRIP(LASTNM)
+  FIRSTNM = STRIP(FIRSTNM)
+  IF LASTNM = '' | FIRSTNM = '' THEN DO
+    CALL APPEND '*** Name required as -LAST/FIRST TITLE'
+    RETURN
+  END
+  IF CURPNR = '' THEN DO
+    CALL APPEND '*** NO ACTIVE PNR - DISPLAY OR SELL A PNR FIRST'
+    RETURN
+  END
+  NEWNAME = LASTNM || '/' || FIRSTNM
+  PKEY = 'P' || CURPNR || '00'
+  EXEC CICS READ FILE('sabre') INTO(REC) RIDFLD(PKEY) UPDATE END-EXEC
+  RR = EIBRESP
+  IF RR = 13 THEN DO
+    CALL APPEND '*** PNR ' || STRIP(CURPNR) || ' not found'
+    RETURN
+  END
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Name read failed RESP=' || RR
+    RETURN
+  END
+  REC = OVERLAY(LEFT(NEWNAME, 24), REC, 8, 24)
+  EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+  IF EIBRESP \= 0 THEN DO
+    CALL APPEND '*** Name rewrite failed RESP=' || EIBRESP
+    RETURN
+  END
+  CALL APPEND 'Name ' || NEWNAME || ' set in ' || STRIP(CURPNR)
+  RETURN
+
+/* --- 9<digits>-<H/B/T>  PNR phone field ------------------------- */
+DO_PHONE: PROCEDURE EXPOSE CURPNR HIST.
+  PARSE ARG CMD
+  BODY = STRIP(SUBSTR(CMD, 2))                   /* text after '9' */
+  IF BODY = '' THEN DO
+    CALL APPEND '*** Usage: 9<number>-<H/B/T>  (e.g. 9203555121-B)'
+    RETURN
+  END
+  IF CURPNR = '' THEN DO
+    CALL APPEND '*** NO ACTIVE PNR - DISPLAY OR SELL A PNR FIRST'
+    RETURN
+  END
+  PKEY = 'P' || CURPNR || '00'
+  EXEC CICS READ FILE('sabre') INTO(REC) RIDFLD(PKEY) UPDATE END-EXEC
+  RR = EIBRESP
+  IF RR = 13 THEN DO
+    CALL APPEND '*** PNR ' || STRIP(CURPNR) || ' not found'
+    RETURN
+  END
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Phone read failed RESP=' || RR
+    RETURN
+  END
+  REC = OVERLAY(LEFT(BODY, 13), REC, 94, 13)
+  EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+  IF EIBRESP \= 0 THEN DO
+    CALL APPEND '*** Phone rewrite failed RESP=' || EIBRESP
+    RETURN
+  END
+  CALL APPEND 'Phone ' || BODY || ' added to ' || STRIP(CURPNR)
+  RETURN
+
+/* --- 7TAW<date>/  PNR ticketing field --------------------------- */
+DO_TKT: PROCEDURE EXPOSE CURPNR HIST.
+  PARSE ARG CMD
+  BODY = STRIP(SUBSTR(CMD, 2))                   /* text after '7' */
+  IF RIGHT(BODY,1) = '/' THEN BODY = LEFT(BODY, LENGTH(BODY) - 1)
+  IF BODY = '' THEN DO
+    CALL APPEND '*** Usage: 7TAW<date>/  (e.g. 7TAW15JUN/)'
+    RETURN
+  END
+  IF CURPNR = '' THEN DO
+    CALL APPEND '*** NO ACTIVE PNR - DISPLAY OR SELL A PNR FIRST'
+    RETURN
+  END
+  PKEY = 'P' || CURPNR || '00'
+  EXEC CICS READ FILE('sabre') INTO(REC) RIDFLD(PKEY) UPDATE END-EXEC
+  RR = EIBRESP
+  IF RR = 13 THEN DO
+    CALL APPEND '*** PNR ' || STRIP(CURPNR) || ' not found'
+    RETURN
+  END
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Ticketing read failed RESP=' || RR
+    RETURN
+  END
+  REC = OVERLAY(LEFT(BODY, 8), REC, 107, 8)
+  EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+  IF EIBRESP \= 0 THEN DO
+    CALL APPEND '*** Ticketing rewrite failed RESP=' || EIBRESP
+    RETURN
+  END
+  CALL APPEND 'Ticketing ' || BODY || ' set in ' || STRIP(CURPNR)
+  RETURN
+
+/* --- 6<name>  PNR received-from field ---------------------------- */
+DO_RCVD: PROCEDURE EXPOSE CURPNR HIST.
+  PARSE ARG CMD
+  BODY = STRIP(SUBSTR(CMD, 2))                   /* text after '6' */
+  IF BODY = '' THEN DO
+    CALL APPEND '*** Usage: 6<name>  (e.g. 6SMITH)'
+    RETURN
+  END
+  IF CURPNR = '' THEN DO
+    CALL APPEND '*** NO ACTIVE PNR - DISPLAY OR SELL A PNR FIRST'
+    RETURN
+  END
+  PKEY = 'P' || CURPNR || '00'
+  EXEC CICS READ FILE('sabre') INTO(REC) RIDFLD(PKEY) UPDATE END-EXEC
+  RR = EIBRESP
+  IF RR = 13 THEN DO
+    CALL APPEND '*** PNR ' || STRIP(CURPNR) || ' not found'
+    RETURN
+  END
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Received-from read failed RESP=' || RR
+    RETURN
+  END
+  REC = OVERLAY(LEFT(BODY, 6), REC, 115, 6)
+  EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+  IF EIBRESP \= 0 THEN DO
+    CALL APPEND '*** Received-from rewrite failed RESP=' || EIBRESP
+    RETURN
+  END
+  CALL APPEND 'Received from ' || BODY || ' in ' || STRIP(CURPNR)
+  RETURN
+
 
 /* ================================================================ */
 /* PNR RECORD HELPERS                                               */
@@ -1209,6 +1747,12 @@ SHOW_PNR: PROCEDURE EXPOSE HIST. fareTypes. paxTypes.
   CALL APPEND LEFT(L, 78)
   IF PTYP \= '' THEN CALL APPEND '   Type: ' || paxTypes.PTYP
   IF FCLS \= '' THEN CALL APPEND '   Fare: ' || FCLS || ' (' || fareTypes.FCLS || ') $' || STRIP(FAMT) || '.00'
+  PHON = STRIP(SUBSTR(REC,94,13),'T')
+  TKTF = STRIP(SUBSTR(REC,107,8),'T')
+  RCVF = STRIP(SUBSTR(REC,115,6),'T')
+  IF PHON \= '' THEN CALL APPEND '   Phone: ' || PHON
+  IF TKTF \= '' THEN CALL APPEND '   Tktg:  ' || TKTF
+  IF RCVF \= '' THEN CALL APPEND '   Rcvd:  ' || RCVF
   RETURN
 
 /* Normalize a typed locator: uppercase, trim, pad to 6. */
@@ -1302,7 +1846,8 @@ DISPLAYFLIGHTS: PROCEDURE EXPOSE NCAND CAND. HIST. FLIGHTS.
   ELSE CALL APPEND 'Use SELL <n> to book.'
   RETURN
 
-GENERATEFLIGHTS: PROCEDURE EXPOSE FLIGHTS. airlines. flightNumRange. eqSeats.
+GENERATEFLIGHTS: PROCEDURE EXPOSE FLIGHTS. airlines. flightNumRange. eqSeats.,
+                 aptRegion.
   PARSE ARG QDATE, DEPAPT, ARRAPT, TIMEFILTER
   FLIGHTS.0 = 0
   USEDNUMS = ''
@@ -1361,7 +1906,7 @@ GENERATEFLIGHTS: PROCEDURE EXPOSE FLIGHTS. airlines. flightNumRange. eqSeats.
   END
   RETURN
 
-GETROUTEEQUIPMENT: PROCEDURE
+GETROUTEEQUIPMENT: PROCEDURE EXPOSE aptRegion.
   PARSE ARG DEP, ARR
   CALL GETAIRPORTREGION DEP
   DEPR = RESULT
@@ -1377,19 +1922,13 @@ GETROUTEEQUIPMENT: PROCEDURE
     RETURN 'B789 B77W B77W B789 B77W'
   RETURN 'B789 A350 B77W A350 B789'
 
-GETAIRPORTREGION: PROCEDURE
+GETAIRPORTREGION: PROCEDURE EXPOSE aptRegion.
   PARSE ARG CODE
-  NA = 'JFK LAX ORD DFW DEN SFO LAS SEA MCO EWR MIA PHX IAH BOS MSP DTW FLL CLT LGA BWI SLC YYZ YVR YUL'
-  EU = 'LHR CDG AMS FRA IST MAD BCN LGW MUC FCO SVO DME DUB ZRH CPH OSL ARN VIE BRU MXP'
-  AP = 'PEK HND HKG ICN BKK SIN CGK KUL DEL BOM SYD MEL AKL KIX TPE MNL CAN PVG NRT'
-  ME = 'DXB DOH AUH CAI JNB CPT TLV BAH RUH JED MCT'
-  LA = 'GRU MEX BOG LIM SCL GIG EZE PTY CUN UIO'
-  IF WORDPOS(CODE, NA) > 0 THEN RETURN 'NA'
-  IF WORDPOS(CODE, EU) > 0 THEN RETURN 'EU'
-  IF WORDPOS(CODE, AP) > 0 THEN RETURN 'AP'
-  IF WORDPOS(CODE, ME) > 0 THEN RETURN 'ME'
-  IF WORDPOS(CODE, LA) > 0 THEN RETURN 'LA'
-  RETURN 'OT'
+  /* Region comes from the LOADAIRPORTS data (aptRegion.<CODE>); an unset
+   * tail resolves to its uppercased name, which means "unknown" -> 'OT'. */
+  R = VALUE('aptRegion.' || CODE)
+  IF R = 'APTREGION.' || CODE THEN RETURN 'OT'
+  RETURN R
 
 GETFLIGHTTIME: PROCEDURE
   PARSE ARG DEP, ARR
@@ -1453,97 +1992,10 @@ GETAIRPORTNAME: PROCEDURE EXPOSE airports.
 /* ================================================================ */
 
 INIT_TABLES: PROCEDURE EXPOSE airports. eqDesc. eqSeats. seatConfig.,
-             airlines. flightNumRange. fareTypes. paxTypes.
-  /* North America */
-  airports.ATL = 'Atlanta Hartsfield'
-  airports.LAX = 'Los Angeles Intl'
-  airports.ORD = 'Chicago OHare'
-  airports.DFW = 'Dallas Fort Worth'
-  airports.DEN = 'Denver Intl'
-  airports.JFK = 'New York Kennedy'
-  airports.SFO = 'San Francisco Intl'
-  airports.LAS = 'Las Vegas McCarran'
-  airports.SEA = 'Seattle-Tacoma'
-  airports.MCO = 'Orlando Intl'
-  airports.EWR = 'Newark Liberty'
-  airports.MIA = 'Miami Intl'
-  airports.PHX = 'Phoenix Sky Harbor'
-  airports.IAH = 'Houston Bush'
-  airports.BOS = 'Boston Logan'
-  airports.MSP = 'Minneapolis-St Paul'
-  airports.DTW = 'Detroit Metro'
-  airports.FLL = 'Fort Lauderdale'
-  airports.CLT = 'Charlotte Douglas'
-  airports.LGA = 'New York LaGuardia'
-  airports.BWI = 'Baltimore Washington'
-  airports.SLC = 'Salt Lake City'
-  airports.YYZ = 'Toronto Pearson'
-  airports.YVR = 'Vancouver Intl'
-  airports.YUL = 'Montreal Trudeau'
-  /* Europe */
-  airports.LHR = 'London Heathrow'
-  airports.CDG = 'Paris de Gaulle'
-  airports.AMS = 'Amsterdam Schiphol'
-  airports.FRA = 'Frankfurt Intl'
-  airports.IST = 'Istanbul Intl'
-  airports.MAD = 'Madrid Barajas'
-  airports.BCN = 'Barcelona El Prat'
-  airports.LGW = 'London Gatwick'
-  airports.MUC = 'Munich Intl'
-  airports.FCO = 'Rome Fiumicino'
-  airports.SVO = 'Moscow Sheremetyevo'
-  airports.DME = 'Moscow Domodedovo'
-  airports.DUB = 'Dublin Intl'
-  airports.ZRH = 'Zurich Intl'
-  airports.CPH = 'Copenhagen Kastrup'
-  airports.OSL = 'Oslo Gardermoen'
-  airports.ARN = 'Stockholm Arlanda'
-  airports.VIE = 'Vienna Intl'
-  airports.BRU = 'Brussels Intl'
-  airports.MXP = 'Milan Malpensa'
-  /* Asia Pacific */
-  airports.PEK = 'Beijing Capital'
-  airports.HND = 'Tokyo Haneda'
-  airports.DXB = 'Dubai Intl'
-  airports.HKG = 'Hong Kong Intl'
-  airports.ICN = 'Seoul Incheon'
-  airports.BKK = 'Bangkok Suvarnabhumi'
-  airports.SIN = 'Singapore Changi'
-  airports.CGK = 'Jakarta Soekarno'
-  airports.KUL = 'Kuala Lumpur Intl'
-  airports.DEL = 'Delhi Indira Gandhi'
-  airports.BOM = 'Mumbai Intl'
-  airports.SYD = 'Sydney Kingsford'
-  airports.MEL = 'Melbourne Intl'
-  airports.AKL = 'Auckland Intl'
-  airports.KIX = 'Osaka Kansai'
-  airports.TPE = 'Taipei Taoyuan'
-  airports.MNL = 'Manila Ninoy Aquino'
-  airports.CAN = 'Guangzhou Baiyun'
-  airports.PVG = 'Shanghai Pudong'
-  airports.NRT = 'Tokyo Narita'
-  /* Middle East and Africa */
-  airports.DOH = 'Doha Hamad'
-  airports.AUH = 'Abu Dhabi Intl'
-  airports.CAI = 'Cairo Intl'
-  airports.JNB = 'Johannesburg Tambo'
-  airports.CPT = 'Cape Town Intl'
-  airports.TLV = 'Tel Aviv Ben Gurion'
-  airports.BAH = 'Bahrain Intl'
-  airports.RUH = 'Riyadh King Khalid'
-  airports.JED = 'Jeddah Abdulaziz'
-  airports.MCT = 'Muscat Intl'
-  /* Latin America */
-  airports.GRU = 'Sao Paulo Guarulhos'
-  airports.MEX = 'Mexico City Intl'
-  airports.BOG = 'Bogota El Dorado'
-  airports.LIM = 'Lima Jorge Chavez'
-  airports.SCL = 'Santiago Intl'
-  airports.GIG = 'Rio de Janeiro Galeao'
-  airports.EZE = 'Buenos Aires Ezeiza'
-  airports.PTY = 'Panama City Tocumen'
-  airports.CUN = 'Cancun Intl'
-  airports.UIO = 'Quito Intl'
+             airlines. flightNumRange. fareTypes. paxTypes.,
+             cityCode. aptRegion. routeMiles. regionMiles.
+  /* Airports + city index + region map (hundreds of entries). */
+  CALL LOADAIRPORTS
 
   /* Equipment descriptions */
   eqDesc.A320 = 'Airbus A320-100'
@@ -1600,4 +2052,670 @@ INIT_TABLES: PROCEDURE EXPOSE airports. eqDesc. eqSeats. seatConfig.,
   paxTypes.INF = 'INFANT'
   paxTypes.SNR = 'SENIOR'
   paxTypes.STU = 'STUDENT'
+
+  /* Curated great-circle miles for popular routes (DD command). Keys are
+   * DEP||ARR; DO_DD tries the reverse pair too, then a region fallback. */
+  routeMiles.JFKLHR = 3451
+  routeMiles.JFKLAX = 2475
+  routeMiles.JFKZRH = 3936
+  routeMiles.JFKCDG = 3635
+  routeMiles.JFKFRA = 3851
+  routeMiles.JFKGRU = 4759
+  routeMiles.JFKNRT = 6740
+  routeMiles.JFKDXB = 6836
+  routeMiles.JFKSFO = 2586
+  routeMiles.JFKMIA = 1090
+  routeMiles.JFKORD = 740
+  routeMiles.LAXNRT = 5451
+  routeMiles.LAXSYD = 7488
+  routeMiles.LAXHND = 5478
+  routeMiles.LAXLHR = 5456
+  routeMiles.LAXSFO = 337
+  routeMiles.SFOHKG = 6927
+  routeMiles.SFOSIN = 8446
+  routeMiles.LHRDXB = 3414
+  routeMiles.LHRSIN = 6764
+  routeMiles.LHRHKG = 5994
+  routeMiles.LHRJFK = 3451
+  routeMiles.LHRCDG = 214
+  routeMiles.LHRFRA = 406
+  routeMiles.LHRZRH = 489
+  routeMiles.FRADXB = 2989
+  routeMiles.DXBSIN = 3633
+  routeMiles.DXBSYD = 7484
+  routeMiles.SINSYD = 3907
+  routeMiles.HKGSIN = 1594
+  routeMiles.SINKUL = 184
+  routeMiles.ORDLHR = 3953
+
+  /* Region-pair fallback miles (R1||R2); DO_DD tries R2||R1 too. */
+  regionMiles.NANA = 1200
+  regionMiles.NAEU = 4200
+  regionMiles.NAAP = 7000
+  regionMiles.NAME = 7200
+  regionMiles.NAAF = 7600
+  regionMiles.NASA = 3300
+  regionMiles.EUEU = 700
+  regionMiles.EUAP = 5800
+  regionMiles.EUME = 2500
+  regionMiles.EUAF = 3400
+  regionMiles.EUSA = 6200
+  regionMiles.APAP = 2400
+  regionMiles.APME = 3600
+  regionMiles.APAF = 6400
+  regionMiles.APSA = 11500
+  regionMiles.MEME = 900
+  regionMiles.MEAF = 3000
+  regionMiles.MESA = 8000
+  regionMiles.AFAF = 2100
+  regionMiles.AFSA = 4900
+  regionMiles.SASA = 1600
+  RETURN
+
+/* ================================================================ */
+/* REFERENCE DATA LOADERS (airports, city index, airlines)          */
+/* ================================================================ */
+
+/* Build airports.<CODE>, aptRegion.<CODE> and the reverse city index
+ * cityCode.<UPPER-NOSPACE-CITY> from one data block. Called every turn
+ * from INIT_TABLES (airports power availability, schedules, DD and
+ * decode). APT does the per-row work. */
+APT: PROCEDURE EXPOSE airports. cityCode. aptRegion.
+  PARSE ARG CODE, CITY, NAME, REGION
+  airports.CODE  = CITY || ' - ' || NAME
+  aptRegion.CODE = REGION
+  KEY = SPACE(TRANSLATE(CITY), 0)               /* uppercase, drop spaces */
+  EXIST = VALUE('cityCode.' || KEY)
+  IF EXIST = 'CITYCODE.' || KEY THEN cityCode.KEY = CODE
+  ELSE IF WORDPOS(CODE, EXIST) = 0 THEN cityCode.KEY = EXIST CODE
+  RETURN
+
+/* Build airlineName.<IATA> and airlineName.<ICAO>. Loaded lazily (only
+ * when a 2-letter airline decode is issued) so the common turn stays lean.
+ * NOTE: never write the W-slash-star form here -- a literal slash-star
+ * inside a comment opens a nested comment and eats the rest of the file. */
+AIRL: PROCEDURE EXPOSE airlineName.
+  PARSE ARG IATA, ICAO, NAME
+  airlineName.IATA = NAME
+  IF ICAO \= '' THEN airlineName.ICAO = NAME
+  RETURN
+
+LOADAIRPORTS: PROCEDURE EXPOSE airports. cityCode. aptRegion.
+  CALL APT 'ATL','Atlanta','Hartsfield Jackson Intl','NA'
+  CALL APT 'LAX','Los Angeles','Los Angeles Intl','NA'
+  CALL APT 'ORD','Chicago','OHare Intl','NA'
+  CALL APT 'DFW','Dallas','Dallas Fort Worth Intl','NA'
+  CALL APT 'DEN','Denver','Denver Intl','NA'
+  CALL APT 'JFK','New York','John F Kennedy Intl','NA'
+  CALL APT 'SFO','San Francisco','San Francisco Intl','NA'
+  CALL APT 'LAS','Las Vegas','Harry Reid Intl','NA'
+  CALL APT 'SEA','Seattle','Seattle Tacoma Intl','NA'
+  CALL APT 'MCO','Orlando','Orlando Intl','NA'
+  CALL APT 'EWR','New York','Newark Liberty Intl','NA'
+  CALL APT 'MIA','Miami','Miami Intl','NA'
+  CALL APT 'PHX','Phoenix','Sky Harbor Intl','NA'
+  CALL APT 'IAH','Houston','George Bush Intercontinental','NA'
+  CALL APT 'BOS','Boston','Logan Intl','NA'
+  CALL APT 'MSP','Minneapolis','Minneapolis St Paul Intl','NA'
+  CALL APT 'DTW','Detroit','Detroit Metro Wayne County','NA'
+  CALL APT 'FLL','Fort Lauderdale','Fort Lauderdale Hollywood Intl','NA'
+  CALL APT 'CLT','Charlotte','Charlotte Douglas Intl','NA'
+  CALL APT 'LGA','New York','LaGuardia','NA'
+  CALL APT 'BWI','Baltimore','Baltimore Washington Intl','NA'
+  CALL APT 'SAN','San Diego','San Diego Intl','NA'
+  CALL APT 'PDX','Portland','Portland Intl','NA'
+  CALL APT 'STL','St Louis','St Louis Lambert Intl','NA'
+  CALL APT 'BNA','Nashville','Nashville Intl','NA'
+  CALL APT 'AUS','Austin','Austin Bergstrom Intl','NA'
+  CALL APT 'MCI','Kansas City','Kansas City Intl','NA'
+  CALL APT 'CLE','Cleveland','Cleveland Hopkins Intl','NA'
+  CALL APT 'CMH','Columbus','John Glenn Columbus Intl','NA'
+  CALL APT 'IND','Indianapolis','Indianapolis Intl','NA'
+  CALL APT 'MKE','Milwaukee','Milwaukee Mitchell Intl','NA'
+  CALL APT 'RDU','Raleigh','Raleigh Durham Intl','NA'
+  CALL APT 'SMF','Sacramento','Sacramento Intl','NA'
+  CALL APT 'SJC','San Jose','San Jose Intl','NA'
+  CALL APT 'OAK','Oakland','Oakland Intl','NA'
+  CALL APT 'ONT','Ontario','Ontario Intl','NA'
+  CALL APT 'SNA','Santa Ana','John Wayne Orange County','NA'
+  CALL APT 'BUR','Burbank','Hollywood Burbank','NA'
+  CALL APT 'PIT','Pittsburgh','Pittsburgh Intl','NA'
+  CALL APT 'CVG','Cincinnati','Cincinnati Northern Kentucky','NA'
+  CALL APT 'MEM','Memphis','Memphis Intl','NA'
+  CALL APT 'OKC','Oklahoma City','Will Rogers World','NA'
+  CALL APT 'TUL','Tulsa','Tulsa Intl','NA'
+  CALL APT 'ABQ','Albuquerque','Albuquerque Sunport','NA'
+  CALL APT 'TUS','Tucson','Tucson Intl','NA'
+  CALL APT 'ELP','El Paso','El Paso Intl','NA'
+  CALL APT 'OMA','Omaha','Eppley Airfield','NA'
+  CALL APT 'TPA','Tampa','Tampa Intl','NA'
+  CALL APT 'PBI','West Palm Beach','Palm Beach Intl','NA'
+  CALL APT 'RSW','Fort Myers','Southwest Florida Intl','NA'
+  CALL APT 'JAX','Jacksonville','Jacksonville Intl','NA'
+  CALL APT 'MSY','New Orleans','Louis Armstrong Intl','NA'
+  CALL APT 'SAT','San Antonio','San Antonio Intl','NA'
+  CALL APT 'HOU','Houston','William P Hobby','NA'
+  CALL APT 'DAL','Dallas','Dallas Love Field','NA'
+  CALL APT 'MDW','Chicago','Midway Intl','NA'
+  CALL APT 'HNL','Honolulu','Daniel K Inouye Intl','NA'
+  CALL APT 'OGG','Kahului','Kahului','NA'
+  CALL APT 'ANC','Anchorage','Ted Stevens Anchorage Intl','NA'
+  CALL APT 'RIC','Richmond','Richmond Intl','NA'
+  CALL APT 'ORF','Norfolk','Norfolk Intl','NA'
+  CALL APT 'GRR','Grand Rapids','Gerald R Ford Intl','NA'
+  CALL APT 'BUF','Buffalo','Buffalo Niagara Intl','NA'
+  CALL APT 'ROC','Rochester','Greater Rochester Intl','NA'
+  CALL APT 'ALB','Albany','Albany Intl','NA'
+  CALL APT 'PVD','Providence','T F Green Intl','NA'
+  CALL APT 'BDL','Hartford','Bradley Intl','NA'
+  CALL APT 'SYR','Syracuse','Syracuse Hancock Intl','NA'
+  CALL APT 'GSO','Greensboro','Piedmont Triad Intl','NA'
+  CALL APT 'CHS','Charleston','Charleston Intl','NA'
+  CALL APT 'SAV','Savannah','Savannah Hilton Head Intl','NA'
+  CALL APT 'MYR','Myrtle Beach','Myrtle Beach Intl','NA'
+  CALL APT 'GSP','Greenville','Greenville Spartanburg Intl','NA'
+  CALL APT 'BHM','Birmingham','Birmingham Shuttlesworth Intl','NA'
+  CALL APT 'JAN','Jackson','Jackson Medgar Wiley Evers Intl','NA'
+  CALL APT 'LIT','Little Rock','Clinton National','NA'
+  CALL APT 'DSM','Des Moines','Des Moines Intl','NA'
+  CALL APT 'ICT','Wichita','Wichita Eisenhower Intl','NA'
+  CALL APT 'BOI','Boise','Boise Airport','NA'
+  CALL APT 'GEG','Spokane','Spokane Intl','NA'
+  CALL APT 'RNO','Reno','Reno Tahoe Intl','NA'
+  CALL APT 'SLC','Salt Lake City','Salt Lake City Intl','NA'
+  CALL APT 'COS','Colorado Springs','Colorado Springs Airport','NA'
+  CALL APT 'PSP','Palm Springs','Palm Springs Intl','NA'
+  CALL APT 'FAT','Fresno','Fresno Yosemite Intl','NA'
+  CALL APT 'LGB','Long Beach','Long Beach Airport','NA'
+  CALL APT 'DAY','Dayton','Dayton Intl','NA'
+  CALL APT 'MSN','Madison','Dane County Regional','NA'
+  CALL APT 'PWM','Portland','Portland Intl Jetport','NA'
+  CALL APT 'BTV','Burlington','Burlington Intl','NA'
+  CALL APT 'TYS','Knoxville','McGhee Tyson','NA'
+  CALL APT 'GPT','Gulfport','Gulfport Biloxi Intl','NA'
+  CALL APT 'PNS','Pensacola','Pensacola Intl','NA'
+  CALL APT 'XNA','Fayetteville','Northwest Arkansas','NA'
+  CALL APT 'FAR','Fargo','Hector Intl','NA'
+  CALL APT 'BIL','Billings','Billings Logan Intl','NA'
+  CALL APT 'JAC','Jackson','Jackson Hole','NA'
+  CALL APT 'EUG','Eugene','Eugene Airport','NA'
+  CALL APT 'YYZ','Toronto','Toronto Pearson Intl','NA'
+  CALL APT 'YVR','Vancouver','Vancouver Intl','NA'
+  CALL APT 'YUL','Montreal','Montreal Trudeau Intl','NA'
+  CALL APT 'YYC','Calgary','Calgary Intl','NA'
+  CALL APT 'YEG','Edmonton','Edmonton Intl','NA'
+  CALL APT 'YOW','Ottawa','Ottawa Macdonald Cartier Intl','NA'
+  CALL APT 'YWG','Winnipeg','Winnipeg James Richardson Intl','NA'
+  CALL APT 'YHZ','Halifax','Halifax Stanfield Intl','NA'
+  CALL APT 'YQB','Quebec City','Quebec City Jean Lesage Intl','NA'
+  CALL APT 'YYT','St Johns','St Johns Intl','NA'
+  CALL APT 'YXE','Saskatoon','Saskatoon Diefenbaker Intl','NA'
+  CALL APT 'YQR','Regina','Regina Intl','NA'
+  CALL APT 'YLW','Kelowna','Kelowna Intl','NA'
+  CALL APT 'YVI','Victoria','Victoria Intl','NA'
+  CALL APT 'LHR','London','Heathrow','EU'
+  CALL APT 'LGW','London','Gatwick','EU'
+  CALL APT 'STN','London','Stansted','EU'
+  CALL APT 'LTN','London','Luton','EU'
+  CALL APT 'LCY','London','London City','EU'
+  CALL APT 'MAN','Manchester','Manchester Airport','EU'
+  CALL APT 'BHX','Birmingham','Birmingham Airport','EU'
+  CALL APT 'EDI','Edinburgh','Edinburgh Airport','EU'
+  CALL APT 'GLA','Glasgow','Glasgow Airport','EU'
+  CALL APT 'BRS','Bristol','Bristol Airport','EU'
+  CALL APT 'NCL','Newcastle','Newcastle Airport','EU'
+  CALL APT 'LPL','Liverpool','Liverpool John Lennon','EU'
+  CALL APT 'BFS','Belfast','Belfast Intl','EU'
+  CALL APT 'DUB','Dublin','Dublin Airport','EU'
+  CALL APT 'ORK','Cork','Cork Airport','EU'
+  CALL APT 'CDG','Paris','Charles de Gaulle','EU'
+  CALL APT 'ORY','Paris','Orly','EU'
+  CALL APT 'NCE','Nice','Nice Cote dAzur','EU'
+  CALL APT 'LYS','Lyon','Lyon Saint Exupery','EU'
+  CALL APT 'MRS','Marseille','Marseille Provence','EU'
+  CALL APT 'TLS','Toulouse','Toulouse Blagnac','EU'
+  CALL APT 'NTE','Nantes','Nantes Atlantique','EU'
+  CALL APT 'BOD','Bordeaux','Bordeaux Merignac','EU'
+  CALL APT 'AMS','Amsterdam','Schiphol','EU'
+  CALL APT 'FRA','Frankfurt','Frankfurt Airport','EU'
+  CALL APT 'MUC','Munich','Munich Airport','EU'
+  CALL APT 'DUS','Dusseldorf','Dusseldorf Airport','EU'
+  CALL APT 'HAM','Hamburg','Hamburg Airport','EU'
+  CALL APT 'STR','Stuttgart','Stuttgart Airport','EU'
+  CALL APT 'CGN','Cologne','Cologne Bonn','EU'
+  CALL APT 'TXL','Berlin','Berlin Tegel','EU'
+  CALL APT 'BER','Berlin','Berlin Brandenburg','EU'
+  CALL APT 'HAJ','Hanover','Hanover Airport','EU'
+  CALL APT 'NUE','Nuremberg','Nuremberg Airport','EU'
+  CALL APT 'LEJ','Leipzig','Leipzig Halle','EU'
+  CALL APT 'BRU','Brussels','Brussels Airport','EU'
+  CALL APT 'ANR','Antwerp','Antwerp Intl','EU'
+  CALL APT 'ZRH','Zurich','Zurich Airport','EU'
+  CALL APT 'GVA','Geneva','Geneva Airport','EU'
+  CALL APT 'BSL','Basel','EuroAirport Basel','EU'
+  CALL APT 'VIE','Vienna','Vienna Intl','EU'
+  CALL APT 'MAD','Madrid','Adolfo Suarez Barajas','EU'
+  CALL APT 'BCN','Barcelona','Barcelona El Prat','EU'
+  CALL APT 'VLC','Valencia','Valencia Airport','EU'
+  CALL APT 'SVQ','Seville','Seville Airport','EU'
+  CALL APT 'AGP','Malaga','Malaga Costa del Sol','EU'
+  CALL APT 'BIO','Bilbao','Bilbao Airport','EU'
+  CALL APT 'PMI','Palma','Palma de Mallorca','EU'
+  CALL APT 'LPA','Las Palmas','Gran Canaria','EU'
+  CALL APT 'TFS','Tenerife','Tenerife South','EU'
+  CALL APT 'FCO','Rome','Fiumicino','EU'
+  CALL APT 'CIA','Rome','Ciampino','EU'
+  CALL APT 'MXP','Milan','Malpensa','EU'
+  CALL APT 'LIN','Milan','Linate','EU'
+  CALL APT 'BGY','Milan','Bergamo Orio al Serio','EU'
+  CALL APT 'VCE','Venice','Venice Marco Polo','EU'
+  CALL APT 'NAP','Naples','Naples Intl','EU'
+  CALL APT 'BLQ','Bologna','Bologna Guglielmo Marconi','EU'
+  CALL APT 'PSA','Pisa','Pisa Intl','EU'
+  CALL APT 'CTA','Catania','Catania Fontanarossa','EU'
+  CALL APT 'PMO','Palermo','Palermo Airport','EU'
+  CALL APT 'LIS','Lisbon','Humberto Delgado','EU'
+  CALL APT 'OPO','Porto','Porto Airport','EU'
+  CALL APT 'FAO','Faro','Faro Airport','EU'
+  CALL APT 'ATH','Athens','Athens Intl','EU'
+  CALL APT 'SKG','Thessaloniki','Thessaloniki Airport','EU'
+  CALL APT 'HER','Heraklion','Heraklion Airport','EU'
+  CALL APT 'HEL','Helsinki','Helsinki Vantaa','EU'
+  CALL APT 'ARN','Stockholm','Stockholm Arlanda','EU'
+  CALL APT 'GOT','Gothenburg','Gothenburg Landvetter','EU'
+  CALL APT 'MMX','Malmo','Malmo Airport','EU'
+  CALL APT 'OSL','Oslo','Oslo Gardermoen','EU'
+  CALL APT 'BGO','Bergen','Bergen Flesland','EU'
+  CALL APT 'TRD','Trondheim','Trondheim Vaernes','EU'
+  CALL APT 'SVG','Stavanger','Stavanger Sola','EU'
+  CALL APT 'CPH','Copenhagen','Copenhagen Kastrup','EU'
+  CALL APT 'AAL','Aalborg','Aalborg Airport','EU'
+  CALL APT 'BLL','Billund','Billund Airport','EU'
+  CALL APT 'KEF','Reykjavik','Keflavik Intl','EU'
+  CALL APT 'WAW','Warsaw','Warsaw Chopin','EU'
+  CALL APT 'KRK','Krakow','Krakow John Paul II','EU'
+  CALL APT 'GDN','Gdansk','Gdansk Lech Walesa','EU'
+  CALL APT 'PRG','Prague','Vaclav Havel Prague','EU'
+  CALL APT 'BUD','Budapest','Budapest Ferenc Liszt','EU'
+  CALL APT 'OTP','Bucharest','Henri Coanda Intl','EU'
+  CALL APT 'SOF','Sofia','Sofia Airport','EU'
+  CALL APT 'ZAG','Zagreb','Zagreb Franjo Tudman','EU'
+  CALL APT 'BEG','Belgrade','Belgrade Nikola Tesla','EU'
+  CALL APT 'LJU','Ljubljana','Ljubljana Joze Pucnik','EU'
+  CALL APT 'RIX','Riga','Riga Intl','EU'
+  CALL APT 'TLL','Tallinn','Tallinn Lennart Meri','EU'
+  CALL APT 'VNO','Vilnius','Vilnius Airport','EU'
+  CALL APT 'KBP','Kyiv','Boryspil Intl','EU'
+  CALL APT 'IST','Istanbul','Istanbul Airport','EU'
+  CALL APT 'SAW','Istanbul','Sabiha Gokcen','EU'
+  CALL APT 'AYT','Antalya','Antalya Airport','EU'
+  CALL APT 'ESB','Ankara','Esenboga Intl','EU'
+  CALL APT 'ADB','Izmir','Adnan Menderes','EU'
+  CALL APT 'SVO','Moscow','Sheremetyevo','EU'
+  CALL APT 'DME','Moscow','Domodedovo','EU'
+  CALL APT 'VKO','Moscow','Vnukovo','EU'
+  CALL APT 'LED','St Petersburg','Pulkovo','EU'
+  CALL APT 'SVX','Yekaterinburg','Koltsovo','EU'
+  CALL APT 'OVB','Novosibirsk','Tolmachevo','EU'
+  CALL APT 'PEK','Beijing','Beijing Capital Intl','AP'
+  CALL APT 'PKX','Beijing','Beijing Daxing Intl','AP'
+  CALL APT 'PVG','Shanghai','Shanghai Pudong Intl','AP'
+  CALL APT 'SHA','Shanghai','Shanghai Hongqiao Intl','AP'
+  CALL APT 'CAN','Guangzhou','Guangzhou Baiyun Intl','AP'
+  CALL APT 'SZX','Shenzhen','Shenzhen Baoan Intl','AP'
+  CALL APT 'CTU','Chengdu','Chengdu Tianfu Intl','AP'
+  CALL APT 'CKG','Chongqing','Chongqing Jiangbei Intl','AP'
+  CALL APT 'XIY','Xian','Xian Xianyang Intl','AP'
+  CALL APT 'KMG','Kunming','Kunming Changshui Intl','AP'
+  CALL APT 'HGH','Hangzhou','Hangzhou Xiaoshan Intl','AP'
+  CALL APT 'NKG','Nanjing','Nanjing Lukou Intl','AP'
+  CALL APT 'WUH','Wuhan','Wuhan Tianhe Intl','AP'
+  CALL APT 'TSN','Tianjin','Tianjin Binhai Intl','AP'
+  CALL APT 'XMN','Xiamen','Xiamen Gaoqi Intl','AP'
+  CALL APT 'HKG','Hong Kong','Hong Kong Intl','AP'
+  CALL APT 'MFM','Macau','Macau Intl','AP'
+  CALL APT 'TPE','Taipei','Taoyuan Intl','AP'
+  CALL APT 'TSA','Taipei','Songshan','AP'
+  CALL APT 'KHH','Kaohsiung','Kaohsiung Intl','AP'
+  CALL APT 'NRT','Tokyo','Narita Intl','AP'
+  CALL APT 'HND','Tokyo','Haneda','AP'
+  CALL APT 'KIX','Osaka','Kansai Intl','AP'
+  CALL APT 'ITM','Osaka','Itami','AP'
+  CALL APT 'NGO','Nagoya','Chubu Centrair Intl','AP'
+  CALL APT 'FUK','Fukuoka','Fukuoka Airport','AP'
+  CALL APT 'CTS','Sapporo','New Chitose','AP'
+  CALL APT 'OKA','Okinawa','Naha Airport','AP'
+  CALL APT 'ICN','Seoul','Incheon Intl','AP'
+  CALL APT 'GMP','Seoul','Gimpo Intl','AP'
+  CALL APT 'PUS','Busan','Gimhae Intl','AP'
+  CALL APT 'CJU','Jeju','Jeju Intl','AP'
+  CALL APT 'BKK','Bangkok','Suvarnabhumi','AP'
+  CALL APT 'DMK','Bangkok','Don Mueang Intl','AP'
+  CALL APT 'HKT','Phuket','Phuket Intl','AP'
+  CALL APT 'CNX','Chiang Mai','Chiang Mai Intl','AP'
+  CALL APT 'SIN','Singapore','Changi','AP'
+  CALL APT 'KUL','Kuala Lumpur','Kuala Lumpur Intl','AP'
+  CALL APT 'PEN','Penang','Penang Intl','AP'
+  CALL APT 'BKI','Kota Kinabalu','Kota Kinabalu Intl','AP'
+  CALL APT 'CGK','Jakarta','Soekarno Hatta Intl','AP'
+  CALL APT 'DPS','Denpasar','Ngurah Rai Intl','AP'
+  CALL APT 'SUB','Surabaya','Juanda Intl','AP'
+  CALL APT 'MNL','Manila','Ninoy Aquino Intl','AP'
+  CALL APT 'CEB','Cebu','Mactan Cebu Intl','AP'
+  CALL APT 'DVO','Davao','Francisco Bangoy Intl','AP'
+  CALL APT 'SGN','Ho Chi Minh City','Tan Son Nhat Intl','AP'
+  CALL APT 'HAN','Hanoi','Noi Bai Intl','AP'
+  CALL APT 'DAD','Da Nang','Da Nang Intl','AP'
+  CALL APT 'RGN','Yangon','Yangon Intl','AP'
+  CALL APT 'PNH','Phnom Penh','Phnom Penh Intl','AP'
+  CALL APT 'REP','Siem Reap','Siem Reap Angkor Intl','AP'
+  CALL APT 'VTE','Vientiane','Wattay Intl','AP'
+  CALL APT 'DAC','Dhaka','Hazrat Shahjalal Intl','AP'
+  CALL APT 'CMB','Colombo','Bandaranaike Intl','AP'
+  CALL APT 'KTM','Kathmandu','Tribhuvan Intl','AP'
+  CALL APT 'DEL','Delhi','Indira Gandhi Intl','AP'
+  CALL APT 'BOM','Mumbai','Chhatrapati Shivaji Intl','AP'
+  CALL APT 'MAA','Chennai','Chennai Intl','AP'
+  CALL APT 'BLR','Bengaluru','Kempegowda Intl','AP'
+  CALL APT 'HYD','Hyderabad','Rajiv Gandhi Intl','AP'
+  CALL APT 'CCU','Kolkata','Netaji Subhas Chandra Bose','AP'
+  CALL APT 'COK','Kochi','Cochin Intl','AP'
+  CALL APT 'AMD','Ahmedabad','Sardar Vallabhbhai Patel','AP'
+  CALL APT 'PNQ','Pune','Pune Airport','AP'
+  CALL APT 'GOI','Goa','Goa Dabolim','AP'
+  CALL APT 'ISB','Islamabad','Islamabad Intl','AP'
+  CALL APT 'LHE','Lahore','Allama Iqbal Intl','AP'
+  CALL APT 'KHI','Karachi','Jinnah Intl','AP'
+  CALL APT 'TAS','Tashkent','Tashkent Intl','AP'
+  CALL APT 'ALA','Almaty','Almaty Intl','AP'
+  CALL APT 'NQZ','Astana','Astana Nursultan Nazarbayev','AP'
+  CALL APT 'ULN','Ulaanbaatar','Chinggis Khaan Intl','AP'
+  CALL APT 'SYD','Sydney','Sydney Kingsford Smith','AP'
+  CALL APT 'MEL','Melbourne','Melbourne Airport','AP'
+  CALL APT 'BNE','Brisbane','Brisbane Airport','AP'
+  CALL APT 'PER','Perth','Perth Airport','AP'
+  CALL APT 'ADL','Adelaide','Adelaide Airport','AP'
+  CALL APT 'OOL','Gold Coast','Gold Coast Airport','AP'
+  CALL APT 'CNS','Cairns','Cairns Airport','AP'
+  CALL APT 'DRW','Darwin','Darwin Intl','AP'
+  CALL APT 'HBA','Hobart','Hobart Airport','AP'
+  CALL APT 'CBR','Canberra','Canberra Airport','AP'
+  CALL APT 'AKL','Auckland','Auckland Airport','AP'
+  CALL APT 'CHC','Christchurch','Christchurch Airport','AP'
+  CALL APT 'WLG','Wellington','Wellington Airport','AP'
+  CALL APT 'ZQN','Queenstown','Queenstown Airport','AP'
+  CALL APT 'NAN','Nadi','Nadi Intl','AP'
+  CALL APT 'POM','Port Moresby','Jacksons Intl','AP'
+  CALL APT 'GUM','Guam','Antonio B Won Pat Intl','AP'
+  CALL APT 'DXB','Dubai','Dubai Intl','ME'
+  CALL APT 'DWC','Dubai','Al Maktoum Intl','ME'
+  CALL APT 'AUH','Abu Dhabi','Zayed Intl','ME'
+  CALL APT 'SHJ','Sharjah','Sharjah Intl','ME'
+  CALL APT 'DOH','Doha','Hamad Intl','ME'
+  CALL APT 'BAH','Manama','Bahrain Intl','ME'
+  CALL APT 'KWI','Kuwait City','Kuwait Intl','ME'
+  CALL APT 'MCT','Muscat','Muscat Intl','ME'
+  CALL APT 'RUH','Riyadh','King Khalid Intl','ME'
+  CALL APT 'JED','Jeddah','King Abdulaziz Intl','ME'
+  CALL APT 'DMM','Dammam','King Fahd Intl','ME'
+  CALL APT 'MED','Medina','Prince Mohammad Bin Abdulaziz','ME'
+  CALL APT 'AHB','Abha','Abha Intl','ME'
+  CALL APT 'TLV','Tel Aviv','Ben Gurion Intl','ME'
+  CALL APT 'AMM','Amman','Queen Alia Intl','ME'
+  CALL APT 'BEY','Beirut','Rafic Hariri Intl','ME'
+  CALL APT 'BGW','Baghdad','Baghdad Intl','ME'
+  CALL APT 'BSR','Basra','Basra Intl','ME'
+  CALL APT 'EBL','Erbil','Erbil Intl','ME'
+  CALL APT 'IKA','Tehran','Imam Khomeini Intl','ME'
+  CALL APT 'THR','Tehran','Mehrabad Intl','ME'
+  CALL APT 'GYD','Baku','Heydar Aliyev Intl','ME'
+  CALL APT 'EVN','Yerevan','Zvartnots Intl','ME'
+  CALL APT 'TBS','Tbilisi','Tbilisi Intl','ME'
+  CALL APT 'CAI','Cairo','Cairo Intl','AF'
+  CALL APT 'HRG','Hurghada','Hurghada Intl','AF'
+  CALL APT 'SSH','Sharm El Sheikh','Sharm El Sheikh Intl','AF'
+  CALL APT 'ASW','Aswan','Aswan Intl','AF'
+  CALL APT 'CMN','Casablanca','Mohammed V Intl','AF'
+  CALL APT 'RAK','Marrakech','Marrakech Menara','AF'
+  CALL APT 'FEZ','Fez','Fez Saiss','AF'
+  CALL APT 'TNG','Tangier','Tangier Ibn Battouta','AF'
+  CALL APT 'AGA','Agadir','Agadir Al Massira','AF'
+  CALL APT 'ALG','Algiers','Houari Boumediene','AF'
+  CALL APT 'ORN','Oran','Oran Es Senia','AF'
+  CALL APT 'TUN','Tunis','Tunis Carthage','AF'
+  CALL APT 'DJE','Djerba','Djerba Zarzis','AF'
+  CALL APT 'TIP','Tripoli','Tripoli Intl','AF'
+  CALL APT 'LOS','Lagos','Murtala Muhammed Intl','AF'
+  CALL APT 'ABV','Abuja','Nnamdi Azikiwe Intl','AF'
+  CALL APT 'PHC','Port Harcourt','Port Harcourt Intl','AF'
+  CALL APT 'ACC','Accra','Kotoka Intl','AF'
+  CALL APT 'ABJ','Abidjan','Felix Houphouet Boigny Intl','AF'
+  CALL APT 'DKR','Dakar','Blaise Diagne Intl','AF'
+  CALL APT 'NBO','Nairobi','Jomo Kenyatta Intl','AF'
+  CALL APT 'MBA','Mombasa','Moi Intl','AF'
+  CALL APT 'ADD','Addis Ababa','Bole Intl','AF'
+  CALL APT 'DAR','Dar es Salaam','Julius Nyerere Intl','AF'
+  CALL APT 'JRO','Kilimanjaro','Kilimanjaro Intl','AF'
+  CALL APT 'ZNZ','Zanzibar','Abeid Amani Karume Intl','AF'
+  CALL APT 'EBB','Entebbe','Entebbe Intl','AF'
+  CALL APT 'KGL','Kigali','Kigali Intl','AF'
+  CALL APT 'HRE','Harare','Robert Mugabe Intl','AF'
+  CALL APT 'LUN','Lusaka','Kenneth Kaunda Intl','AF'
+  CALL APT 'GBE','Gaborone','Sir Seretse Khama Intl','AF'
+  CALL APT 'WDH','Windhoek','Hosea Kutako Intl','AF'
+  CALL APT 'MRU','Mauritius','Sir Seewoosagur Ramgoolam','AF'
+  CALL APT 'SEZ','Mahe','Seychelles Intl','AF'
+  CALL APT 'JNB','Johannesburg','OR Tambo Intl','AF'
+  CALL APT 'CPT','Cape Town','Cape Town Intl','AF'
+  CALL APT 'DUR','Durban','King Shaka Intl','AF'
+  CALL APT 'PLZ','Port Elizabeth','Chief Dawid Stuurman Intl','AF'
+  CALL APT 'LAD','Luanda','Quatro de Fevereiro','AF'
+  CALL APT 'MEX','Mexico City','Benito Juarez Intl','SA'
+  CALL APT 'NLU','Mexico City','Felipe Angeles Intl','SA'
+  CALL APT 'GDL','Guadalajara','Guadalajara Intl','SA'
+  CALL APT 'MTY','Monterrey','Monterrey Intl','SA'
+  CALL APT 'TIJ','Tijuana','Tijuana Intl','SA'
+  CALL APT 'CUN','Cancun','Cancun Intl','SA'
+  CALL APT 'SJD','Los Cabos','Los Cabos Intl','SA'
+  CALL APT 'PVR','Puerto Vallarta','Puerto Vallarta Intl','SA'
+  CALL APT 'MID','Merida','Merida Intl','SA'
+  CALL APT 'GUA','Guatemala City','La Aurora Intl','SA'
+  CALL APT 'SAL','San Salvador','Monsenor Romero Intl','SA'
+  CALL APT 'SJO','San Jose','Juan Santamaria Intl','SA'
+  CALL APT 'PTY','Panama City','Tocumen Intl','SA'
+  CALL APT 'HAV','Havana','Jose Marti Intl','SA'
+  CALL APT 'SDQ','Santo Domingo','Las Americas Intl','SA'
+  CALL APT 'PUJ','Punta Cana','Punta Cana Intl','SA'
+  CALL APT 'SJU','San Juan','Luis Munoz Marin Intl','SA'
+  CALL APT 'KIN','Kingston','Norman Manley Intl','SA'
+  CALL APT 'MBJ','Montego Bay','Sangster Intl','SA'
+  CALL APT 'NAS','Nassau','Lynden Pindling Intl','SA'
+  CALL APT 'POS','Port of Spain','Piarco Intl','SA'
+  CALL APT 'BGI','Bridgetown','Grantley Adams Intl','SA'
+  CALL APT 'CCS','Caracas','Simon Bolivar Intl','SA'
+  CALL APT 'BOG','Bogota','El Dorado Intl','SA'
+  CALL APT 'MDE','Medellin','Jose Maria Cordova Intl','SA'
+  CALL APT 'CLO','Cali','Alfonso Bonilla Aragon Intl','SA'
+  CALL APT 'CTG','Cartagena','Rafael Nunez Intl','SA'
+  CALL APT 'UIO','Quito','Mariscal Sucre Intl','SA'
+  CALL APT 'GYE','Guayaquil','Jose Joaquin de Olmedo Intl','SA'
+  CALL APT 'LIM','Lima','Jorge Chavez Intl','SA'
+  CALL APT 'CUZ','Cusco','Alejandro Velasco Astete Intl','SA'
+  CALL APT 'LPB','La Paz','El Alto Intl','SA'
+  CALL APT 'VVI','Santa Cruz','Viru Viru Intl','SA'
+  CALL APT 'ASU','Asuncion','Silvio Pettirossi Intl','SA'
+  CALL APT 'MVD','Montevideo','Carrasco Intl','SA'
+  CALL APT 'SCL','Santiago','Arturo Merino Benitez Intl','SA'
+  CALL APT 'EZE','Buenos Aires','Ministro Pistarini Ezeiza','SA'
+  CALL APT 'AEP','Buenos Aires','Jorge Newbery Aeroparque','SA'
+  CALL APT 'COR','Cordoba','Ingeniero Taravella Intl','SA'
+  CALL APT 'MDZ','Mendoza','El Plumerillo Intl','SA'
+  CALL APT 'GRU','Sao Paulo','Guarulhos Intl','SA'
+  CALL APT 'CGH','Sao Paulo','Congonhas','SA'
+  CALL APT 'VCP','Sao Paulo','Viracopos Campinas','SA'
+  CALL APT 'GIG','Rio de Janeiro','Galeao Intl','SA'
+  CALL APT 'SDU','Rio de Janeiro','Santos Dumont','SA'
+  CALL APT 'BSB','Brasilia','Brasilia Intl','SA'
+  CALL APT 'SSA','Salvador','Deputado Luis Eduardo Magalhaes','SA'
+  CALL APT 'REC','Recife','Guararapes Intl','SA'
+  CALL APT 'FOR','Fortaleza','Pinto Martins Intl','SA'
+  CALL APT 'POA','Porto Alegre','Salgado Filho Intl','SA'
+  CALL APT 'CWB','Curitiba','Afonso Pena Intl','SA'
+  CALL APT 'CNF','Belo Horizonte','Tancredo Neves Intl','SA'
+  CALL APT 'MAO','Manaus','Eduardo Gomes Intl','SA'
+  CALL APT 'BEL','Belem','Val de Cans Intl','SA'
+  RETURN
+
+LOADAIRLINES: PROCEDURE EXPOSE airlineName.
+  CALL AIRL 'AA','AAL','American Airlines'
+  CALL AIRL 'DL','DAL','Delta Air Lines'
+  CALL AIRL 'UA','UAL','United Airlines'
+  CALL AIRL 'WN','SWA','Southwest Airlines'
+  CALL AIRL 'B6','JBU','JetBlue Airways'
+  CALL AIRL 'AS','ASA','Alaska Airlines'
+  CALL AIRL 'NK','NKS','Spirit Airlines'
+  CALL AIRL 'F9','FFT','Frontier Airlines'
+  CALL AIRL 'G4','AAY','Allegiant Air'
+  CALL AIRL 'HA','HAL','Hawaiian Airlines'
+  CALL AIRL 'SY','SCX','Sun Country Airlines'
+  CALL AIRL 'MX','MXY','Breeze Airways'
+  CALL AIRL 'AC','ACA','Air Canada'
+  CALL AIRL 'WS','WJA','WestJet'
+  CALL AIRL 'PD','POE','Porter Airlines'
+  CALL AIRL 'TS','TSC','Air Transat'
+  CALL AIRL 'F8','FLE','Flair Airlines'
+  CALL AIRL 'LA','LAN','LATAM Airlines'
+  CALL AIRL 'JJ','TAM','LATAM Brasil'
+  CALL AIRL 'AV','AVA','Avianca'
+  CALL AIRL 'CM','CMP','Copa Airlines'
+  CALL AIRL 'AM','AMX','Aeromexico'
+  CALL AIRL 'Y4','VOI','Volaris'
+  CALL AIRL 'AR','ARG','Aerolineas Argentinas'
+  CALL AIRL 'AD','AZU','Azul Brazilian Airlines'
+  CALL AIRL 'G3','GLO','Gol Linhas Aereas'
+  CALL AIRL 'H2','SKU','Sky Airline'
+  CALL AIRL 'BA','BAW','British Airways'
+  CALL AIRL 'VS','VIR','Virgin Atlantic'
+  CALL AIRL 'AF','AFR','Air France'
+  CALL AIRL 'KL','KLM','KLM Royal Dutch Airlines'
+  CALL AIRL 'LH','DLH','Lufthansa'
+  CALL AIRL 'LX','SWR','Swiss Intl Air Lines'
+  CALL AIRL 'OS','AUA','Austrian Airlines'
+  CALL AIRL 'SN','BEL','Brussels Airlines'
+  CALL AIRL 'IB','IBE','Iberia'
+  CALL AIRL 'UX','AEA','Air Europa'
+  CALL AIRL 'EI','EIN','Aer Lingus'
+  CALL AIRL 'TP','TAP','TAP Air Portugal'
+  CALL AIRL 'AZ','ITY','ITA Airways'
+  CALL AIRL 'SK','SAS','Scandinavian Airlines'
+  CALL AIRL 'AY','FIN','Finnair'
+  CALL AIRL 'LO','LOT','LOT Polish Airlines'
+  CALL AIRL 'OK','CSA','Czech Airlines'
+  CALL AIRL 'OU','CTN','Croatia Airlines'
+  CALL AIRL 'JU','ASL','Air Serbia'
+  CALL AIRL 'RO','ROT','Tarom'
+  CALL AIRL 'A3','AEE','Aegean Airlines'
+  CALL AIRL 'FB','LZB','Bulgaria Air'
+  CALL AIRL 'SU','AFL','Aeroflot'
+  CALL AIRL 'S7','SBI','S7 Airlines'
+  CALL AIRL 'TK','THY','Turkish Airlines'
+  CALL AIRL 'PC','PGT','Pegasus Airlines'
+  CALL AIRL 'PS','AUI','Ukraine Intl Airlines'
+  CALL AIRL 'FR','RYR','Ryanair'
+  CALL AIRL 'U2','EZY','easyJet'
+  CALL AIRL 'VY','VLG','Vueling'
+  CALL AIRL 'W6','WZZ','Wizz Air'
+  CALL AIRL 'DY','NAX','Norwegian Air Shuttle'
+  CALL AIRL 'EW','EWG','Eurowings'
+  CALL AIRL 'HV','TRA','Transavia'
+  CALL AIRL 'TO','TVF','Transavia France'
+  CALL AIRL 'V7','VOE','Volotea'
+  CALL AIRL 'DE','CFG','Condor'
+  CALL AIRL 'LS','EXS','Jet2'
+  CALL AIRL 'MT','TOM','TUI Airways'
+  CALL AIRL 'BT','BTI','Air Baltic'
+  CALL AIRL 'WK','EDW','Edelweiss Air'
+  CALL AIRL 'LG','LGL','Luxair'
+  CALL AIRL 'FI','ICE','Icelandair'
+  CALL AIRL 'WW','PLY','PLAY'
+  CALL AIRL 'KM','AMC','Air Malta'
+  CALL AIRL 'OA','OAL','Olympic Air'
+  CALL AIRL 'EK','UAE','Emirates'
+  CALL AIRL 'EY','ETD','Etihad Airways'
+  CALL AIRL 'QR','QTR','Qatar Airways'
+  CALL AIRL 'SV','SVA','Saudia'
+  CALL AIRL 'GF','GFA','Gulf Air'
+  CALL AIRL 'WY','OMA','Oman Air'
+  CALL AIRL 'RJ','RJA','Royal Jordanian'
+  CALL AIRL 'ME','MEA','Middle East Airlines'
+  CALL AIRL 'MS','MSR','EgyptAir'
+  CALL AIRL 'FZ','FDB','Flydubai'
+  CALL AIRL 'XY','KNE','Flynas'
+  CALL AIRL 'G9','ABY','Air Arabia'
+  CALL AIRL 'IR','IRA','Iran Air'
+  CALL AIRL 'LY','ELY','El Al'
+  CALL AIRL 'KU','KAC','Kuwait Airways'
+  CALL AIRL 'J2','AHY','Azerbaijan Airlines'
+  CALL AIRL 'A9','TGZ','Georgian Airways'
+  CALL AIRL 'SQ','SIA','Singapore Airlines'
+  CALL AIRL 'CX','CPA','Cathay Pacific'
+  CALL AIRL 'JL','JAL','Japan Airlines'
+  CALL AIRL 'NH','ANA','All Nippon Airways'
+  CALL AIRL 'KE','KAL','Korean Air'
+  CALL AIRL 'OZ','AAR','Asiana Airlines'
+  CALL AIRL 'CI','CAL','China Airlines'
+  CALL AIRL 'BR','EVA','EVA Air'
+  CALL AIRL 'TG','THA','Thai Airways'
+  CALL AIRL 'MH','MAS','Malaysia Airlines'
+  CALL AIRL 'GA','GIA','Garuda Indonesia'
+  CALL AIRL 'PR','PAL','Philippine Airlines'
+  CALL AIRL 'VN','HVN','Vietnam Airlines'
+  CALL AIRL 'CA','CCA','Air China'
+  CALL AIRL 'CZ','CSN','China Southern Airlines'
+  CALL AIRL 'MU','CES','China Eastern Airlines'
+  CALL AIRL 'HU','CHH','Hainan Airlines'
+  CALL AIRL 'FM','CSH','Shanghai Airlines'
+  CALL AIRL 'ZH','CSZ','Shenzhen Airlines'
+  CALL AIRL 'MF','CXA','Xiamen Airlines'
+  CALL AIRL 'SC','CDG','Shandong Airlines'
+  CALL AIRL 'AI','AIC','Air India'
+  CALL AIRL '6E','IGO','IndiGo'
+  CALL AIRL 'UK','VTI','Vistara'
+  CALL AIRL 'SG','SEJ','SpiceJet'
+  CALL AIRL 'IX','AXB','Air India Express'
+  CALL AIRL 'PK','PIA','Pakistan Intl Airlines'
+  CALL AIRL 'UL','ALK','SriLankan Airlines'
+  CALL AIRL 'BG','BBC','Biman Bangladesh Airlines'
+  CALL AIRL 'OM','MGL','MIAT Mongolian Airlines'
+  CALL AIRL 'KC','KZR','Air Astana'
+  CALL AIRL 'HY','UZB','Uzbekistan Airways'
+  CALL AIRL 'QF','QFA','Qantas'
+  CALL AIRL 'VA','VOZ','Virgin Australia'
+  CALL AIRL 'JQ','JST','Jetstar Airways'
+  CALL AIRL 'NZ','ANZ','Air New Zealand'
+  CALL AIRL 'FJ','FJI','Fiji Airways'
+  CALL AIRL 'TR','TGW','Scoot'
+  CALL AIRL 'AK','AXM','AirAsia'
+  CALL AIRL 'D7','XAX','AirAsia X'
+  CALL AIRL 'QZ','AWQ','Indonesia AirAsia'
+  CALL AIRL '5J','CEB','Cebu Pacific'
+  CALL AIRL 'VJ','VJC','VietJet Air'
+  CALL AIRL 'PG','BKP','Bangkok Airways'
+  CALL AIRL 'DD','NOK','Nok Air'
+  CALL AIRL 'FD','AIQ','Thai AirAsia'
+  CALL AIRL 'JT','LNI','Lion Air'
+  CALL AIRL 'ID','BTK','Batik Air'
+  CALL AIRL 'QG','CTV','Citilink'
+  CALL AIRL 'BI','RBA','Royal Brunei Airlines'
+  CALL AIRL 'ET','ETH','Ethiopian Airlines'
+  CALL AIRL 'SA','SAA','South African Airways'
+  CALL AIRL 'KQ','KQA','Kenya Airways'
+  CALL AIRL 'AT','RAM','Royal Air Maroc'
+  CALL AIRL 'TU','TAR','Tunisair'
+  CALL AIRL 'AH','DAH','Air Algerie'
+  CALL AIRL 'WB','RWD','RwandAir'
+  CALL AIRL 'DT','DTA','TAAG Angola Airlines'
+  CALL AIRL 'MK','MAU','Air Mauritius'
+  CALL AIRL 'HM','SEY','Air Seychelles'
+  CALL AIRL 'P4','APG','Air Peace'
   RETURN
