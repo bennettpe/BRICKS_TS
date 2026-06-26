@@ -1,4 +1,4 @@
-# ✈️ SABRE — the `BOOK` Transaction
+# ✈️ SABRE — the SABR` Transaction
 
 ![transaction](https://img.shields.io/badge/TRANSID-BOOK-1f6feb)
 ![type](https://img.shields.io/badge/style-SABRE%20CRS-2da44e)
