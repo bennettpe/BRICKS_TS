@@ -5,9 +5,9 @@
 ![terminal](https://img.shields.io/badge/terminal-3270-8250df)
 ![storage](https://img.shields.io/badge/VSAM-sabre%20KSDS-bf8700)
 
-`BOOK` is a **SABRE‑style airline Computer Reservation System (CRS)** running as a
-pseudo‑conversational CICS/3270 transaction on **bricks**. You drive it the way a
-1980s travel agent did: by typing **cryptic command entries** at the `==>` prompt
+`SABR` is a **SABRE airline Computer Reservation System (CRS)** running as a
+pseudo‑conversational CICS/3270 transaction on **BRICKS TS**. You drive it the way an
+experienced travel agent does: by typing **cryptic command entries** at the `==>` prompt
 and pressing <kbd>ENTER</kbd>. It has ~400 real airports, ~150 airlines, live
 availability, seat maps, PNRs, pricing, queues and e‑ticketing.
 
