@@ -1,4 +1,4 @@
-# ✈️ SABRE — the SABR` Transaction
+# SABRE — the SABR` Transaction
 
 ![transaction](https://img.shields.io/badge/TRANSID-BOOK-1f6feb)
 ![type](https://img.shields.io/badge/style-SABRE%20CRS-2da44e)
@@ -8,7 +8,7 @@
 `SABR` is a **SABRE airline Computer Reservation System (CRS)** running as a
 pseudo‑conversational CICS/3270 transaction on **BRICKS TS**. You drive it the way an
 experienced travel agent does: by typing **cryptic command entries** at the `==>` prompt
-and pressing <kbd>ENTER</kbd>. It has ~400 real airports, ~150 airlines, live
+and pressing <kbd>ENTER</kbd>. It has ~620 real airports, ~150 airlines, live
 availability, seat maps, PNRs, pricing, queues and e‑ticketing.
 
 > [!TIP]
@@ -121,9 +121,9 @@ BOOKED PCP523 /TBD SEAT 1A -- use N/ADD-1 to set name
 Classes you can sell into: **`Y`** FULL · **`B`** FLEX · **`M`** ECON · **`Q`** DISC.
 So `01M1` books economy on line 1.
 
-### 🟪 4 · Add the passenger name
+### 🟪 4 · Passenger name & the mandatory fields
 
-Two equivalent forms — the short SABRE dash form, or the `N/` form:
+Add the **name** — the short SABRE dash form, or the `N/` form:
 
 ```console
 ==> -SMITH/JANE MS
@@ -135,6 +135,27 @@ Added passenger SMITH/JANE (ADULT) to PCP523
 
 Passenger types: **`ADT`** adult · **`CHD`** child · **`INF`** infant · **`SNR`** senior · **`STU`** student.
 Change a name later with `N/CHG-1 SMITH/JANET`.
+
+Then the rest of SABRE's **mandatory PNR elements** — **P**hone · **I**tinerary ·
+**N**ame · **T**icketing · **R**eceived‑from (*PINTR*). The flight (itinerary) and
+name are in; add phone, ticketing time‑limit, and received‑from. Each writes to the
+**active PNR**:
+
+```console
+==> 9203555121-B               (phone -- H/B/T = Home/Business/Travel)
+Phone 203555121-B added to PCP523
+
+==> 7TAW15JUN/                 (ticketing time limit)
+Ticketing TAW15JUN set in PCP523
+
+==> 6SMITH                     (received-from)
+Received from SMITH in PCP523
+```
+
+> [!NOTE]
+> These persist on the PNR record and reappear in `PNR <loc>` as the `Phone:` /
+> `Tktg:` / `Rcvd:` lines. Stored widths: phone 13, ticketing 8, received‑from 6
+> (longer values truncate). The trailing `/` on `7TAW…/` is optional.
 
 ### 🟪 5 · Frequent‑flyer number
 
@@ -223,7 +244,39 @@ PCP523 T  SMITH/JANE           LH 0528      12A
 1 PNR(s) listed.
 ```
 
-✅ **`ST` is now `T` (ticketed).**
+Find a booking when you don't have the locator — retrieve **by name** (canonical
+SABRE `*-<surname>`; surname prefix, so `*-SM` works too). `LIST SM` does the same:
+
+```console
+==> *-SMITH
+LOC    ST PAX                  FLIGHT       SEAT
+PCP523 T  SMITH/JANE           LH 0528      12A
+XSU696 A  SMITH/JOHN MR        DAL 1228     12A
+2 PNR(s) matching SMITH
+```
+
+✅ **`ST` is now `T` (ticketed).** A single name match becomes the active PNR, so
+`*-SMITH/JANE` then `TTP` / `XI` works without retyping the locator.
+
+### 🔁 Undoing it — void & cancel
+
+Ticketed by mistake, or need to cancel a ticketed booking? SABRE makes you **void
+the e‑ticket before you can cancel the itinerary**, and `BOOK` enforces that order:
+
+```console
+==> WV                         (void the e-ticket: status T -> A)
+ETKT VOIDED PCP523 - now ACTIVE (TTP to re-issue)
+
+==> XI                         (cancel the itinerary: status -> X)
+ITINERARY CANCELLED PCP523 (status X)
+```
+
+> [!WARNING]
+> `XI` on a still‑ticketed PNR is refused — `*** PCP523 is ticketed - void it first
+> (WV)`. Void with **`WV`** (alias `WV2`) first; that returns the booking to
+> **ACTIVE** (`A`), so you can re‑issue with `TTP` or cancel with `XI`. `WV`/`XI`
+> act on the **active PNR**, or take an explicit locator (`WV <loc>` / `XI <loc>`).
+> To erase the record from the database entirely, use **`CANCEL <loc> PURGE`**.
 
 ### ⚡ The whole thing on one line
 
@@ -253,6 +306,37 @@ couple of lines:
 | `118OCTJFKZRH9A` | Availability (canonical), `+ -AA` carrier, `+ -Y` class |
 | `S18OCTJFKZRH` | Flight **schedule / timetable** (no seat counts) |
 
+### ✈️ Live flight info (FLIFO)
+**Real** departures, arrivals and flight status from the **aviationstack** API —
+canonical SABRE `DO` flight‑information entries. Times shown are **UTC**.
+
+| Entry | Meaning |
+| --- | --- |
+| `DO<apt>/D` | Live **departures** board, e.g. `DOJFK/D` |
+| `DO<apt>/A` | Live **arrivals** board, e.g. `DOLHR/A` |
+| `DO<airline+flt>/<date>` | Single‑flight live status, e.g. `DOBA178/27JUN` |
+
+```console
+==> DOJFK/D
+LIVE DEPARTURES JFK  New York - John F Kennedy Intl
+FLT     TO   STD    STATUS    GATE
+AV671   SAL  07:00  active    B22
+CK232   PVG  07:35  scheduled
+2 live departure(s) from JFK (UTC)
+
+==> DOBA178/27JUN
+FLIFO BA178  British Airways
+  JFK -> LHR   STATUS: active
+  DEP T4  GATE B22   STD 07:00 UTC
+  ARR T5  GATE       STA 19:00 UTC
+```
+
+> [!NOTE]
+> Unlike availability/schedules (which are synthesised), FLIFO makes a **live
+> HTTPS call** (`EXEC CICS WEB`) to aviationstack — it needs network access and a
+> configured API key. On an API problem it shows a `*** FLIFO …` line (e.g. usage
+> limit or restricted plan).
+
 ### 💺 Sell & seats
 | Entry | Meaning |
 | --- | --- |
@@ -279,13 +363,16 @@ couple of lines:
 | `WP/NI` | Show all fare buckets (Y/B/M/Q) |
 | `WP/NCB [<seg>]` | Price/book lowest (Q) fare; segment defaults to `1` |
 | `TTP [<loc>]` | **Ticket** the PNR (status `A → T`) |
+| `WV [<loc>]` / `WV2` | **Void** the e‑ticket (status `T → A`); booking stays active |
 
 ### 🧾 Manage PNRs
 | Entry | Meaning |
 | --- | --- |
-| `PNR <loc>` | Display a booking (name, flight, seat, fare, phone…) |
-| `LIST` | List every PNR on file |
-| `CANCEL <loc>` | Soft‑cancel (status `X`, still listed) |
+| `PNR <loc>` | Display a booking by locator (name, flight, seat, fare, phone…) |
+| `*-<name>` | **Retrieve PNRs by name** (canonical) — surname prefix, e.g. `*-SMITH` or `*-SM`; a single match becomes the active PNR |
+| `LIST [<name>]` | List PNRs — all, or filtered by surname prefix (`LIST SM`, `LIST SM*`) |
+| `XI [<loc>]` | **Cancel** an itinerary (`→ X`), active PNR by default; void (`WV`) a ticketed PNR first |
+| `CANCEL <loc>` | Soft‑cancel by locator (status `X`, still listed) |
 | `CANCEL <loc> PURGE` | Hard delete the PNR + its FF/segment records |
 
 ### 🧭 Reference lookups
@@ -321,10 +408,12 @@ Queues: **1** GENERAL · **2** TICKETING · **3** SCHEDULE · **4** WAITLIST · 
 | 🛩️ **Equipment** | A320 · B738 · B789 · A350 · B77W · B747 · B767 · B757 · MD981 |
 
 ```diff
-@@ PNR status at a glance @@
-+ A  ACTIVE     booked, not yet ticketed
-+ T  TICKETED   e-ticket issued (TTP)
-- X  CANCELLED  soft-cancelled, still on file
+@@ PNR status lifecycle @@
++ A  ACTIVE     booked, not yet ticketed   (SELL/0..)
++ T  TICKETED   e-ticket issued            (TTP:  A -> T)
++ A  ACTIVE     ticket voided, re-issuable (WV:   T -> A)
+- X  CANCELLED  itinerary cancelled        (XI / CANCEL:  A -> X)
+! ___  PURGED   record deleted from file   (CANCEL <loc> PURGE)
 ```
 
 > [!CAUTION]
@@ -342,6 +431,9 @@ SIA*52BOSS                       sign in
 18OCT JFK ZRH 9A                 find flights
 01Y1                             sell line 1, Y class   -> note the locator
 -SMITH/JANE MS                   passenger name
+9203555121-B                     phone (H/B/T)
+7TAW15JUN/                       ticketing time limit
+6SMITH                           received-from
 FF<loc>/AA123456789              frequent flyer
 4G1*                             view seat map
 4G1S12A                          assign seat 12A

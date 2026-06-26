@@ -5611,6 +5611,43 @@ descriptors. A sandbox violation (`'../etc/passwd'`, `'sub/x'`,
 leading-dot) causes the next `LINEIN` / `LINEOUT` to raise an
 error and `STREAM('S')` to report `'ERROR'`.
 
+### JSON
+
+For programs that consume JSON — typically a REST response read with
+`EXEC CICS WEB CONVERSE` — two functions extract values by a dotted
+path. They parse the document on each call (fine for the small payloads
+a 3270 program renders).
+
+| Signature | Returns |
+|---|---|
+| `JSONGET(json, path)` | The **scalar** at `path` as a string. `path` is dot-separated; an **integer** segment indexes a JSON array (0-based). Returns `''` for a missing key, an out-of-range index, a JSON `null`, a value that is itself an object/array, or a parse error. JSON numbers render like REXX numbers (`671`, not `671.0`); booleans become `1`/`0`. |
+| `JSONCOUNT(json, path)` | The number of elements in the **array** at `path` (the empty path `''` walks the whole document). `'0'` for a missing path, a non-array value, or a parse error. |
+
+```rexx
+/* RESP holds the WEB CONVERSE body */
+N = JSONCOUNT(RESP, 'data')                 /* array length            */
+DO I = 0 TO N - 1
+  P   = 'data.' || I
+  FLT = JSONGET(RESP, P || '.flight.iata')  /* "BA178"                 */
+  DEP = JSONGET(RESP, P || '.departure.iata')
+  ARR = JSONGET(RESP, P || '.arrival.iata') /* path-aware: dep != arr  */
+END
+EMSG = JSONGET(RESP, 'error.message')       /* '' if no error object   */
+```
+
+Limitations (acceptable for typical REST payloads): a key containing a
+literal `.` is unreachable; array indices are non-negative only (no
+wildcards, no negative indices); JSON integers beyond 2^53 lose precision
+(they decode through a float). There is no JSON *builder* — assemble
+output JSON with string concatenation, as the `WAPI` sample does.
+
+> **Worked example.** The **SABR** reservation transaction
+> (`runtime/rexx/book.rexx`) uses `JSONGET` / `JSONCOUNT` to parse live
+> aviationstack flight data fetched with `EXEC CICS WEB CONVERSE` and paint
+> departures / arrivals boards on the 3270 — see its `DO_FLIFO` handler, and
+> the **Live flight info (FLIFO)** section of [SABRE.md](SABRE.md) for the
+> operator-facing `DO<apt>/D` commands it drives.
+
 ### Operators
 
 Listed lowest to highest precedence. All operators are

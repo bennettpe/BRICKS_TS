@@ -76,6 +76,10 @@ IF SCRH >= 43 THEN DO
   MAPNAME = 'BOOKM4'
   NVIS    = 35
 END
+ELSE IF SCRH >= 32 THEN DO
+  MAPNAME = 'BOOKM3'
+  NVIS    = 26
+END
 ELSE DO
   MAPNAME = 'BOOKM2'
   NVIS    = 18
@@ -497,9 +501,27 @@ DISPATCH: PROCEDURE EXPOSE AGENT AUTH CURPNR NCAND QDATE QROUTE,
     CALL DO_W CMD
     RETURN
   END
+  /* WV / WV2 [<loc>] -- void the issued e-ticket (status T -> A). 2nd
+   * char 'V' keeps it distinct from W/ and WP/ above. */
+  IF LEFT(CMD,2) = 'WV' THEN DO
+    CALL DO_WV CMD
+    RETURN
+  END
+  /* XI [<loc>] -- cancel an itinerary (status -> X); a ticketed PNR must
+   * be voided (WV) first, matching SABRE. Defaults to the active PNR. */
+  IF LEFT(CMD,2) = 'XI' THEN DO
+    CALL DO_XI CMD
+    RETURN
+  END
   /* DD<citypair> -- mileage and elapsed flying time. */
   IF LEFT(CMD,2) = 'DD' & LENGTH(CMD) >= 8 THEN DO
     CALL DO_DD CMD
+    RETURN
+  END
+  /* DO<apt>/D | DO<apt>/A | DO<airline+flt>/<date> -- live FLIFO board
+   * (aviationstack). 2nd char 'O' keeps it distinct from DD above. */
+  IF LEFT(CMD,2) = 'DO' & LENGTH(CMD) >= 6 THEN DO
+    CALL DO_FLIFO CMD
     RETURN
   END
   /* S<date><citypair> -- schedule/timetable (digit after S guards
@@ -538,6 +560,12 @@ DISPATCH: PROCEDURE EXPOSE AGENT AUTH CURPNR NCAND QDATE QROUTE,
     CALL DO_RCVD CMD
     RETURN
   END
+  /* *-<name> -- canonical SABRE: list/retrieve PNRs by passenger surname
+   * (prefix match; a trailing '*' wildcard is accepted), e.g. *-SMITH. */
+  IF LEFT(CMD,2) = '*-' THEN DO
+    CALL DO_LIST SUBSTR(CMD,3)
+    RETURN
+  END
 
   /* FIRST-token commands. */
   PARSE VAR CMD FIRST REST
@@ -558,7 +586,7 @@ DISPATCH: PROCEDURE EXPOSE AGENT AUTH CURPNR NCAND QDATE QROUTE,
     RETURN
   END
   IF FIRST = 'LIST' THEN DO
-    CALL DO_LIST
+    CALL DO_LIST REST
     RETURN
   END
   IF FIRST = 'TTP' THEN DO
@@ -579,9 +607,12 @@ DO_HELP: PROCEDURE EXPOSE HIST.
   CALL APPEND 'QUERY FORMAT: 18OCT JFK ZRH (optional time: 9A)'
   CALL APPEND 'SELL <n> / BOOK <n>  Book candidate flight n'
   CALL APPEND 'PNR <loc>            Display booking details'
-  CALL APPEND 'LIST                 List all PNRs on file'
+  CALL APPEND 'LIST <name>          List PNRs (all, or by surname prefix)'
+  CALL APPEND '*-<name>             List PNRs by surname (e.g. *-SMITH)'
   CALL APPEND 'CANCEL <loc>         Cancel a booking (soft)'
-  CALL APPEND 'TTP [<loc>]          Ticket the PNR (status A -> T)'
+  CALL APPEND 'TTP <loc>            Ticket the PNR A->T (loc optional)'
+  CALL APPEND 'WV <loc>             Void e-ticket T->A (loc optional)'
+  CALL APPEND 'XI <loc>             Cancel itinerary ->X (loc optional)'
   CALL APPEND 'W/*<code>            Decode airport(3) or airline(2)'
   CALL APPEND 'W/-CC<city>          Encode city name to airport code'
   CALL APPEND 'W/EQ*<code>          Decode aircraft equipment type'
@@ -589,6 +620,9 @@ DO_HELP: PROCEDURE EXPOSE HIST.
   CALL APPEND '1<date><frto><tm>    Avail entry (e.g. 113JUNJFKZRH9A)'
   CALL APPEND '0<n><cls>            Sell line n in class (e.g. 01Y1)'
   CALL APPEND 'DD<frto>             Miles + flying time (e.g. DDJFKZRH)'
+  CALL APPEND 'DO<apt>/D            Live departures board (e.g. DOJFK/D)'
+  CALL APPEND 'DO<apt>/A            Live arrivals board (e.g. DOLHR/A)'
+  CALL APPEND 'DO<airline+flt>/<dt> Live flight status (e.g. DOBA178/27JUN)'
   CALL APPEND '-LAST/FIRST TITLE    PNR name field (e.g. -SMITH/JOHN MR)'
   CALL APPEND '9<phone>-<H/B/T>     PNR phone field (e.g. 9203555121-B)'
   CALL APPEND '7TAW<date>/          PNR ticketing field (e.g. 7TAW15JUN/)'
@@ -617,6 +651,7 @@ DO_SIGNIN: PROCEDURE EXPOSE AGENT AUTH HIST.
   AGENT = LEFT(ID, 8)
   AUTH  = '1'
   CALL APPEND 'SIGN-IN ACCEPTED. AGENT ' || STRIP(AGENT)
+  CALL APPEND 'NO MESSAGE.'
   RETURN
 
 /* --- Availability search: DATE FROM TO [TIME] ------------------- */
@@ -735,7 +770,15 @@ DO_PNR: PROCEDURE EXPOSE CURPNR HIST. fareTypes. paxTypes.
   RETURN
 
 /* --- LIST: browse every PNR header ------------------------------ */
-DO_LIST: PROCEDURE EXPOSE HIST.
+/* List PNR headers. With a name argument (LIST <pfx> or canonical
+ * *-<name>) only PNRs whose passenger surname starts with that prefix are
+ * shown; a trailing '*' wildcard is accepted and ignored. A single name
+ * match becomes the active PNR. */
+DO_LIST: PROCEDURE EXPOSE HIST. CURPNR
+  PARSE ARG PREFIX
+  PREFIX = STRIP(PREFIX)
+  IF RIGHT(PREFIX, 1) = '*' THEN PREFIX = LEFT(PREFIX, LENGTH(PREFIX) - 1)
+  PREFIX = STRIP(TRANSLATE(PREFIX))            /* uppercase, match stored name */
   CALL APPEND 'LOC    ST PAX                  FLIGHT       SEAT'
   HK = 'P'
   EXEC CICS STARTBR FILE('sabre') RIDFLD(HK) GENERIC KEYLENGTH(1) END-EXEC
@@ -747,6 +790,7 @@ DO_LIST: PROCEDURE EXPOSE HIST.
     RETURN
   END
   N = 0
+  LASTLOC = ''
   DONE = 0
   DO WHILE DONE = 0
     EXEC CICS READNEXT FILE('sabre') INTO(REC) RIDFLD(KEY) END-EXEC
@@ -759,15 +803,25 @@ DO_LIST: PROCEDURE EXPOSE HIST.
       AIR = STRIP(SUBSTR(REC,39,4),'T')
       FLT = STRIP(SUBSTR(REC,43,4),'T')
       SEAT= STRIP(SUBSTR(REC,35,4),'T')
-      LINE = LEFT(LC,6) || ' ' || LEFT(ST,2) || LEFT(PAX,20),
-             || ' ' || LEFT(AIR || ' ' || FLT, 12) || ' ' || LEFT(SEAT,4)
-      CALL APPEND LEFT(LINE, 78)
-      N = N + 1
+      IF PREFIX = '' | LEFT(PAX, LENGTH(PREFIX)) = PREFIX THEN DO
+        LINE = LEFT(LC,6) || ' ' || LEFT(ST,2) || LEFT(PAX,20),
+               || ' ' || LEFT(AIR || ' ' || FLT, 12) || ' ' || LEFT(SEAT,4)
+        CALL APPEND LEFT(LINE, 78)
+        N = N + 1
+        LASTLOC = LC
+      END
     END
   END
   EXEC CICS ENDBR FILE('sabre') END-EXEC
-  IF N = 0 THEN CALL APPEND 'No PNRs on file.'
-  ELSE CALL APPEND N || ' PNR(s) listed.'
+  IF PREFIX = '' THEN DO
+    IF N = 0 THEN CALL APPEND 'No PNRs on file.'
+    ELSE CALL APPEND N || ' PNR(s) listed.'
+  END
+  ELSE DO
+    IF N = 0 THEN CALL APPEND 'No PNRs with name ' || PREFIX
+    ELSE CALL APPEND N || ' PNR(s) matching ' || PREFIX
+    IF N = 1 THEN CURPNR = LASTLOC             /* single match -> active PNR */
+  END
   RETURN
 
 /* --- CANCEL <loc> [PURGE]: soft cancel or hard purge ------------ */
@@ -860,6 +914,94 @@ DO_TTP: PROCEDURE EXPOSE CURPNR HIST. fareTypes.
                 || ' (unpriced - WP/NCB to fare)'
   ELSE CALL APPEND 'ETKT ISSUED ' || STRIP(LOC) || ' - ' || PAX || '  ',
                 || FCLS || ' (' || fareTypes.FCLS || ') $' || FAMT || '.00'
+  RETURN
+
+/* --- WV / WV2 [<loc>]: void an issued e-ticket -- status T -> A. The
+ * booking stays ACTIVE (re-ticket with TTP, or cancel with XI). */
+DO_WV: PROCEDURE EXPOSE CURPNR HIST.
+  PARSE ARG CMD
+  BODY = STRIP(SUBSTR(CMD, 3))                   /* text after 'WV' */
+  IF LEFT(BODY, 1) = '2' THEN BODY = STRIP(SUBSTR(BODY, 2))   /* WV2 alias */
+  LOC = STRIP(BODY)
+  IF LOC = '' THEN LOC = STRIP(CURPNR)
+  IF LOC = '' THEN DO
+    CALL APPEND '*** NO ACTIVE PNR - DISPLAY (PNR <loc>) FIRST'
+    RETURN
+  END
+  CALL NORMLOC LEFT(LOC, 6)
+  LOC = RESULT
+  PKEY = 'P' || LOC || '00'
+  EXEC CICS READ FILE('sabre') INTO(REC) RIDFLD(PKEY) UPDATE END-EXEC
+  RR = EIBRESP                                   /* 0 NORMAL, 13 NOTFND */
+  IF RR = 13 THEN DO
+    CALL APPEND '*** PNR ' || STRIP(LOC) || ' not found.'
+    RETURN
+  END
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Void read failed RESP=' || RR
+    RETURN
+  END
+  ST = SUBSTR(REC, 1, 1)
+  IF ST \= 'T' THEN DO
+    MSG = '*** ' || STRIP(LOC) || ' is not ticketed - nothing to void'
+    IF ST = 'X' THEN MSG = '*** ' || STRIP(LOC) || ' is cancelled - nothing to void'
+    CALL APPEND MSG
+    EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+    RETURN
+  END
+  REC = OVERLAY('A', REC, 1, 1)                  /* STATUS T -> A (voided) */
+  EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+  RR = EIBRESP                                   /* 0 NORMAL, 16 INVREQ */
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Void rewrite failed RESP=' || RR
+    RETURN
+  END
+  CURPNR = LOC
+  CALL APPEND 'ETKT VOIDED ' || STRIP(LOC) || ' - now ACTIVE (TTP to re-issue)'
+  RETURN
+
+/* --- XI [<loc>]: cancel an itinerary -- status -> X. Defaults to the
+ * active PNR. SABRE requires a ticketed PNR to be voided (WV) first. */
+DO_XI: PROCEDURE EXPOSE CURPNR HIST.
+  PARSE ARG CMD
+  LOC = STRIP(SUBSTR(CMD, 3))                    /* optional loc after 'XI' */
+  IF LOC = '' THEN LOC = STRIP(CURPNR)
+  IF LOC = '' THEN DO
+    CALL APPEND '*** NO ACTIVE PNR - DISPLAY (PNR <loc>) OR SELL FIRST'
+    RETURN
+  END
+  CALL NORMLOC LEFT(LOC, 6)
+  LOC = RESULT
+  PKEY = 'P' || LOC || '00'
+  EXEC CICS READ FILE('sabre') INTO(REC) RIDFLD(PKEY) UPDATE END-EXEC
+  RR = EIBRESP                                   /* 0 NORMAL, 13 NOTFND */
+  IF RR = 13 THEN DO
+    CALL APPEND '*** PNR ' || STRIP(LOC) || ' not found.'
+    RETURN
+  END
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Cancel read failed RESP=' || RR
+    RETURN
+  END
+  ST = SUBSTR(REC, 1, 1)
+  IF ST = 'T' THEN DO
+    CALL APPEND '*** ' || STRIP(LOC) || ' is ticketed - void it first (WV)'
+    EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+    RETURN
+  END
+  IF ST = 'X' THEN DO
+    CALL APPEND '*** ' || STRIP(LOC) || ' itinerary already cancelled'
+    EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+    RETURN
+  END
+  REC = OVERLAY('X', REC, 1, 1)                  /* STATUS -> X (cancelled) */
+  EXEC CICS REWRITE FILE('sabre') FROM(REC) END-EXEC
+  RR = EIBRESP                                   /* 0 NORMAL, 16 INVREQ */
+  IF RR \= 0 THEN DO
+    CALL APPEND '*** Cancel rewrite failed RESP=' || RR
+    RETURN
+  END
+  CALL APPEND 'ITINERARY CANCELLED ' || STRIP(LOC) || ' (status X)'
   RETURN
 
 /* Hard purge: delete the header + cascade-delete FF and seg bands. */
@@ -1499,6 +1641,134 @@ DO_SCHED: PROCEDURE EXPOSE HIST. airports. aptRegion. FLIGHTS.,
   END
   CALL APPEND FLIGHTS.0 || ' flight(s) scheduled.'
   RETURN
+
+/* --- DO<apt>/D | DO<apt>/A | DO<airline+flt>/<date>: live FLIFO via the
+ * aviationstack REST API. Issues an HTTPS GET with EXEC CICS WEB and
+ * renders the JSON with the JSONGET / JSONCOUNT builtins. Every EXEC CICS
+ * WEB verb stays on ONE physical line (comma-continuation is illegal in an
+ * EXEC body). Times shown are UTC (the API reports scheduled in +00:00). */
+DO_FLIFO: PROCEDURE EXPOSE HIST. airports.
+  PARSE ARG CMD
+  REST = SUBSTR(CMD, 3)                          /* text after 'DO' */
+  PARSE VAR REST CODE '/' ARG
+  CODE = STRIP(CODE)
+  ARG  = STRIP(ARG)
+  /* Hardcoded endpoint + key. aviationstack supports https + dep/arr
+   * filters on this key; switch ASCHEME to 'http' (PORT 80) for a key
+   * whose plan is http-only. */
+  AKEY    = 'b9ab2b78155a8ed4006c9bb94e416d67'
+  AHOST   = 'api.aviationstack.com'
+  ASCHEME = 'https'
+  APORT   = '443'
+  IF ARG = 'D' | ARG = 'A' THEN DO
+    CALL ISVALIDAIRPORT CODE
+    IF \RESULT THEN DO
+      CALL APPEND '*** Invalid airport code: ' || CODE
+      RETURN
+    END
+    IF ARG = 'D' THEN DO
+      MODE  = 'DEP'
+      QFILT = 'dep_iata=' || CODE
+    END
+    ELSE DO
+      MODE  = 'ARR'
+      QFILT = 'arr_iata=' || CODE
+    END
+  END
+  ELSE IF CODE \= '' & ARG \= '' THEN DO
+    MODE  = 'FLT'
+    QFILT = 'flight_iata=' || CODE
+  END
+  ELSE DO
+    CALL APPEND '*** Usage: DO<apt>/D, DO<apt>/A, or DO<airline+flt>/<date>'
+    RETURN
+  END
+  QS = 'access_key=' || AKEY || '&' || QFILT || '&limit=20'
+  /* --- outbound HTTPS GET (one line per EXEC CICS verb) --- */
+  EXEC CICS WEB OPEN HOST(AHOST) SCHEME(ASCHEME) PORT(APORT) SESSTOKEN(TOK) RESP(ORC) END-EXEC
+  IF ORC \= 0 THEN DO
+    CALL APPEND '*** FLIFO link failed (WEB OPEN RESP=' || ORC || ')'
+    RETURN
+  END
+  RESP = ''
+  RLEN = 0
+  SC   = 0
+  ST   = ''
+  EXEC CICS WEB CONVERSE SESSTOKEN(TOK) METHOD('GET') PATH('/v1/flights') QUERYSTRING(QS) INTO(RESP) LENGTH(RLEN) STATUSCODE(SC) STATUSTEXT(ST) MAXLENGTH(262144) RESP(WRC) END-EXEC
+  EXEC CICS WEB CLOSE SESSTOKEN(TOK) END-EXEC
+  IF WRC = 22 THEN CALL APPEND '*** FLIFO response truncated; partial data'
+  ELSE IF WRC \= 0 THEN DO
+    CALL APPEND '*** FLIFO call failed (RESP=' || WRC || ')'
+    RETURN
+  END
+  IF SC \= 200 THEN DO
+    CALL APPEND '*** FLIFO HTTP ' || STRIP(ST)
+    EMSG = JSONGET(RESP, 'error.message')
+    IF EMSG \= '' THEN CALL APPEND '*** ' || LEFT(EMSG, 70)
+    RETURN
+  END
+  IF JSONGET(RESP, 'error.code') \= '' THEN DO
+    CALL APPEND '*** FLIFO API error: ' || LEFT(JSONGET(RESP, 'error.message'), 56)
+    RETURN
+  END
+  N = JSONCOUNT(RESP, 'data')
+  IF N = 0 THEN DO
+    CALL APPEND 'NO LIVE FLIGHTS FOR ' || CODE
+    RETURN
+  END
+  /* --- single-flight FLIFO --- */
+  IF MODE = 'FLT' THEN DO
+    CALL APPEND 'FLIFO ' || JSONGET(RESP,'data.0.flight.iata') || '  ',
+                || JSONGET(RESP,'data.0.airline.name')
+    CALL APPEND '  ' || JSONGET(RESP,'data.0.departure.iata') || ' -> ',
+                || JSONGET(RESP,'data.0.arrival.iata') || '   STATUS: ',
+                || JSONGET(RESP,'data.0.flight_status')
+    CALL APPEND '  DEP T' || LEFT(JSONGET(RESP,'data.0.departure.terminal'),2),
+                || ' GATE ' || LEFT(JSONGET(RESP,'data.0.departure.gate'),4),
+                || '  STD ' || ISOHHMM(JSONGET(RESP,'data.0.departure.scheduled')) || ' UTC'
+    CALL APPEND '  ARR T' || LEFT(JSONGET(RESP,'data.0.arrival.terminal'),2),
+                || ' GATE ' || LEFT(JSONGET(RESP,'data.0.arrival.gate'),4),
+                || '  STA ' || ISOHHMM(JSONGET(RESP,'data.0.arrival.scheduled')) || ' UTC'
+    RETURN
+  END
+  /* --- departures / arrivals board --- */
+  CALL GETAIRPORTNAME CODE
+  ANM = RESULT
+  IF MODE = 'DEP' THEN DO
+    CALL APPEND LEFT('LIVE DEPARTURES ' || CODE || '  ' || ANM, 78)
+    CALL APPEND LEFT('FLT',7) || ' ' || LEFT('TO',4) || ' ' || LEFT('STD',6) || ' ' || LEFT('STATUS',9) || ' ' || LEFT('GATE',5)
+  END
+  ELSE DO
+    CALL APPEND LEFT('LIVE ARRIVALS  ' || CODE || '  ' || ANM, 78)
+    CALL APPEND LEFT('FLT',7) || ' ' || LEFT('FROM',4) || ' ' || LEFT('STA',6) || ' ' || LEFT('STATUS',9) || ' ' || LEFT('GATE',5)
+  END
+  DO I = 0 TO N - 1
+    P    = 'data.' || I
+    FLT  = STRIP(JSONGET(RESP, P || '.airline.iata') || JSONGET(RESP, P || '.flight.number'))
+    STAT = JSONGET(RESP, P || '.flight_status')
+    IF MODE = 'DEP' THEN DO
+      OAPT = JSONGET(RESP, P || '.arrival.iata')
+      TISO = JSONGET(RESP, P || '.departure.scheduled')
+      GATE = JSONGET(RESP, P || '.departure.gate')
+    END
+    ELSE DO
+      OAPT = JSONGET(RESP, P || '.departure.iata')
+      TISO = JSONGET(RESP, P || '.arrival.scheduled')
+      GATE = JSONGET(RESP, P || '.arrival.gate')
+    END
+    OUT = LEFT(FLT,7) || ' ' || LEFT(OAPT,4) || ' ' || LEFT(ISOHHMM(TISO),6),
+          || ' ' || LEFT(STAT,9) || ' ' || LEFT(GATE,5)
+    CALL APPEND LEFT(OUT, 78)
+  END
+  IF MODE = 'DEP' THEN CALL APPEND N || ' live departure(s) from ' || CODE || ' (UTC)'
+  ELSE CALL APPEND N || ' live arrival(s) at ' || CODE || ' (UTC)'
+  RETURN
+
+/* HH:MM from an ISO timestamp like '2026-06-26T03:35:00+00:00' (UTC). */
+ISOHHMM: PROCEDURE
+  PARSE ARG T
+  IF LENGTH(T) >= 16 THEN RETURN SUBSTR(T, 12, 5)
+  RETURN '--:--'
 
 /* --- 1<date><pair><tm><-carr><-cls> canonical availability ------ */
 DO_AVAIL1: PROCEDURE EXPOSE NCAND QDATE QROUTE CAND. HIST.,
@@ -2564,6 +2834,206 @@ LOADAIRPORTS: PROCEDURE EXPOSE airports. cityCode. aptRegion.
   CALL APT 'CNF','Belo Horizonte','Tancredo Neves Intl','SA'
   CALL APT 'MAO','Manaus','Eduardo Gomes Intl','SA'
   CALL APT 'BEL','Belem','Val de Cans Intl','SA'
+  CALL APT 'BTR','Baton Rouge','Baton Rouge Metro','NA'
+  CALL APT 'SHV','Shreveport','Shreveport Regional','NA'
+  CALL APT 'LFT','Lafayette','Lafayette Regional','NA'
+  CALL APT 'MOB','Mobile','Mobile Regional','NA'
+  CALL APT 'MGM','Montgomery','Montgomery Regional','NA'
+  CALL APT 'HSV','Huntsville','Huntsville Intl','NA'
+  CALL APT 'CAE','Columbia','Columbia Metro','NA'
+  CALL APT 'CHA','Chattanooga','Chattanooga Metro','NA'
+  CALL APT 'TRI','Bristol','Tri-Cities','NA'
+  CALL APT 'AVL','Asheville','Asheville Regional','NA'
+  CALL APT 'ROA','Roanoke','Roanoke Blue Ridge','NA'
+  CALL APT 'ILM','Wilmington','Wilmington Intl','NA'
+  CALL APT 'FAY','Fayetteville','Fayetteville Regional','NA'
+  CALL APT 'OAJ','Jacksonville','Albert J Ellis','NA'
+  CALL APT 'PHF','Newport News','Newport News Williamsburg','NA'
+  CALL APT 'CHO','Charlottesville','Charlottesville Albemarle','NA'
+  CALL APT 'LYH','Lynchburg','Lynchburg Regional','NA'
+  CALL APT 'CRW','Charleston','Yeager','NA'
+  CALL APT 'HTS','Huntington','Tri-State','NA'
+  CALL APT 'LEX','Lexington','Blue Grass','NA'
+  CALL APT 'SDF','Louisville','Louisville Muhammad Ali','NA'
+  CALL APT 'EVV','Evansville','Evansville Regional','NA'
+  CALL APT 'FWA','Fort Wayne','Fort Wayne Intl','NA'
+  CALL APT 'SBN','South Bend','South Bend Intl','NA'
+  CALL APT 'TOL','Toledo','Toledo Express','NA'
+  CALL APT 'CAK','Akron','Akron-Canton','NA'
+  CALL APT 'YNG','Youngstown','Youngstown Warren','NA'
+  CALL APT 'ERI','Erie','Erie Intl','NA'
+  CALL APT 'ABE','Allentown','Lehigh Valley','NA'
+  CALL APT 'AVP','Wilkes-Barre','Wilkes-Barre Scranton','NA'
+  CALL APT 'ELM','Elmira','Elmira Corning','NA'
+  CALL APT 'ITH','Ithaca','Ithaca Tompkins','NA'
+  CALL APT 'BGM','Binghamton','Greater Binghamton','NA'
+  CALL APT 'BGR','Bangor','Bangor Intl','NA'
+  CALL APT 'MHT','Manchester','Manchester Boston','NA'
+  CALL APT 'PVU','Provo','Provo Municipal','NA'
+  CALL APT 'IDA','Idaho Falls','Idaho Falls Regional','NA'
+  CALL APT 'GTF','Great Falls','Great Falls Intl','NA'
+  CALL APT 'MSO','Missoula','Missoula Montana','NA'
+  CALL APT 'BZN','Bozeman','Bozeman Yellowstone','NA'
+  CALL APT 'FCA','Kalispell','Glacier Park Intl','NA'
+  CALL APT 'HLN','Helena','Helena Regional','NA'
+  CALL APT 'COD','Cody','Yellowstone Regional','NA'
+  CALL APT 'CPR','Casper','Casper Natrona','NA'
+  CALL APT 'CYS','Cheyenne','Cheyenne Regional','NA'
+  CALL APT 'GJT','Grand Junction','Grand Junction Regional','NA'
+  CALL APT 'DRO','Durango','Durango La Plata','NA'
+  CALL APT 'MTJ','Montrose','Montrose Regional','NA'
+  CALL APT 'HDN','Hayden','Yampa Valley','NA'
+  CALL APT 'EGE','Eagle','Eagle County','NA'
+  CALL APT 'ASE','Aspen','Aspen Pitkin County','NA'
+  CALL APT 'ABI','Abilene','Abilene Regional','NA'
+  CALL APT 'AMA','Amarillo','Rick Husband Amarillo','NA'
+  CALL APT 'LBB','Lubbock','Lubbock Preston Smith','NA'
+  CALL APT 'MAF','Midland','Midland Intl','NA'
+  CALL APT 'SJT','San Angelo','San Angelo Regional','NA'
+  CALL APT 'CRP','Corpus Christi','Corpus Christi Intl','NA'
+  CALL APT 'BRO','Brownsville','Brownsville South Padre','NA'
+  CALL APT 'HRL','Harlingen','Valley Intl','NA'
+  CALL APT 'MFE','McAllen','McAllen Miller','NA'
+  CALL APT 'LRD','Laredo','Laredo Intl','NA'
+  CALL APT 'GRK','Killeen','Killeen Fort Cavazos','NA'
+  CALL APT 'ACT','Waco','Waco Regional','NA'
+  CALL APT 'TYR','Tyler','Tyler Pounds','NA'
+  CALL APT 'GGG','Longview','East Texas Regional','NA'
+  CALL APT 'FSM','Fort Smith','Fort Smith Regional','NA'
+  CALL APT 'SGF','Springfield','Springfield Branson','NA'
+  CALL APT 'COU','Columbia','Columbia Regional','NA'
+  CALL APT 'JLN','Joplin','Joplin Regional','NA'
+  CALL APT 'MLI','Moline','Quad Cities','NA'
+  CALL APT 'INV','Inverness','Inverness Airport','EU'
+  CALL APT 'ABZ','Aberdeen','Aberdeen Intl','EU'
+  CALL APT 'LBA','Leeds','Leeds Bradford','EU'
+  CALL APT 'EMA','Nottingham','East Midlands','EU'
+  CALL APT 'CWL','Cardiff','Cardiff Airport','EU'
+  CALL APT 'SOU','Southampton','Southampton Airport','EU'
+  CALL APT 'EXT','Exeter','Exeter Airport','EU'
+  CALL APT 'BOH','Bournemouth','Bournemouth Airport','EU'
+  CALL APT 'NWI','Norwich','Norwich Airport','EU'
+  CALL APT 'HUY','Humberside','Humberside Airport','EU'
+  CALL APT 'DSA','Doncaster','Doncaster Sheffield','EU'
+  CALL APT 'MME','Durham','Teesside Intl','EU'
+  CALL APT 'JER','Jersey','Jersey Airport','EU'
+  CALL APT 'GCI','Guernsey','Guernsey Airport','EU'
+  CALL APT 'IOM','Isle of Man','Isle of Man','EU'
+  CALL APT 'SNN','Shannon','Shannon Airport','EU'
+  CALL APT 'NOC','Knock','Ireland West','EU'
+  CALL APT 'KIR','Kerry','Kerry Airport','EU'
+  CALL APT 'BVA','Beauvais','Paris Beauvais','EU'
+  CALL APT 'LIL','Lille','Lille Lesquin','EU'
+  CALL APT 'RNS','Rennes','Rennes Saint-Jacques','EU'
+  CALL APT 'BES','Brest','Brest Bretagne','EU'
+  CALL APT 'CFE','Clermont-Ferrand','Clermont Auvergne','EU'
+  CALL APT 'LDE','Lourdes','Tarbes Lourdes','EU'
+  CALL APT 'BIA','Bastia','Bastia Poretta','EU'
+  CALL APT 'AJA','Ajaccio','Ajaccio Napoleon','EU'
+  CALL APT 'MPL','Montpellier','Montpellier Mediterranee','EU'
+  CALL APT 'PGF','Perpignan','Perpignan Rivesaltes','EU'
+  CALL APT 'EGC','Bergerac','Bergerac Dordogne','EU'
+  CALL APT 'DRS','Dresden','Dresden Airport','EU'
+  CALL APT 'FMO','Munster','Munster Osnabruck','EU'
+  CALL APT 'DTM','Dortmund','Dortmund Airport','EU'
+  CALL APT 'FKB','Karlsruhe','Karlsruhe Baden-Baden','EU'
+  CALL APT 'FDH','Friedrichshafen','Friedrichshafen Airport','EU'
+  CALL APT 'PAD','Paderborn','Paderborn Lippstadt','EU'
+  CALL APT 'GWT','Sylt','Sylt Airport','EU'
+  CALL APT 'RLG','Rostock','Rostock Laage','EU'
+  CALL APT 'SCN','Saarbrucken','Saarbrucken Airport','EU'
+  CALL APT 'GRZ','Graz','Graz Airport','EU'
+  CALL APT 'LNZ','Linz','Linz Airport','EU'
+  CALL APT 'INN','Innsbruck','Innsbruck Airport','EU'
+  CALL APT 'SZG','Salzburg','Salzburg Airport','EU'
+  CALL APT 'KLU','Klagenfurt','Klagenfurt Airport','EU'
+  CALL APT 'TRN','Turin','Turin Caselle','EU'
+  CALL APT 'GOA','Genoa','Genoa Cristoforo Colombo','EU'
+  CALL APT 'KOJ','Kagoshima','Kagoshima Airport','AP'
+  CALL APT 'KMJ','Kumamoto','Kumamoto Airport','AP'
+  CALL APT 'HIJ','Hiroshima','Hiroshima Airport','AP'
+  CALL APT 'TAK','Takamatsu','Takamatsu Airport','AP'
+  CALL APT 'MYJ','Matsuyama','Matsuyama Airport','AP'
+  CALL APT 'SDJ','Sendai','Sendai Airport','AP'
+  CALL APT 'KMQ','Komatsu','Komatsu Airport','AP'
+  CALL APT 'AOJ','Aomori','Aomori Airport','AP'
+  CALL APT 'HKD','Hakodate','Hakodate Airport','AP'
+  CALL APT 'ISG','Ishigaki','New Ishigaki','AP'
+  CALL APT 'TAE','Daegu','Daegu Intl','AP'
+  CALL APT 'KWJ','Gwangju','Gwangju Airport','AP'
+  CALL APT 'RSU','Yeosu','Yeosu Airport','AP'
+  CALL APT 'DLC','Dalian','Dalian Zhoushuizi','AP'
+  CALL APT 'SHE','Shenyang','Shenyang Taoxian','AP'
+  CALL APT 'HRB','Harbin','Harbin Taiping','AP'
+  CALL APT 'TAO','Qingdao','Qingdao Jiaodong','AP'
+  CALL APT 'TNA','Jinan','Jinan Yaoqiang','AP'
+  CALL APT 'CGO','Zhengzhou','Zhengzhou Xinzheng','AP'
+  CALL APT 'WUX','Wuxi','Sunan Shuofang','AP'
+  CALL APT 'NGB','Ningbo','Ningbo Lishe','AP'
+  CALL APT 'FOC','Fuzhou','Fuzhou Changle','AP'
+  CALL APT 'KWE','Guiyang','Guiyang Longdongbao','AP'
+  CALL APT 'KWL','Guilin','Guilin Liangjiang','AP'
+  CALL APT 'NNG','Nanning','Nanning Wuxu','AP'
+  CALL APT 'HAK','Haikou','Haikou Meilan','AP'
+  CALL APT 'SYX','Sanya','Sanya Phoenix','AP'
+  CALL APT 'LXA','Lhasa','Lhasa Gonggar','AP'
+  CALL APT 'URC','Urumqi','Urumqi Diwopu','AP'
+  CALL APT 'INC','Yinchuan','Yinchuan Hedong','AP'
+  CALL APT 'LHW','Lanzhou','Lanzhou Zhongchuan','AP'
+  CALL APT 'XNN','Xining','Xining Caojiabao','AP'
+  CALL APT 'CSX','Changsha','Changsha Huanghua','AP'
+  CALL APT 'HFE','Hefei','Hefei Xinqiao','AP'
+  CALL APT 'TYN','Taiyuan','Taiyuan Wusu','AP'
+  CALL APT 'GOX','Goa','Manohar Intl','AP'
+  CALL APT 'NAG','Nagpur','Nagpur Ambedkar','AP'
+  CALL APT 'IXC','Chandigarh','Chandigarh Airport','AP'
+  CALL APT 'JAI','Jaipur','Jaipur Intl','AP'
+  CALL APT 'ATQ','Amritsar','Amritsar Intl','AP'
+  CALL APT 'AAN','Al Ain','Al Ain Intl','ME'
+  CALL APT 'RKT','Ras Al Khaimah','Ras Al Khaimah Intl','ME'
+  CALL APT 'ELQ','Buraidah','Qassim Airport','ME'
+  CALL APT 'TUU','Tabuk','Tabuk Airport','ME'
+  CALL APT 'YNB','Yanbu','Yanbu Airport','ME'
+  CALL APT 'HOF','Hofuf','Al Ahsa Airport','ME'
+  CALL APT 'GIZ','Jazan','Jazan Airport','ME'
+  CALL APT 'SLL','Salalah','Salalah Airport','ME'
+  CALL APT 'AQJ','Aqaba','King Hussein Intl','ME'
+  CALL APT 'NJF','Najaf','Al Najaf Intl','ME'
+  CALL APT 'HBE','Alexandria','Borg El Arab','AF'
+  CALL APT 'LXR','Luxor','Luxor Intl','AF'
+  CALL APT 'RMF','Marsa Alam','Marsa Alam Intl','AF'
+  CALL APT 'NBE','Enfidha','Enfidha-Hammamet','AF'
+  CALL APT 'MIR','Monastir','Monastir Bourguiba','AF'
+  CALL APT 'OUD','Oujda','Oujda Angads','AF'
+  CALL APT 'NDR','Nador','Nador Al Aroui','AF'
+  CALL APT 'ESU','Essaouira','Essaouira Mogador','AF'
+  CALL APT 'OZZ','Ouarzazate','Ouarzazate Airport','AF'
+  CALL APT 'AAE','Annaba','Annaba Airport','AF'
+  CALL APT 'CZL','Constantine','Constantine Airport','AF'
+  CALL APT 'KAN','Kano','Mallam Aminu Kano','AF'
+  CALL APT 'ENU','Enugu','Akanu Ibiam Intl','AF'
+  CALL APT 'KMS','Kumasi','Kumasi Airport','AF'
+  CALL APT 'TML','Tamale','Tamale Airport','AF'
+  CALL APT 'COO','Cotonou','Cadjehoun Airport','AF'
+  CALL APT 'LFW','Lome','Lome Tokoin','AF'
+  CALL APT 'OUA','Ouagadougou','Ouagadougou Airport','AF'
+  CALL APT 'BKO','Bamako','Bamako Senou','AF'
+  CALL APT 'NIM','Niamey','Diori Hamani','AF'
+  CALL APT 'HMO','Hermosillo','Hermosillo Intl','SA'
+  CALL APT 'CUL','Culiacan','Culiacan Intl','SA'
+  CALL APT 'MZT','Mazatlan','Mazatlan Intl','SA'
+  CALL APT 'ZIH','Zihuatanejo','Ixtapa Zihuatanejo','SA'
+  CALL APT 'ACA','Acapulco','Acapulco Intl','SA'
+  CALL APT 'HUX','Huatulco','Bahias de Huatulco','SA'
+  CALL APT 'OAX','Oaxaca','Oaxaca Xoxocotlan','SA'
+  CALL APT 'TGZ','Tuxtla Gutierrez','Angel Albino Corzo','SA'
+  CALL APT 'VSA','Villahermosa','Villahermosa Intl','SA'
+  CALL APT 'CPE','Campeche','Campeche Intl','SA'
+  CALL APT 'CZM','Cozumel','Cozumel Intl','SA'
+  CALL APT 'BJX','Leon','Bajio Intl','SA'
+  CALL APT 'QRO','Queretaro','Queretaro Intl','SA'
+  CALL APT 'AGU','Aguascalientes','Aguascalientes Intl','SA'
+  CALL APT 'SLP','San Luis Potosi','San Luis Potosi Intl','SA'
   RETURN
 
 LOADAIRLINES: PROCEDURE EXPOSE airlineName.
