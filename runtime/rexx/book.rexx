@@ -1719,16 +1719,12 @@ DO_FLIFO: PROCEDURE EXPOSE HIST. airports.
   /* --- single-flight FLIFO --- */
   IF MODE = 'FLT' THEN DO
     CALL APPEND 'FLIFO ' || JSONGET(RESP,'data.0.flight.iata') || '  ',
-                || JSONGET(RESP,'data.0.airline.name')
+                || JSONGET(RESP,'data.0.airline.name') || '   (times UTC)'
     CALL APPEND '  ' || JSONGET(RESP,'data.0.departure.iata') || ' -> ',
                 || JSONGET(RESP,'data.0.arrival.iata') || '   STATUS: ',
                 || JSONGET(RESP,'data.0.flight_status')
-    CALL APPEND '  DEP T' || LEFT(JSONGET(RESP,'data.0.departure.terminal'),2),
-                || ' GATE ' || LEFT(JSONGET(RESP,'data.0.departure.gate'),4),
-                || '  STD ' || ISOHHMM(JSONGET(RESP,'data.0.departure.scheduled')) || ' UTC'
-    CALL APPEND '  ARR T' || LEFT(JSONGET(RESP,'data.0.arrival.terminal'),2),
-                || ' GATE ' || LEFT(JSONGET(RESP,'data.0.arrival.gate'),4),
-                || '  STA ' || ISOHHMM(JSONGET(RESP,'data.0.arrival.scheduled')) || ' UTC'
+    CALL APPEND FLIFOLEG('DEP', RESP, 'data.0.departure')
+    CALL APPEND FLIFOLEG('ARR', RESP, 'data.0.arrival')
     RETURN
   END
   /* --- departures / arrivals board --- */
@@ -1736,11 +1732,11 @@ DO_FLIFO: PROCEDURE EXPOSE HIST. airports.
   ANM = RESULT
   IF MODE = 'DEP' THEN DO
     CALL APPEND LEFT('LIVE DEPARTURES ' || CODE || '  ' || ANM, 78)
-    CALL APPEND LEFT('FLT',7) || ' ' || LEFT('TO',4) || ' ' || LEFT('STD',6) || ' ' || LEFT('STATUS',9) || ' ' || LEFT('GATE',5)
+    CALL APPEND LEFT('FLT',7) || ' ' || LEFT('TO',4) || ' ' || LEFT('STD',6) || ' ' || LEFT('STATUS',9) || ' ' || LEFT('GATE',5) || ' ' || LEFT('DLY',5)
   END
   ELSE DO
     CALL APPEND LEFT('LIVE ARRIVALS  ' || CODE || '  ' || ANM, 78)
-    CALL APPEND LEFT('FLT',7) || ' ' || LEFT('FROM',4) || ' ' || LEFT('STA',6) || ' ' || LEFT('STATUS',9) || ' ' || LEFT('GATE',5)
+    CALL APPEND LEFT('FLT',7) || ' ' || LEFT('FROM',4) || ' ' || LEFT('STA',6) || ' ' || LEFT('STATUS',9) || ' ' || LEFT('GATE',5) || ' ' || LEFT('DLY',5)
   END
   DO I = 0 TO N - 1
     P    = 'data.' || I
@@ -1748,16 +1744,17 @@ DO_FLIFO: PROCEDURE EXPOSE HIST. airports.
     STAT = JSONGET(RESP, P || '.flight_status')
     IF MODE = 'DEP' THEN DO
       OAPT = JSONGET(RESP, P || '.arrival.iata')
-      TISO = JSONGET(RESP, P || '.departure.scheduled')
-      GATE = JSONGET(RESP, P || '.departure.gate')
+      LEG  = P || '.departure'
     END
     ELSE DO
       OAPT = JSONGET(RESP, P || '.departure.iata')
-      TISO = JSONGET(RESP, P || '.arrival.scheduled')
-      GATE = JSONGET(RESP, P || '.arrival.gate')
+      LEG  = P || '.arrival'
     END
+    TISO = JSONGET(RESP, LEG || '.scheduled')
+    GATE = JSONGET(RESP, LEG || '.gate')
+    DLYS = DELAYABBR(FLIFODELAY(TISO, JSONGET(RESP,LEG||'.estimated'), JSONGET(RESP,LEG||'.actual'), JSONGET(RESP,LEG||'.delay')))
     OUT = LEFT(FLT,7) || ' ' || LEFT(OAPT,4) || ' ' || LEFT(ISOHHMM(TISO),6),
-          || ' ' || LEFT(STAT,9) || ' ' || LEFT(GATE,5)
+          || ' ' || LEFT(STAT,9) || ' ' || LEFT(GATE,5) || ' ' || LEFT(DLYS,5)
     CALL APPEND LEFT(OUT, 78)
   END
   IF MODE = 'DEP' THEN CALL APPEND N || ' live departure(s) from ' || CODE || ' (UTC)'
@@ -1769,6 +1766,69 @@ ISOHHMM: PROCEDURE
   PARSE ARG T
   IF LENGTH(T) >= 16 THEN RETURN SUBSTR(T, 12, 5)
   RETURN '--:--'
+
+/* FLIFOLEG builds one DEP/ARR detail line for single-flight FLIFO:
+ * terminal, gate, scheduled time, the actual (ATD/ATA) or estimated
+ * (ETD/ETA) time when the API reports one, and the delay verdict. LBL is
+ * 'DEP' or 'ARR'; J is the JSON body; BASE the sub-object path. */
+FLIFOLEG: PROCEDURE
+  PARSE ARG LBL, J, BASE
+  SCH = JSONGET(J, BASE || '.scheduled')
+  ACT = JSONGET(J, BASE || '.actual')
+  EST = JSONGET(J, BASE || '.estimated')
+  IF LBL = 'DEP' THEN STL = 'STD'
+  ELSE STL = 'STA'
+  L = '  ' || LBL || ' T' || LEFT(JSONGET(J, BASE || '.terminal'),2),
+      || ' GATE ' || LEFT(JSONGET(J, BASE || '.gate'),4),
+      || '  ' || STL || ' ' || ISOHHMM(SCH)
+  REF = ACT
+  RPX = 'A'
+  IF REF = '' THEN DO
+    REF = EST
+    RPX = 'E'
+  END
+  IF REF \= '' THEN,
+    IF LBL = 'DEP' THEN L = L || '  ' || RPX || 'TD ' || ISOHHMM(REF)
+    ELSE L = L || '  ' || RPX || 'TA ' || ISOHHMM(REF)
+  W = DELAYWORD(FLIFODELAY(SCH, EST, ACT, JSONGET(J, BASE || '.delay')))
+  IF W \= '' THEN L = L || '  ' || W
+  RETURN LEFT(L, 78)
+
+/* FLIFODELAY returns the delay in whole minutes (negative = early), or ''
+ * when unknown. Prefers the API 'delay' field; otherwise derives it from
+ * the actual (preferred) or estimated time vs the scheduled time -- the
+ * 'delay' field is frequently null even when actual/estimated differ. The
+ * +/-720 fold tolerates a single midnight crossing. */
+FLIFODELAY: PROCEDURE
+  PARSE ARG SCH, EST, ACT, DLF
+  IF DATATYPE(DLF,'W') THEN RETURN DLF
+  REF = ACT
+  IF REF = '' THEN REF = EST
+  IF REF = '' THEN RETURN ''
+  IF LENGTH(SCH) < 16 THEN RETURN ''
+  IF LENGTH(REF) < 16 THEN RETURN ''
+  M1 = SUBSTR(SCH,12,2) * 60 + SUBSTR(SCH,15,2)
+  M2 = SUBSTR(REF,12,2) * 60 + SUBSTR(REF,15,2)
+  D = M2 - M1
+  IF D > 720 THEN D = D - 1440
+  IF D < -720 THEN D = D + 1440
+  RETURN D
+
+/* DELAYWORD renders a signed minute delta as a single-flight verdict. */
+DELAYWORD: PROCEDURE
+  PARSE ARG D
+  IF \DATATYPE(D,'W') THEN RETURN ''
+  IF D > 0 THEN RETURN 'DLY ' || D || 'm'
+  IF D = 0 THEN RETURN 'ON TIME'
+  RETURN ABS(D) || 'm EARLY'
+
+/* DELAYABBR renders a signed minute delta for the narrow board column. */
+DELAYABBR: PROCEDURE
+  PARSE ARG D
+  IF \DATATYPE(D,'W') THEN RETURN ''
+  IF D > 0 THEN RETURN '+' || D || 'm'
+  IF D = 0 THEN RETURN 'OT'
+  RETURN '-' || ABS(D) || 'm'
 
 /* --- 1<date><pair><tm><-carr><-cls> canonical availability ------ */
 DO_AVAIL1: PROCEDURE EXPOSE NCAND QDATE QROUTE CAND. HIST.,
