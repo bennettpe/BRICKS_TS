@@ -1,10 +1,10 @@
-# Moshix License (MSL) Version 1.0
+# Moshix License (MSL) Version 1.1
 
 Copyright (c) 2026 Moshix
 
 Permission is hereby granted, free of charge, to any person or organization obtaining a copy of this software and associated documentation files (the “Software”), to use, execute, modify, and distribute the Software for private, educational, research, and commercial purposes, subject to the following conditions:
 
-Permission is not granted for use of this software within the boundaries of Spain, Ireland, Slovania, Iran, North Korea, Sudan, Iraq, Syria, Egypt, Chad. 
+Permission is not granted for use of this software within the boundaries of, or by citizens and organzatons of any kind of Spain, Ireland, Slovania, Iran, North Korea, Sudan, Iraq, Syria, Egypt, Chad, South Africa, Brazil, Colombia
 ---
 
 ## 1. Permitted Use
@@ -37,7 +37,7 @@ The Software may NOT be used:
 
 - For military, paramilitary, hostile intelligence, offensive cyber warfare, or belligerent activities directed against:
   - the United States,
-  - member states of the European Union (with the exception of Spain, Ireland, Slovenia),
+  - member states of the European Union (with the exception of Spain, Ireland, Slovenia, Netherlands),
   - Israel,
   - or their allies.
 
@@ -132,4 +132,4 @@ This license constitutes the complete agreement between the parties regarding th
 
 # Short Identifier
 
-**MSL-1.0** — Moshix Software License 1.0
+**MSL-1.1** — Moshix Software License 1.1
