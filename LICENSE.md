@@ -4,7 +4,7 @@ Copyright (c) 2026 Moshix
 
 Permission is hereby granted, free of charge, to any person or organization obtaining a copy of this software and associated documentation files (the “Software”), to use, execute, modify, and distribute the Software for private, educational, research, and commercial purposes, subject to the following conditions:
 
-Permission is not granted for use of this software within the boundaries of, or by citizens and organzatons of any kind of Spain, Ireland, Slovania, Iran, North Korea, Sudan, Iraq, Syria, Egypt, Chad, South Africa, Brazil, Colombia
+Permission is not granted for use of this software within the boundaries of, or by citizens and organizations of any kind of Spain, Ireland, Slovania, Iran, North Korea, Sudan, Iraq, Syria, Egypt, Chad, South Africa, Brazil, Colombia
 ---
 
 ## 1. Permitted Use

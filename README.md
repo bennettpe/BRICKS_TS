@@ -1,16 +1,4 @@
 # Bricks Transaction Server
-> *In professional cycling, the philosophy of marginal gains was immortalized by Team Sky.
-> Instead of chasing revolutionary breakthroughs, they pursued relentless refinement:
-> a slightly more efficient bike fit, marginally lighter components,
-> deeper sleep, cleaner nutrition, better recovery routines.
->
-> Any single adjustment was almost trivial in isolation.
-> But compounded across hundreds of decisions,
-> those tiny advantages accumulated into a decisive competitive edge—
-> one powerful enough to redefine the sport and sustain dominance for years.
-
-> Bricks follow the same approach*
-
 **Chat with BRICKS developers and master operators [here](https://discord.gg/6NWE4Gp7kR)**
 
 BRICKS is a drop-in transaction server compatible with CICS. It includes
@@ -135,6 +123,7 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `program_cache`              | `4`                           | L2 LRU pool size in MB for parsed REXX/COBOL programs (a 128-entry L1 of decoded ASTs sits in front of it). Allocated once at startup as eight contiguous byte slabs — one per shard — and reused for the life of the process; Go's GC never scans the program bytes. Valid range is `1..16384` (1 MB floor, 16 GB cap); out-of-range values are rejected at startup. Live counters for both tiers are visible in `CEMT MONITOR`. |
 | `map_cache`                  | `128`                         | LRU bound on the number of **parsed** 3270 maps held resident. The directory index — `(map name → file path, mtime, size, SHA-256)` — always covers every `*.map` in `maps_dir`, so any map remains resolvable by name; only the parsed body is bounded. A `SEND/RECEIVE MAP` for a cached map is zero-parse; an evicted map is re-parsed on next lookup (microseconds) and re-inserted. Evicted entries drop their `*Map` pointer and the Go GC reclaims them on the next cycle, capping both steady-state memory and per-GC pointer-graph walk regardless of how many maps a deployment ships. Valid range is `1..1028`; rejected at startup if out of range. Live counters and runtime resize are visible in `CEMT P M`. |
 | `record_cache`               | `16`                          | Byte budget in **MB** for the VSAM record read cache that sits in front of the bbolt file store. A keyed `READ FILE` for a cached record skips the B-tree traversal and is served from memory; every `WRITE`/`REWRITE`/`DELETE` (and SYNCPOINT rollback) invalidates the affected record, so the cache stays coherent within the process. The budget bounds the total cached record bytes; the least-recently-read records are evicted when it fills. Valid range is `4..4096` (4 MB floor, 4 GB cap); out-of-range values are rejected at startup. Live read/write rates, latency, and the hit ratio are on the `CEMT MONITOR` **VSAM File Monitor** (PF11); the since-boot hit ratio also shows on the `CEMT MONITOR` Caches panel. |
+| `wrkarea`                    | `0`                           | Byte length of the region **Common Work Area** (CWA) — the single region-wide scratch area `EXEC CICS ADDRESS CWA(ptr)` hands a COBOL program a pointer to, and whose length `EXEC CICS ASSIGN CWALENG(n)` reports. Integer bytes; valid range `0..3584` (the IBM CWA cap), rejected at startup if negative or above `3584`. The default `0` means **no CWA is allocated** — `ADDRESS CWA` then yields a NULL pointer (handle 0) and `CWALENG` returns `0`, matching real CICS on a region with no CWA. The CWA is one slice shared by every task for the life of the process; writes through the pointer are visible to other tasks (unsynchronised — the program serialises its own access). See [PROGRAMMING.md / EXEC CICS ADDRESS](PROGRAMMING.md#address--exec-cics-address). |
 | `banner`                     | `BRICKS Transaction Server`   | Shown at top of system screens. |
 | `gmtext`                     | `Welcome to bricks`           | **IBM CICS SIT `GMTEXT` equivalent — operator-configured "Good Morning" banner.** Painted at row 0 of the connect-time splash and row 1 of `LogonPrompt` (when `enforce_secure_login=yes`) (Turquoise intense, centred; replaces the legacy `Welcome to BRICKS HH:MM:SS` banner when set), and retrievable programmatically via `EXEC CICS INQUIRE SYSTEM GMMTEXT(var)`. **Hard caps:** max 256 bytes, and EBCDIC-037 printable bytes only (`0x20..0x7E` minus the `[ ] { } ~ \ ` `` ` `` `\| ^` deny-set per the 3270-printables memory) — any violation is a startup error, **not** a silent substitute. An empty `gmtext=` line **restores the default** (matches the `ntp_server=on` aliasing precedent). The full 256-byte value is preserved through the verb — the LogonPrompt renderer truncates to `cols-1` only at paint time, so programs reading `GMMTEXT` see the full configured value regardless of screen width. See [PROGRAMMING.md / INQUIRE SYSTEM](PROGRAMMING.md#system-inquiry--inquire-system) for the verb and bricks deviations. |
 | `dns_name`                   | (none)                        | **Bind address.** Every bricks listener — the plain-TCP and TLS 3270 listeners, and the web3270 / `/metrics` HTTP services — binds **only** to the single IP this name resolves to (a literal IP is used as-is; a hostname resolves to one address, IPv4 preferred). A `dns_name` that is set but unresolvable is a fatal startup error. When `dns_name` is **empty**, listeners fall back to binding *all* interfaces (`0.0.0.0`) and bricks logs a `WARNING` — set `dns_name` to confine the server to one interface. |
@@ -142,6 +131,9 @@ Key=value, one per line, `#` for comments. Keys are case-insensitive.
 | `web3270_port`               | `9000`                        | HTTP port for the web3270 frontend (only used when `start_web3270=yes`). |
 | `start_metrics`              | `yes`                         | `yes` exposes a JSON `/metrics` endpoint with runtime + counter snapshots. Independent of `start_web3270`. Admin operators can flip the endpoint on/off at runtime via `CEMT PERFORM METRICS` without rewriting `bricks.cnf`. |
 | `metrics_port`               | `9100`                        | HTTP port for the dedicated `/metrics` listener. The same route is also mounted on the web3270 listener when both are on. |
+| `webserver_port`             | `0` (disabled)                | TCP port for the **static file server** — serves whatever lives under `webserver_dir` to a browser (`index.html` or 404; never a directory listing). `0`/unset disables it. Binds to `dns_name` like the other listeners. Manage it at runtime with `CEDA WEBSERVER`; watch its counters on `CEMT MONITOR`. See [Static file server](#static-file-server). |
+| `webserver_tls_port`         | `0` (none)                    | Optional HTTPS port for the static file server, reusing `tlscert`/`tlskey` (rejected at startup if those aren't set). Opens in addition to `webserver_port`. |
+| `webserver_dir`              | `runtime/web`                 | Document root for the static file server. Must resolve **under `runtime_dir`** (sandbox; rejected at startup otherwise). Cascades off `runtime_dir` like the other runtime subdirs. |
 | `enable_wapi`                | `no`                          | `yes` enables the WAPI listener — the inbound-HTTP server that turns each matched request into a transaction dispatch via the `EXEC CICS WEB *` verbs (Phase 1 — server side). On startup bricks logs `WAPI listening on http://<host>:<port>/ (routes_file=…, N route(s) loaded)` (and a second `https://…` line when TLS opens). Off by default — no HTTP listener opens unless the operator opts in. Port defaults below apply unless overridden. |
 | `enforce_wapi_tls`           | `no`                          | `yes` suppresses the plain HTTP listener — only the HTTPS port opens. Requires `tlscert` and `tlskey` to be set (rejected at startup otherwise). Use this for any deployment where the API is reachable from outside `localhost` so credentials and payloads aren't sniffable. |
 | `wapi_port`                  | `8080`                        | TCP port for the **plain (non-TLS)** inbound EXEC CICS WEB listener. Bound to `dns_name` like every other bricks listener. Suppressed entirely when `enforce_wapi_tls=yes`. (`web_port` is accepted as a back-compat alias for the same field.) |
@@ -352,6 +344,66 @@ HTTPS to a normal public endpoint.
 
 ---
 
+## Static file server
+
+A plain HTTP file server — the disk-served sibling of the WAPI (EXEC CICS
+WEB) server. Point it at a directory and it serves whatever HTML / CSS / JS
+/ images live there to a browser. Useful for an operator portal, a
+dashboard, docs, or the frontend of a web app hosted right out of bricks.
+
+Enable it with a port:
+
+```
+webserver_port=8000
+# webserver_tls_port=8443   # optional HTTPS, reuses tlscert/tlskey
+# webserver_dir=runtime/web # optional; defaults to web/ under runtime_dir
+```
+
+Drop files under `webserver_dir`:
+
+```
+runtime/web/
+  index.html      # served at /
+  style.css
+  app.js
+  docs/help.html  # served at /docs/help.html
+```
+
+Behaviour:
+
+- **`index.html` or 404 — never a directory listing.** A request for a
+  directory serves its `index.html`; if there isn't one, you get a 404 (the
+  server never lists file names). Dotfiles (`.git`, `.env`, …) are hidden.
+- **Sandbox.** `webserver_dir` must be a **strict subdirectory** of
+  `runtime_dir` (it cannot be `runtime_dir` itself, so `users.conf` /
+  `mro.conf` / `transactions.conf` are never exposed); an out-of-sandbox
+  path is rejected at startup and by `CEDA WEBSERVER`. Symlinks inside the
+  doc root that point **outside** it are not followed (404), matching the
+  IDCAMS sandbox posture.
+- **Optional HTTPS** via `webserver_tls_port`, reusing the shared
+  `tlscert` / `tlskey`.
+- **`/metrics` is mounted here too** (same-origin, toggle-aware via
+  `CEMT PERFORM METRICS`), in addition to the dedicated `metrics_port`
+  (default 9100) and the web3270 listener — so a static dashboard page can
+  `fetch('/metrics')` without a cross-origin hop.
+
+### Combining with EXEC CICS WEB (a full web app)
+
+When WAPI is enabled, its listener also serves your static files for any
+path **no transaction route matches** — a CICS `URIMAP USAGE(STATIC)`-style
+document. Transaction routes always win. So a static frontend and the
+`EXEC CICS WEB` transactions behind it live on the **same origin** (no
+CORS): the page `fetch()`es a route from `web_routes.conf` and renders the
+transaction's JSON/HTML. Frontend + backend, both bricks.
+
+### Operating it
+
+- **`CEMT MONITOR`** shows the server's access counters split **plain / TLS**.
+- **`CEDA WEBSERVER`** (admin) shuts it down, restarts it, or re-points the
+  served directory at runtime — no `bricks.cnf` edit or restart.
+
+---
+
 ## Authentication procedure
 
 The connection lifecycle is owned by `main.go::handle()`:
@@ -467,11 +519,30 @@ comma-separated, case-insensitive group names — that gates dispatch
 per transaction. The full row grammar is:
 
 ```
-transid:type:program[:groups[:database]]
+transid:type:program[:groups[:database[:twasize]]]
 ```
 
 (the 5th field is the EXEC SQL database binding documented later
 in this README under [SQL support](#sql-support).)
+
+The **6th positional field is `TWASIZE`** — the per-task
+**Transaction Work Area** length in bytes that
+`EXEC CICS ADDRESS TWA(ptr)` addresses and `EXEC CICS ASSIGN
+TWALENG(n)` reports. Integer `0..32767`; the whole row is skipped
+(with a logged warning) if the value is non-numeric or out of
+range, so a typo surfaces loudly rather than silently sizing the
+TWA at 0. Being **positional**, a non-zero `TWASIZE` requires the
+preceding `groups` and `database` fields to be present (use an
+empty `database` field — `transid:type:program:groups::768` — when
+the transaction has no SQL binding). The default (field absent, or
+`0`) allocates **no TWA**: `ADDRESS TWA` yields a NULL pointer and
+`TWALENG` returns `0`. Example:
+
+```
+ORDR:cobol:ordr.cob:public::768     # 768-byte TWA, no SQL database
+```
+
+See [PROGRAMMING.md / EXEC CICS ADDRESS](PROGRAMMING.md#address--exec-cics-address).
 
 Three-field entries keep the legacy behaviour: `enforce_secure_login`
 in `bricks.cnf` is the only check (so a signed-on user can run

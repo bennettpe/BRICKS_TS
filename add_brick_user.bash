@@ -102,6 +102,239 @@ restore_pwbin_mode() {
   PWBIN_RESTORE_MODE=""
 }
 
+# ===========================================================================
+# Release auto-download — keep ./bin stocked with the latest bricks toolchain
+# so the user never has to build or fetch binaries by hand. Mirrors
+# start_bricks.bash so either script can bootstrap a fresh checkout.
+# ===========================================================================
+REPO="moshix/BRICKS_TS"
+RELEASES_URL="https://github.com/${REPO}/releases"
+API_LATEST="https://api.github.com/repos/${REPO}/releases/latest"
+
+# Every binary that makes up a complete bricks install, named
+# <tool>-<version>-<goos>-<goarch>[.exe] in the release.
+TOOLS=(bricks brickscompile bricksconvert bricksdesigner bricksload brickspw idcams)
+
+# Globals populated by sync_binaries / its helpers.
+RELEASE_JSON=""
+TAG=""
+WANT_VER=""
+
+# Colored, stderr-only logging (stdout stays clean for the user-facing
+# "added user ..." line). Honors NO_COLOR.
+if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
+  C_RESET=$'\e[0m'; C_BOLD=$'\e[1m'; C_DIM=$'\e[2m'
+  C_RED=$'\e[31m'; C_GREEN=$'\e[32m'; C_YELLOW=$'\e[33m'
+  C_BLUE=$'\e[34m'; C_CYAN=$'\e[36m'
+else
+  C_RESET=""; C_BOLD=""; C_DIM=""
+  C_RED=""; C_GREEN=""; C_YELLOW=""
+  C_BLUE=""; C_CYAN=""
+fi
+
+info()    { printf '%s %s\n' "${C_BLUE}${C_BOLD}==>${C_RESET}" "$*" >&2; }
+step()    { printf '%s %s\n' "${C_DIM}  ·${C_RESET}" "${C_DIM}$*${C_RESET}" >&2; }
+success() { printf '%s %s\n' "${C_GREEN}${C_BOLD}✓${C_RESET}" "$*" >&2; }
+warn()    { printf '%s %s\n' "${C_YELLOW}${C_BOLD}!${C_RESET}" "$*" >&2; }
+err_msg() { printf '%s %s\n' "${C_RED}${C_BOLD}✗ error:${C_RESET}" "$*" >&2; }
+
+# HTTP helpers (curl preferred, wget fallback).
+HTTP_TOOL=""
+if command -v curl >/dev/null 2>&1; then
+  HTTP_TOOL=curl
+elif command -v wget >/dev/null 2>&1; then
+  HTTP_TOOL=wget
+fi
+
+http_get_stdout() {
+  case "$HTTP_TOOL" in
+    curl) curl -fsSL --connect-timeout 10 --max-time 30 "$1" ;;
+    wget) wget -qO- --timeout=10 "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+http_download() {
+  case "$HTTP_TOOL" in
+    curl) curl -fL --progress-bar --connect-timeout 10 -o "$2" "$1" ;;
+    wget) wget -q --show-progress --timeout=10 -O "$2" "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+GOOS=$(detect_goos)
+GOARCH=$(detect_goarch)
+EXT=""
+[[ "$GOOS" == "windows" ]] && EXT=".exe"
+
+# version_lt A B — true (0) when version A is strictly older than B.
+version_lt() {
+  [[ "$1" == "$2" ]] && return 1
+  local lo
+  lo=$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)
+  [[ "$lo" == "$1" ]]
+}
+
+# installed_version — highest bricks version present in ./bin for this
+# platform (empty if none).
+installed_version() {
+  shopt -s nullglob
+  local matches=(bin/bricks-*-"${GOOS}-${GOARCH}${EXT}")
+  shopt -u nullglob
+  ((${#matches[@]})) || return 0
+  local f b versions=()
+  for f in "${matches[@]}"; do
+    b=${f#bin/bricks-}
+    b=${b%-"${GOOS}-${GOARCH}${EXT}"}
+    versions+=("$b")
+  done
+  printf '%s\n' "${versions[@]}" | sort -V | tail -n1
+}
+
+# have_all_tools VERSION — true when every TOOL is present for this platform.
+have_all_tools() {
+  local v="$1" t
+  for t in "${TOOLS[@]}"; do
+    [[ -f "bin/${t}-${v}-${GOOS}-${GOARCH}${EXT}" ]] || return 1
+  done
+  return 0
+}
+
+asset_exists() {
+  printf '%s' "$RELEASE_JSON" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$1\""
+}
+
+list_platforms() {
+  printf '%s' "$RELEASE_JSON" \
+    | grep -oE '"bricks-[0-9][^"]*"' \
+    | tr -d '"' \
+    | sed -E 's/^bricks-[0-9][0-9.]*-//; s/\.exe$//' \
+    | sort -u
+}
+
+manual_download_hint() {
+  local v="$1" t
+  {
+    printf '\n'
+    printf '%s\n' "${C_BOLD}Download the latest release manually from:${C_RESET}"
+    printf '    %s\n' "${C_CYAN}${RELEASES_URL}${C_RESET}"
+    printf '\n'
+    printf '%s\n' "Then place these files into ${C_BOLD}./bin${C_RESET} (use the newest version):"
+    for t in "${TOOLS[@]}"; do
+      printf '    %s\n' "${t}-${v}-${GOOS}-${GOARCH}${EXT}"
+    done
+    printf '\n'
+    printf '%s\n' "Make them executable (chmod +x ./bin/*) and re-run this script."
+  } >&2
+}
+
+download_release() {
+  local base="${RELEASES_URL}/download/${TAG}"
+  local t name url out tmp failed=()
+  info "downloading bricks ${WANT_VER} for ${GOOS}/${GOARCH} ..."
+  for t in "${TOOLS[@]}"; do
+    name="${t}-${WANT_VER}-${GOOS}-${GOARCH}${EXT}"
+    url="${base}/${name}"
+    out="bin/${name}"
+    tmp="${out}.part"
+    step "${name}"
+    if http_download "$url" "$tmp"; then
+      mv -f "$tmp" "$out"
+      chmod +x "$out" 2>/dev/null || true
+    else
+      rm -f "$tmp"
+      failed+=("$name")
+    fi
+  done
+  if ((${#failed[@]})); then
+    err_msg "failed to download ${#failed[@]} file(s): ${failed[*]}"
+    manual_download_hint "$WANT_VER"
+    return 1
+  fi
+  return 0
+}
+
+cleanup_old_versions() {
+  local t f
+  shopt -s nullglob
+  for t in "${TOOLS[@]}"; do
+    for f in bin/"${t}"-*-"${GOOS}-${GOARCH}${EXT}"; do
+      [[ "$f" == "bin/${t}-${WANT_VER}-${GOOS}-${GOARCH}${EXT}" ]] || rm -f "$f"
+    done
+  done
+  shopt -u nullglob
+}
+
+# sync_binaries — ensure ./bin has the latest bricks toolchain for this
+# platform (download when missing or outdated). Returns 0 when usable
+# binaries are present afterwards, non-zero (after guidance) when not.
+sync_binaries() {
+  if [[ -z "$GOOS" || -z "$GOARCH" ]]; then
+    err_msg "unsupported platform: $(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)"
+    printf '%s\n' "bricks ships binaries for: darwin/arm64, linux/amd64, linux/armv7, windows/amd64." >&2
+    manual_download_hint "<version>"
+    return 1
+  fi
+
+  mkdir -p bin
+
+  local installed
+  installed=$(installed_version)
+
+  local online=0
+  RELEASE_JSON=""
+  if [[ -n "$HTTP_TOOL" ]] && RELEASE_JSON=$(http_get_stdout "$API_LATEST" 2>/dev/null); then
+    online=1
+  fi
+  if ((online)); then
+    TAG=$(printf '%s' "$RELEASE_JSON" | grep -m1 '"tag_name"' \
+          | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/') || TAG=""
+    [[ -n "$TAG" ]] || online=0
+  fi
+
+  if ((online)); then
+    WANT_VER=${TAG#v}
+    if ! asset_exists "bricks-${WANT_VER}-${GOOS}-${GOARCH}${EXT}"; then
+      if [[ -n "$installed" ]] && have_all_tools "$installed"; then
+        warn "release ${TAG} has no binaries for ${GOOS}/${GOARCH}; using installed ${installed}."
+        return 0
+      fi
+      err_msg "release ${TAG} has no prebuilt binaries for ${GOOS}/${GOARCH}."
+      local plats; plats=$(list_platforms) || true
+      [[ -n "$plats" ]] && printf 'Platforms available in %s:\n%s\n' "$TAG" "$plats" >&2
+      manual_download_hint "$WANT_VER"
+      return 1
+    fi
+
+    if [[ -n "$installed" ]] && have_all_tools "$installed" && ! version_lt "$installed" "$WANT_VER"; then
+      success "bricks ${installed} is up to date."
+      return 0
+    fi
+
+    if [[ -z "$installed" ]]; then
+      info "no local install found — fetching bricks ${WANT_VER}."
+    elif version_lt "$installed" "$WANT_VER"; then
+      info "newer version available: ${installed} → ${WANT_VER}."
+    else
+      info "completing bricks ${WANT_VER} install (some binaries were missing)."
+    fi
+
+    download_release || return 1
+    cleanup_old_versions
+    success "bricks ${WANT_VER} binaries ready in ./bin."
+    return 0
+  fi
+
+  # ---- offline ----
+  if [[ -n "$installed" ]] && have_all_tools "$installed"; then
+    warn "could not reach GitHub (no internet?). Skipping update check; using installed bricks ${installed}."
+    return 0
+  fi
+  err_msg "no internet connection and ./bin has no usable bricks for ${GOOS}/${GOARCH}."
+  manual_download_hint "${installed:-<version>}"
+  return 1
+}
+
 UPDATE=0
 if [[ ${1:-} == "--update" ]]; then
   UPDATE=1
@@ -135,6 +368,10 @@ if [[ "$ROLES" == *:* ]]; then
 fi
 
 cd -- "$(dirname -- "$0")"
+
+# Make sure ./bin has the latest bricks binaries (download if missing or out
+# of date); on no network, point the user at the releases page and stop.
+sync_binaries || exit 1
 
 USERS_FILE="runtime/users.conf"
 if [[ ! -f "$USERS_FILE" ]]; then
