@@ -8,10 +8,12 @@
 #   1. Detects this machine's OS/architecture.
 #   2. Creates ./bin if needed.
 #   3. Checks https://github.com/moshix/BRICKS_TS/releases for the latest
-#      release and downloads bricks plus every auxiliary binary
-#      (brickscompile, bricksconvert, bricksdesigner, bricksload,
-#      brickspw, idcams) for this platform — but only if they are
-#      missing or a newer version is available.
+#      release. On a fresh checkout (empty ./bin) it downloads bricks plus
+#      every auxiliary binary (brickscompile, bricksconvert, bricksdesigner,
+#      bricksload, brickspw, idcams) for this platform automatically. When
+#      ./bin already holds binaries and a newer release exists, it asks
+#      before upgrading; missing binaries of the installed version are
+#      completed without asking.
 #   4. Launches bricks against ./bricks.cnf.
 #
 # If there is no internet connection the script uses whatever binaries are
@@ -34,6 +36,7 @@ cd -- "$(dirname -- "$0")"
 # ---------------------------------------------------------------------------
 REPO="moshix/BRICKS_TS"
 RELEASES_URL="https://github.com/${REPO}/releases"
+ISSUES_URL="https://github.com/${REPO}/issues"
 API_LATEST="https://api.github.com/repos/${REPO}/releases/latest"
 
 # Every binary that makes up a complete bricks install. build.bash and the
@@ -172,6 +175,19 @@ list_platforms() {
     | sort -u
 }
 
+# arch_issue_notice PLATFORM — no binaries are published for PLATFORM at all;
+# tell the user and ask them to open a request issue (don't point them at the
+# manual-download list, since those files don't exist for their arch).
+arch_issue_notice() {
+  {
+    printf '\n'
+    printf '%s\n' "${C_YELLOW}${C_BOLD}No prebuilt bricks binaries exist for ${1}.${C_RESET}"
+    printf '%s\n' "Please open an issue requesting a ${1} build at:"
+    printf '    %s\n' "${C_CYAN}${ISSUES_URL}${C_RESET}"
+    printf '\n'
+  } >&2
+}
+
 # manual_download_hint VERSION — tell the user exactly what to fetch by hand.
 manual_download_hint() {
   local v="$1" t
@@ -229,14 +245,35 @@ cleanup_old_versions() {
   shopt -u nullglob
 }
 
+# confirm_upgrade INSTALLED WANT — ask on the controlling terminal whether to
+# replace the installed binaries with a newer release. Returns 0 to proceed,
+# non-zero to keep what's installed. A bare Enter accepts (default yes). When
+# there's no terminal to ask on (non-interactive run) it declines, so an
+# unattended start never silently upgrades behind the user's back.
+confirm_upgrade() {
+  local installed="$1" want="$2" reply
+  if [[ ! -r /dev/tty ]]; then
+    warn "newer bricks ${want} available (installed ${installed}); run interactively to upgrade."
+    return 1
+  fi
+  printf '%s %s' "${C_BLUE}${C_BOLD}==>${C_RESET}" \
+    "Download and install bricks ${want} now? ${C_DIM}[Y/n]${C_RESET} " >&2
+  read -r reply </dev/tty || reply=""
+  case "$reply" in
+    "" | [Yy] | [Yy][Ee][Ss]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # sync_binaries — ensure ./bin has the latest bricks toolchain for this
 # platform. Returns 0 when usable binaries are present afterwards, non-zero
 # (after printing guidance) when they are not.
 sync_binaries() {
   if [[ -z "$GOOS" || -z "$GOARCH" ]]; then
-    error "unsupported platform: $(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)"
-    printf '%s\n' "bricks ships binaries for: darwin/arm64, linux/amd64, linux/armv7, windows/amd64." >&2
-    manual_download_hint "<version>"
+    local plat; plat="$(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)"
+    error "unsupported platform: ${plat}"
+    printf '%s\n' "bricks publishes binaries for: darwin/arm64, linux/amd64, linux/armv7, windows/amd64." >&2
+    arch_issue_notice "${plat}"
     return 1
   fi
 
@@ -267,7 +304,7 @@ sync_binaries() {
       error "release ${TAG} has no prebuilt binaries for ${GOOS}/${GOARCH}."
       local plats; plats=$(list_platforms) || true
       [[ -n "$plats" ]] && printf 'Platforms available in %s:\n%s\n' "$TAG" "$plats" >&2
-      manual_download_hint "$WANT_VER"
+      arch_issue_notice "${GOOS}/${GOARCH}"
       return 1
     fi
 
@@ -277,10 +314,19 @@ sync_binaries() {
     fi
 
     if [[ -z "$installed" ]]; then
+      # Fresh checkout: nothing in ./bin yet — bootstrap automatically.
       info "no local install found — fetching bricks ${WANT_VER}."
     elif version_lt "$installed" "$WANT_VER"; then
+      # A genuine upgrade: a newer release exists than the newest in ./bin.
+      # Ask before replacing what's already installed.
       info "newer version available: ${installed} → ${WANT_VER}."
+      if ! confirm_upgrade "$installed" "$WANT_VER"; then
+        warn "keeping installed bricks ${installed}; skipping upgrade to ${WANT_VER}."
+        return 0
+      fi
     else
+      # Same version installed but some binaries are missing — complete the
+      # set automatically (not an upgrade, so don't prompt).
       info "completing bricks ${WANT_VER} install (some binaries were missing)."
     fi
 

@@ -49,7 +49,7 @@ GOTOs in COBOL programs for the same reason.
 ./add_brick_user.bash alice "alice's-password" admin,users
 
 # Run the server. Edit bricks.cnf first (see "Configuration").
-./bricks --conf=bricks.cnf
+./start_bricks.bash
 
 # Connect with any 3270 emulator (c3270, x3270, tn3270 …):
 c3270 -port 2300 localhost

@@ -109,6 +109,7 @@ restore_pwbin_mode() {
 # ===========================================================================
 REPO="moshix/BRICKS_TS"
 RELEASES_URL="https://github.com/${REPO}/releases"
+ISSUES_URL="https://github.com/${REPO}/issues"
 API_LATEST="https://api.github.com/repos/${REPO}/releases/latest"
 
 # Every binary that makes up a complete bricks install, named
@@ -212,6 +213,16 @@ list_platforms() {
     | sort -u
 }
 
+arch_issue_notice() {
+  {
+    printf '\n'
+    printf '%s\n' "${C_YELLOW}${C_BOLD}No prebuilt bricks binaries exist for ${1}.${C_RESET}"
+    printf '%s\n' "Please open an issue requesting a ${1} build at:"
+    printf '    %s\n' "${C_CYAN}${ISSUES_URL}${C_RESET}"
+    printf '\n'
+  } >&2
+}
+
 manual_download_hint() {
   local v="$1" t
   {
@@ -270,9 +281,10 @@ cleanup_old_versions() {
 # binaries are present afterwards, non-zero (after guidance) when not.
 sync_binaries() {
   if [[ -z "$GOOS" || -z "$GOARCH" ]]; then
-    err_msg "unsupported platform: $(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)"
-    printf '%s\n' "bricks ships binaries for: darwin/arm64, linux/amd64, linux/armv7, windows/amd64." >&2
-    manual_download_hint "<version>"
+    local plat; plat="$(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)"
+    err_msg "unsupported platform: ${plat}"
+    printf '%s\n' "bricks publishes binaries for: darwin/arm64, linux/amd64, linux/armv7, windows/amd64." >&2
+    arch_issue_notice "${plat}"
     return 1
   fi
 
@@ -302,7 +314,7 @@ sync_binaries() {
       err_msg "release ${TAG} has no prebuilt binaries for ${GOOS}/${GOARCH}."
       local plats; plats=$(list_platforms) || true
       [[ -n "$plats" ]] && printf 'Platforms available in %s:\n%s\n' "$TAG" "$plats" >&2
-      manual_download_hint "$WANT_VER"
+      arch_issue_notice "${GOOS}/${GOARCH}"
       return 1
     fi
 
