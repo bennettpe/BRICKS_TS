@@ -111,9 +111,15 @@ detect_goos() {
 
 detect_goarch() {
   # build.bash names the 32-bit ARM target "armv7" (GOARCH=arm + GOARM=7).
+  # 32-bit x86 (Linux reports i386/i486/i586/i686 depending on the CPU)
+  # maps to the "386" target -- a single softfloat build that runs on the
+  # Intel 586/Pentium and every newer chip. x86_64 stays above it so a
+  # 64-bit box still picks the native amd64 binary; only a genuinely
+  # 32-bit kernel/userland (reporting i686 et al.) falls through to 386.
   case "$(uname -m 2>/dev/null)" in
     arm64 | aarch64) echo arm64 ;;
     x86_64 | amd64) echo amd64 ;;
+    i386 | i486 | i586 | i686) echo 386 ;;
     armv7l | armv6l | armv7 | armhf) echo armv7 ;;
     *) echo "" ;;
   esac
@@ -162,8 +168,12 @@ have_all_tools() {
 }
 
 # asset_exists NAME — true when the latest release advertises an asset NAME.
+# No `grep -q` here: -q exits at the first match, and if printf is still
+# writing the (large) JSON it takes SIGPIPE → pipeline rc 141 → under
+# pipefail a *present* asset reads as absent. Plain grep >/dev/null consumes
+# the whole pipe, so keep it that way.
 asset_exists() {
-  printf '%s' "$RELEASE_JSON" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$1\""
+  printf '%s' "$RELEASE_JSON" | grep "\"name\"[[:space:]]*:[[:space:]]*\"$1\"" >/dev/null 2>&1
 }
 
 # list_platforms — the goos-goarch combos the latest release ships bricks for.
@@ -272,7 +282,7 @@ sync_binaries() {
   if [[ -z "$GOOS" || -z "$GOARCH" ]]; then
     local plat; plat="$(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)"
     error "unsupported platform: ${plat}"
-    printf '%s\n' "bricks publishes binaries for: darwin/arm64, linux/amd64, linux/armv7, windows/amd64." >&2
+    printf '%s\n' "bricks publishes binaries for: darwin/arm64, linux/amd64, linux/386, linux/armv7, windows/amd64." >&2
     arch_issue_notice "${plat}"
     return 1
   fi
@@ -289,7 +299,12 @@ sync_binaries() {
     online=1
   fi
   if ((online)); then
-    TAG=$(printf '%s' "$RELEASE_JSON" | grep -m1 '"tag_name"' \
+    # No `grep -m1` here: it exits at the first match, and if printf is still
+    # writing the (large) JSON it takes SIGPIPE → pipeline rc 141 → under
+    # pipefail TAG blanks and we wrongly go offline. The /releases/latest
+    # endpoint returns a single release (exactly one tag_name), so grep must
+    # just read to EOF; the sed reduces it either way.
+    TAG=$(printf '%s' "$RELEASE_JSON" | grep '"tag_name"' \
           | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/') || TAG=""
     [[ -n "$TAG" ]] || online=0   # reachable but unparsable — treat as offline
   fi
