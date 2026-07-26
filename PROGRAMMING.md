@@ -6272,8 +6272,50 @@ target of `COMPUTE` / `ADD` / `SUBTRACT` / `MULTIPLY` / `DIVIDE` /
 subject of `EVALUATE` / `IF`) accepts qualification via `OF` /
 `IN` (see the
 [Data Division](#chapter-21-data-division) section on globally
-non-unique names), subscripts via `(idx)` for OCCURS-resident
-items, and reference modification via `(start:length)`.
+non-unique names) and subscripts via `(idx)` for OCCURS-resident
+items.
+
+### Reference modification (string slicing)
+
+`identifier(start:length)` addresses a byte window inside a data
+item. Positions are **1-indexed**, `length` is a count of bytes, and
+both operands may be any integer arithmetic expression — literals,
+data-names, or `WS-POS + 1`. Omitting the length (`identifier(start:)`)
+means "from `start` to the end of the item", padding included.
+
+Slices work on both sides of a statement:
+
+```cobol
+01 WS-LINE  PIC X(80) VALUE 'HELLO WORLD'.
+01 WS-PART  PIC X(5).
+01 WS-POS   PIC 9(2)  VALUE 7.
+
+    MOVE WS-LINE(1:5)      TO WS-PART        *> read  -> 'HELLO'
+    MOVE WS-LINE(WS-POS:5) TO WS-PART        *> read  -> 'WORLD'
+    MOVE '*'               TO WS-LINE(6:1)   *> write -> 'HELLO*WORLD'
+    IF WS-LINE(6:1) = SPACE THEN ...          *> test one byte
+```
+
+A write touches **only** the named window; the bytes on either side
+keep their contents. That makes `MOVE ch TO BUF(POS:1)` the natural way
+to render a screen row one character at a time, without an `OCCURS`
+table or `REDEFINES` overlay.
+
+Three rules worth knowing:
+
+- **A slice is always category alphanumeric**, whatever the item's own
+  PIC says. `NUM-FLD(1:1)` compares as bytes, so `IF NUM-FLD(1:1) = '1'`
+  is the correct test and `= 1` is not. On a write, the value is
+  left-justified and space-padded to the window width — never
+  right-justified or zero-filled, even into a `PIC 9` item.
+- **A `USAGE COMP` / `COMP-3` item is sliced through its decimal
+  rendering**, not its raw bytes: `PIC 9(4) COMP VALUE 1234`, sliced
+  `(1:2)`, yields `'12'`.
+- **Out-of-range windows are errors.** A read whose length overruns the
+  item is space-padded, but a start below 1 or past the end of the item
+  aborts the transaction, as does any write whose window would run past
+  the item's last byte — those bytes belong to the next field in the
+  same `01` and silently overwriting them corrupts it.
 
 ### ROUNDED and ON SIZE ERROR
 
@@ -7501,6 +7543,7 @@ for the supported syntax.
 | DATA DIVISION | `USAGE COMP-1` (single float), `USAGE COMP-2` (double float), `SYNC`, `INDEXED BY`, `OCCURS DEPENDING ON`, `66` / `78` levels, `BLANK WHEN ZERO`, and IBM's extension allowing a level-01 redefiner *larger* than its target (bricks requires the redefining item to fit at every level). `USAGE COMP` / `COMP-4` / `COMPUTATIONAL` / `BINARY`, `USAGE COMP-3` / `COMPUTATIONAL-3` / `PACKED-DECIMAL`, and `REDEFINES` ARE supported — see Chapter 21. |
 | Edited PIC | Edit characters `+`, `-`, `CR`, `DB`, `B`, `0`, `/`. (`Z`, `.`, `,`, `$`, `*` are supported.) |
 | PROCEDURE DIVISION | `CALL` (external program), `SEARCH` / `SEARCH ALL`, `ALTER`, `INITIALIZE`, `ACCEPT`, in-line `PERFORM ... END-PERFORM` (only paragraph-targeted `PERFORM` works), `DIVIDE … REMAINDER`. |
+| Reference modification | Two forms are rejected at parse time: a slice on an `OF` / `IN` qualifier (`K(1:2) OF ROW`), and a subscript combined with a slice in one reference (`TBL(idx)(start:length)`). Slice the whole reference, or `MOVE` the OCCURS slot to a work field first. Plain `identifier(start:length)` on either side of a statement IS supported — see [Chapter 22](#chapter-22-procedure-division). |
 | Intrinsic functions | Only `UPPER-CASE`, `LOWER-CASE`, `LENGTH`, `NUMVAL`, `TRIM`, `REVERSE`, `POS` are implemented. The statistical / date / time families are not. `FUNCTION TRIM` does NOT accept the `LEADING` / `TRAILING` modifier. |
 | Copybooks | `COPY ... REPLACING ==X== BY ==Y==.`, library qualifiers (`COPY name OF lib`), `SUPPRESS`. |
 | EXEC SQL | Multi-row `INSERT VALUES (...), (...)`. Stored-procedure calls (`EXEC SQL CALL`). DDL inside the executor — use `psql` or CEDA DATABASE. |
