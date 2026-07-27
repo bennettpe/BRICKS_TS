@@ -5856,6 +5856,26 @@ The figurative aliases `SPACE` / `ZERO` / `ZEROES` / `HIGH-VALUE`
 parse time. `VALUE` on a group item is rejected — initialise the
 children individually.
 
+#### `VALUE` on a scaled (`V`) item
+
+A **numeric** `VALUE` carries the value, and the PIC's `V` places
+it — exactly as `MOVE` and `COMPUTE` do with the same literal:
+
+```cobol
+01 A PIC S9(4)V99 VALUE 1.5.      *> 1.50, stored 000150
+01 B PIC S9(4)V99 VALUE 2.        *> 2.00, stored 000200
+01 C PIC S9(4)   VALUE 1.5.       *> 1, truncated toward zero
+```
+
+Do **not** write the stored digit run and expect it to be read as
+scaled: `PIC S9(4)V99 VALUE 150` is one hundred fifty, not 1.50.
+
+A **quoted** `VALUE` is byte data and takes the alphanumeric path,
+so `VALUE '150'` on that same item is 1.50 — the digits are laid
+into the field's bytes rather than scaled. This mirrors
+`MOVE '150'`, so a literal means the same thing wherever it is
+written.
+
 ### Group items
 
 A `01` (or any subordinate level >01) item with one or more
@@ -6187,6 +6207,13 @@ between siblings of one group.
 | Numeric → Alphanumeric | `9` / `S9` → `X` | Source stringified, then alphanumeric-padded. |
 | Anything → Group | * → group item | Fans out to every elementary child (recursively). |
 
+A **numeric literal** source follows the Numeric → Numeric row: it
+is rescaled to the target's `V` position, so `MOVE 2 TO PIC S9(4)V99`
+stores 2.00 and `MOVE 1.5 TO PIC S9(4)` truncates to 1. `MOVE`,
+`COMPUTE` and a numeric `VALUE` clause all agree on the same literal.
+A **quoted** literal is alphanumeric and takes the byte path instead
+(`MOVE '150'` lays those digits into the field's bytes).
+
 ### Figurative expansion
 
 `SPACES` → `' '` repeated to fill the target;
@@ -6233,18 +6260,46 @@ Every arithmetic verb accepts the optional clauses `ROUNDED`,
 expressions support `+`, `-`, `*`, `/`, `**`, parentheses, and
 unary sign.
 
+##### Signed numeric literals
+
+A sign written **immediately** against the digits is part of the
+literal, exactly as on IBM, so a signed literal is legal anywhere a
+plain one is:
+
+```cobol
+MOVE -1 TO WS-IND.
+MOVE +5 TO WS-N.
+ADD -1 TO WS-COUNT.
+DISPLAY -1.
+COMPUTE WS-X = -1.5.
+IF WS-N = -100 THEN ...
+01 WS-LIMIT PIC S9(4) VALUE -150.
+```
+
+The spacing is what distinguishes a literal from an operator: `-1`
+is a signed literal, `- 1` is the minus operator applied to `1`.
+Inside an arithmetic expression both readings work out the same
+(`COMPUTE X = A - 1` and `COMPUTE X = -1` are each unambiguous), but
+in a list-taking statement they differ — `DISPLAY A -1` displays two
+items, while `DISPLAY A - 1` is a parse error, because `DISPLAY`
+takes a list of operands, not an expression.
+
+A redundant `+` is not stored, so `DISPLAY +5` prints `5`. Moving a
+negative literal into an unsigned `PIC 9` target drops the sign, as
+IBM specifies.
+
 #### Control flow
 
 | Verb | Syntax | Notes |
 |---|---|---|
 | `IF` | `IF cond [THEN] stmts [ELSE stmts] [END-IF]` | The period after the last unscoped statement closes the `IF` when `END-IF` is omitted. |
 | `EVALUATE` | `EVALUATE subject WHEN val [WHEN val] ... [WHEN OTHER stmts] END-EVALUATE` | Simple value form only — `EVALUATE TRUE` / `FALSE` are rejected at parse time. |
-| `PERFORM` | `PERFORM para` <br> `PERFORM para UNTIL cond` <br> `PERFORM para N TIMES` <br> `PERFORM para VARYING idx FROM x BY y UNTIL cond` | In-line `PERFORM ... END-PERFORM` (body inline, no paragraph) is not yet supported. |
+| `PERFORM` | `PERFORM para [THRU para2]` <br> `PERFORM [para] [WITH TEST BEFORE\|AFTER] UNTIL cond` <br> `PERFORM [para] N TIMES` <br> `PERFORM [para] VARYING idx FROM x BY y UNTIL cond [AFTER ...]` <br> …any of the above with the paragraph name omitted and an in-line body closed by `END-PERFORM` | Out-of-line (named paragraph) and in-line (`END-PERFORM`) forms both work. `WITH TEST` is accepted but inert on the `N TIMES` and no-clause shapes. |
 | `GO TO` | `GO TO para` | Calculated `GO TO ... DEPENDING ON` not supported. |
 | `CONTINUE` | `CONTINUE` | Explicit no-op (used in empty `WHEN OTHER` etc.). |
 | `STOP RUN` | `STOP RUN` (or just `STOP`) | Terminate the task. |
 | `GOBACK` | `GOBACK` | Synonym for `EXIT PROGRAM`. |
-| `EXIT` | `EXIT [PROGRAM]` | `EXIT` alone is a no-op; `EXIT PROGRAM` returns to the caller. |
+| `EXIT` | `EXIT [PROGRAM]` <br> `EXIT PERFORM [CYCLE]` | `EXIT` alone is a no-op; `EXIT PROGRAM` returns to the caller. `EXIT PERFORM` leaves the innermost **in-line** `PERFORM`, `EXIT PERFORM CYCLE` ends only the current iteration. `EXIT PARAGRAPH` / `EXIT SECTION` are not supported. |
 
 #### Strings
 
@@ -6344,6 +6399,129 @@ can be a numeric literal or a numeric data item. `PERFORM ...
 VARYING idx FROM x BY y UNTIL cond` initialises `idx` to `x`,
 runs the body while `cond` is false, then increments `idx` by `y`
 between iterations.
+
+### In-line PERFORM
+
+Leave the paragraph name out and the loop body sits between the
+`PERFORM` and a mandatory `END-PERFORM`:
+
+```cobol
+PERFORM UNTIL WS-DONE = 'Y'
+    COMPUTE WS-N = WS-N + 1
+    IF WS-N > 9 THEN
+        MOVE 'Y' TO WS-DONE
+    END-IF
+END-PERFORM.
+
+PERFORM 10 TIMES
+    COMPUTE WS-TOT = WS-TOT + 1
+END-PERFORM.
+
+PERFORM VARYING I FROM 1 BY 1 UNTIL I > 15
+    MOVE SPACES TO ROW-TEXT(I)
+END-PERFORM.
+```
+
+All four loop shapes work in-line — no clause (the body runs once),
+`UNTIL`, `N TIMES`, and `VARYING`. In-line and out-of-line `PERFORM`
+nest freely in either direction.
+
+`END-PERFORM` is **required** on the in-line form: unlike `IF`, a
+period does not close it. A period inside the body ends the sentence
+and is reported as `in-line PERFORM needs END-PERFORM`.
+
+### PERFORM THRU
+
+```cobol
+PERFORM WORK-A THRU WORK-EXIT.
+```
+
+Runs every paragraph from `WORK-A` through `WORK-EXIT` in source
+order, then returns. `THROUGH` is accepted as a synonym. This enables
+the classic early-return idiom — a `GO TO` aimed at a paragraph
+**inside** the range transfers control there and the range still
+returns to the caller when its last paragraph ends:
+
+```cobol
+PERFORM CHECK-IT THRU CHECK-EXIT.
+...
+CHECK-IT.
+    IF WS-AMT = 0 THEN
+        GO TO CHECK-EXIT
+    END-IF.
+    COMPUTE WS-FEE = WS-AMT * 2.
+CHECK-EXIT.
+    EXIT.
+```
+
+A `GO TO` aimed **outside** the range still abandons the `PERFORM`
+and restarts at the target, which is bricks' general `GO TO`
+behaviour (see [Periods and GO TO](#periods)). A backwards range
+(`PERFORM Z THRU A`) is rejected at run time.
+
+### WITH TEST BEFORE / AFTER
+
+```cobol
+PERFORM WITH TEST AFTER UNTIL WS-RESP = DFHRESP(NORMAL)
+    EXEC CICS READ FILE('CUSTOMER') INTO(WS-REC)
+             RIDFLD(WS-KEY) RESP(WS-RESP) END-EXEC
+END-PERFORM.
+```
+
+`WITH TEST BEFORE` is the default: the condition is tested at the top,
+so a condition that is already true runs the body zero times. `WITH
+TEST AFTER` tests at the bottom, so the body always runs at least
+once. `WITH` is optional (`TEST AFTER` alone is accepted). It applies
+to the `UNTIL` and `VARYING` shapes; on `N TIMES` and the no-clause
+form it is accepted but has no effect.
+
+On a post-tested `VARYING` the flow is body → test → augment, so the
+index is left at its last in-range value rather than one step past
+the limit.
+
+### EXIT PERFORM
+
+```cobol
+PERFORM VARYING I FROM 1 BY 1 UNTIL I > 100
+    IF TBL-KEY(I) = WS-WANTED THEN
+        MOVE I TO WS-HIT
+        EXIT PERFORM
+    END-IF
+    IF TBL-KEY(I) = SPACES THEN
+        EXIT PERFORM CYCLE
+    END-IF
+    COMPUTE WS-SCANNED = WS-SCANNED + 1
+END-PERFORM.
+```
+
+`EXIT PERFORM` breaks out of the innermost in-line `PERFORM`;
+`EXIT PERFORM CYCLE` ends only the current iteration and continues
+with the next one (still reaching a `VARYING` augment, so the loop
+advances rather than spinning).
+
+Both are scoped to the **in-line** `PERFORM` that lexically contains
+them, matching IBM. An `EXIT PERFORM` written in a performed
+*paragraph* is a program error, not a way to break the caller's loop,
+and is reported as `EXIT PERFORM outside an in-line PERFORM`.
+
+### PERFORM VARYING ... AFTER
+
+```cobol
+PERFORM VARYING I FROM 1 BY 1 UNTIL I > 4
+          AFTER J FROM 1 BY 1 UNTIL J > 3
+    COMPUTE SLOT((I - 1) * 3 + J) = I * J
+END-PERFORM.
+```
+
+Each `AFTER` adds an inner dimension. Inner indices are re-initialised
+to their `FROM` value on every iteration of the dimension outside
+them, so the example above runs the body 12 times. `AFTER` may be
+repeated for further dimensions. A plain `EXIT PERFORM` unwinds the
+whole nest, not just the innermost dimension.
+
+> ⚠️ bricks rejects nested `OCCURS`, so a two-dimensional walk
+> addresses a flat table with a computed subscript as shown above
+> rather than `SLOT(I, J)`.
 
 ### OCCURS arrays
 
@@ -7542,7 +7720,7 @@ for the supported syntax.
 |---|---|
 | DATA DIVISION | `USAGE COMP-1` (single float), `USAGE COMP-2` (double float), `SYNC`, `INDEXED BY`, `OCCURS DEPENDING ON`, `66` / `78` levels, `BLANK WHEN ZERO`, and IBM's extension allowing a level-01 redefiner *larger* than its target (bricks requires the redefining item to fit at every level). `USAGE COMP` / `COMP-4` / `COMPUTATIONAL` / `BINARY`, `USAGE COMP-3` / `COMPUTATIONAL-3` / `PACKED-DECIMAL`, and `REDEFINES` ARE supported — see Chapter 21. |
 | Edited PIC | Edit characters `+`, `-`, `CR`, `DB`, `B`, `0`, `/`. (`Z`, `.`, `,`, `$`, `*` are supported.) |
-| PROCEDURE DIVISION | `CALL` (external program), `SEARCH` / `SEARCH ALL`, `ALTER`, `INITIALIZE`, `ACCEPT`, in-line `PERFORM ... END-PERFORM` (only paragraph-targeted `PERFORM` works), `DIVIDE … REMAINDER`. |
+| PROCEDURE DIVISION | `CALL` (external program), `SEARCH` / `SEARCH ALL`, `ALTER`, `INITIALIZE`, `ACCEPT`, `EXIT PARAGRAPH` / `EXIT SECTION`, `GO TO ... DEPENDING ON`, `DIVIDE … REMAINDER`. In-line `PERFORM ... END-PERFORM`, `PERFORM ... THRU`, `WITH TEST BEFORE/AFTER`, `VARYING ... AFTER` and `EXIT PERFORM [CYCLE]` ARE supported — see [Chapter 22](#chapter-22-procedure-division). |
 | Reference modification | Two forms are rejected at parse time: a slice on an `OF` / `IN` qualifier (`K(1:2) OF ROW`), and a subscript combined with a slice in one reference (`TBL(idx)(start:length)`). Slice the whole reference, or `MOVE` the OCCURS slot to a work field first. Plain `identifier(start:length)` on either side of a statement IS supported — see [Chapter 22](#chapter-22-procedure-division). |
 | Intrinsic functions | Only `UPPER-CASE`, `LOWER-CASE`, `LENGTH`, `NUMVAL`, `TRIM`, `REVERSE`, `POS` are implemented. The statistical / date / time families are not. `FUNCTION TRIM` does NOT accept the `LEADING` / `TRAILING` modifier. |
 | Copybooks | `COPY ... REPLACING ==X== BY ==Y==.`, library qualifiers (`COPY name OF lib`), `SUPPRESS`. |
